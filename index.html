@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Three.js 編集モードデモ</title>
+  <style>body { margin: 0; overflow: hidden; }</style>
+
+</head>
+<body>
+  <style>
+    .control-button {
+      position: fixed;
+      width: 60px;
+      height: 60px;
+      font-size: 24px;
+      border: none;
+      border-radius: 30px;
+      background-color: rgba(255, 255, 255, 0.2); /* 透過っぽい */
+      color: white;
+      z-index: 20;
+      backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      transition: all 0.1s ease-in-out;
+      
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+    }
+    
+    .control-button:active {
+      transform: scale(0.93);
+      opacity: 0.5;
+    }
+
+    .control-square-button {
+    position: fixed;
+    width: 400px;
+    height: 40px;
+    font-size: 24px;
+    border: none;
+    border-radius: 4px; /* ← 四角っぽい角丸（完全に四角なら 0 に） */
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+    z-index: 20;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: all 0.1s ease-in-out;
+
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  /* ホバー（マウスを乗せたとき）で暗くする */
+  .control-button:hover {
+    filter: brightness(85%);
+    cursor: pointer;
+  }
+
+  /* クリック中（押してる最中）でさらに暗くする */
+  .control-button:active {
+    filter: brightness(70%);
+  }
+
+  /* アイコンの重ねラッパー */
+  .icon-wrapper {
+    position: relative;
+    display: flex;              /* 中央寄せ用 */
+    align-items: center;        /* 縦中央 */
+    justify-content: center;    /* 横中央 */
+    width: 2em;                 /* ボタンに合わせて大きめに */
+    height: 2em;
+    }
+
+  /* 薄い背景記号 */
+  .background-icon {
+    position: absolute;
+    color: rgba(0, 0, 0, 0.5);
+    font-size: 1.5em;
+  }
+  /* 濃い前面記号 */
+  .foreground-icon {
+    position: absolute;
+    color: black;
+    font-size: 1.3em;
+  }
+</style>
+  
+  <button id="speed-up" class="control-button" style="left: 20px; bottom: 200px;">▶︎▷</button>
+  <button id="speed-down" class="control-button" style="left: 95px; bottom: 200px;">◀︎◁</button>
+  <button id="btn-up" class="control-button" style="left: 20px; bottom: 120px;">🔺</button>
+  <button id="btn-down" class="control-button" style="left: 20px; bottom: 40px;">🔻</button>
+
+  <!-- <button id="edit-rotation" class="control-button" style="right: 20px; bottom: 40px;">🌐</button> -->
+
+  
+  <button id="mode-change" class="control-button" style="right: 20px; top: 40px;">
+    <span class="icon-wrapper">
+      <span class="background-icon">🌐</span>
+      <span class="foreground-icon">🛠️</span>
+    </span>
+  </button>
+
+  <button id="edit-rotation" class="control-button" style="right: 20px; bottom: 40px;"> 
+    <span class="icon-wrapper">
+      <span class="background-icon">⏥</span>
+      <span class="foreground-icon">⤮</span>
+    </span>
+  </button>
+
+  <canvas id="three-canvas"></canvas>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
