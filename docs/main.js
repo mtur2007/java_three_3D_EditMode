@@ -40,8 +40,6 @@ const cube_geometry = new THREE.BoxGeometry();
 const cube_material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 
-scene.add(cube);
-
 // 線描画
 function createLine(p1, p2, color = 0xff0000) {
   const points = [
@@ -202,6 +200,11 @@ const GuideGrid_Center_z = createLine({x:0,y:0.1,z:2}, {x:0,y:0.1,z:-2}, 0xff000
 GuideGrid_Center_z.name = 'GuideLine'
 GuideGrid_Center_z.position.set(0,0,0);
 scene.add(GuideGrid_Center_z)
+
+GuideLine.visible = false
+GuideGrid.visible = false
+GuideGrid_Center_x.visible = false
+GuideGrid_Center_z.visible = false
 
 let choice_object = false
 let search_object = true
