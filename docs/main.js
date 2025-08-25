@@ -74,20 +74,27 @@ scene.add(dirLight);
 // マウス座標管理用のベクトルを作成
 const mouse = new THREE.Vector2();
 // マウスイベントを登録
-canvas.addEventListener('mousemove', handleMouseMove);
+canvas.addEventListener('mousemove', (e) => {
+  handleMouseMove(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  handleMouseMove(e.touches[0].clientX, e.touches[0].clientY);
+});
 
 // マウスを動かしたときのイベント
-function handleMouseMove(event) {
-  const element = event.currentTarget;
+function handleMouseMove(x, y) {
+  const element = canvas;
   // canvas要素上のXY座標
-  const x = event.clientX - element.offsetLeft;
-  const y = event.clientY - element.offsetTop;
+  const clientX = x - element.offsetLeft;
+  const clientY = y - element.offsetTop;
   // canvas要素の幅・高さ
   const w = element.offsetWidth;
   const h = element.offsetHeight;
   // -1〜+1の範囲で現在のマウス座標を登録する
-  mouse.x = ( x / w ) * 2 - 1;
-  mouse.y = -( y / h ) * 2 + 1;
+  mouse.x = ( clientX / w ) * 2 - 1;
+  mouse.y = -( clientY / h ) * 2 + 1;
 }
 
 // レイキャストを作成
@@ -321,7 +328,7 @@ function coord_DisplayTo3D(Axis_num=false){
 }
 
 let dragging = false;
-document.addEventListener('mousemove', (e) => {
+function handleDrag(event) {
   if (dragging) {
     let point = 0
     console.log(`ドラッグ中:`);
@@ -344,9 +351,11 @@ document.addEventListener('mousemove', (e) => {
 
     drawingObject();
   }
-});
+}
 
-document.addEventListener('mouseup', () => {
+document.addEventListener('mousemove', handleDrag);
+
+function handleMouseUp(event) {
   dragging = false;
   if (pause | OperationMode === 0){return}
   // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
@@ -367,10 +376,35 @@ document.addEventListener('mouseup', () => {
   GuideGrid.visible = false
 
   console.log("ドラッグ終了");
-});
+}
+
+document.addEventListener('mouseup', handleMouseUp);
   
-window.addEventListener('mousedown', () => {
-  if (pause | OperationMode === 0){return}
+function handleMouseDown(event) {
+  if (pause || OperationMode !== 1) { return; }
+
+  // 架線柱配置モード
+  if (polePlacementMode) {
+    const point = coord_DisplayTo3D();
+    const pole = TSys.createCatenaryPole(5, 5, 2, 5, 1);
+    pole.position.set(point.x, point.y, point.z);
+    scene.add(pole);
+    deactivateAllModes(); // 配置後に全モードを解除
+    return;
+  }
+
+  // 線路描画モード
+  if (trackDrawingMode) {
+    const point = coord_DisplayTo3D();
+    const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone());
+    cube_clone.position.set(point.x, point.y, point.z);
+    scene.add(cube_clone);
+    targetObjects.push(cube_clone);
+    drawingObject();
+    return;
+  }
+
+  // 通常のオブジェクト選択・移動モード
   if (choice_object != false){
     if (search_object){
       search_object = false
@@ -386,17 +420,21 @@ window.addEventListener('mousedown', () => {
     }
 
   } else {
-    console.log(`追加`);
-
-    const point = coord_DisplayTo3D()
-    
-    const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone()); // 色変更できるようにclone
-    cube_clone.position.set(point.x,point.y,point.z); // X方向に2ずつ離して配置
-    scene.add(cube_clone);
-    targetObjects.push(cube_clone);
-    drawingObject();
+    // This part for adding new points is now handled by trackDrawingMode
   }
-  });
+}
+
+window.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleMouseDown(e);
+});
+
+document.addEventListener('mouseup', handleMouseUp);
+document.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  handleMouseUp(e);
+});
 
 function setMeshListOpacity(list, opacity) {
   list.forEach(mesh => {
@@ -409,19 +447,58 @@ function setMeshListOpacity(list, opacity) {
 }
 
 const ModeChangeBtn = document.getElementById("mode-change")
+const createPoleBtn = document.getElementById('create-pole');
+const drawTrackBtn = document.getElementById('draw-track');
+
 // モード状態（例）
 let OperationMode = 0;
 // アイコンセット例
 const ModeRicons = [
   { bg: '🌐', fg: '🛠️' }, // モード0
-  { bg: '🌐', fg: '🎦' },  // モード1
+  { bg: '🌐', fg: '🎦' }, // モード1
 ]
 
+let polePlacementMode = false;
+let trackDrawingMode = false;
+
+function deactivateAllModes() {
+  polePlacementMode = false;
+  trackDrawingMode = false;
+  createPoleBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+  drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+}
+
+createPoleBtn.addEventListener('click', () => {
+  if (OperationMode !== 1) return;
+  polePlacementMode = !polePlacementMode;
+  trackDrawingMode = false;
+  if (polePlacementMode) {
+    createPoleBtn.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+    drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+  } else {
+    deactivateAllModes();
+  }
+});
+
+drawTrackBtn.addEventListener('click', () => {
+  if (OperationMode !== 1) return;
+  trackDrawingMode = !trackDrawingMode;
+  polePlacementMode = false;
+  if (trackDrawingMode) {
+    drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+    createPoleBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+  } else {
+    deactivateAllModes();
+  }
+});
+
 ModeChangeBtn.addEventListener("click", () => {
-  move_direction_y = !move_direction_y
-  if (OperationMode===0){
-    // 表示
-    EditRBtn.style.display = "block"; // インライン要素なら "inline" にする
+  OperationMode = toggleMode(ModeChangeBtn,ModeRicons,OperationMode);
+  if (OperationMode === 1){
+    // 編集モード
+    createPoleBtn.style.display = "block";
+    drawTrackBtn.style.display = "block";
+    EditRBtn.style.display = "block";
     search_object = true
     move_direction_y = false
     EditRmode = 0
@@ -429,16 +506,16 @@ ModeChangeBtn.addEventListener("click", () => {
     setMeshListOpacity(targetObjects, 1);
     search_point()
   } else {
-    // 非表示
+    // 閲覧モード
+    createPoleBtn.style.display = "none";
+    drawTrackBtn.style.display = "none";
+    deactivateAllModes();
     EditRBtn.style.display = "none";
     search_object = false
     choice_object = false
     dragging = false
-    // 完全透明にする
     setMeshListOpacity(targetObjects, 0.0);
-
   }
-  OperationMode = toggleMode(ModeChangeBtn,ModeRicons,OperationMode);
 });
 
 
@@ -470,6 +547,76 @@ window.addEventListener('resize', () => {
 
 // 視点操作
 // カメラ操作 ----------------------------------------------------------------
+
+let touchState = 'NONE';
+let lastPosition1 = { x: 0, y: 0 };
+let lastPosition2 = { x: 0, y: 0 };
+let lastDistance = 0;
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  switch (e.touches.length) {
+    case 1:
+      touchState = 'ROTATE';
+      lastPosition1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      break;
+    case 2:
+      touchState = 'PAN_ZOOM';
+      lastPosition1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      lastPosition2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+      lastDistance = Math.hypot(lastPosition1.x - lastPosition2.x, lastPosition1.y - lastPosition2.y);
+      break;
+    default:
+      touchState = 'NONE';
+  }
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (touchState === 'NONE') return;
+
+  if (e.touches.length === 1 && touchState === 'ROTATE') {
+    const dx = e.touches[0].clientX - lastPosition1.x;
+    const dy = e.touches[0].clientY - lastPosition1.y;
+
+    cameraAngleY -= dx * 0.01;
+    cameraAngleX -= dy * 0.01;
+    cameraAngleX = Math.max(-pitchLimit, Math.min(pitchLimit, cameraAngleX));
+
+    lastPosition1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  } else if (e.touches.length === 2 && touchState === 'PAN_ZOOM') {
+    const currentPosition1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    const currentPosition2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+    const currentDistance = Math.hypot(currentPosition1.x - currentPosition2.x, currentPosition1.y - currentPosition2.y);
+    const midPoint = { x: (currentPosition1.x + currentPosition2.x) / 2, y: (currentPosition1.y + currentPosition2.y) / 2 };
+    const lastMidPoint = { x: (lastPosition1.x + lastPosition2.x) / 2, y: (lastPosition1.y + lastPosition2.y) / 2 };
+
+    // Zoom
+    const zoomAmount = lastDistance / currentDistance;
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    camera.position.addScaledVector(direction, (zoomAmount - 1) * 5);
+
+    // Pan
+    const dx = midPoint.x - lastMidPoint.x;
+    const dy = midPoint.y - lastMidPoint.y;
+
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+    const forward = new THREE.Vector3(Math.sin(cameraAngleY), 0, Math.cos(cameraAngleY));
+
+    camera.position.addScaledVector(right.setY(0).normalize(), -dx * 0.1);
+    camera.position.addScaledVector(forward.setY(0).normalize(), -dy * 0.1);
+
+    lastPosition1 = currentPosition1;
+    lastPosition2 = currentPosition2;
+    lastDistance = currentDistance;
+  }
+});
+
+canvas.addEventListener('touchend', (e) => {
+  touchState = 'NONE';
+});
+
 
 // アナロク操作（デバッグ用）
 // カメラの位置（視点の位置）

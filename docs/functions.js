@@ -444,7 +444,7 @@ export class TrainSystem {
   
     const geometry = new THREE.BoxGeometry(0.12, 0.05, 0.95);
     const stoneMaterial = new THREE.MeshStandardMaterial({
-      color: 0x403020,     // 石っぽいグレー（DimGray）
+      color: 0x999999,     // 石っぽいグレー（DimGray）
       roughness: 0.9,      // 表面ザラザラ（石っぽさを出す）
       metalness: 0.0,      // 金属感なし
       side: THREE.FrontSide
