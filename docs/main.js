@@ -428,7 +428,7 @@ function handleMouseDown() {
   }
 
   // 線路描画モード
-  if (trackDrawingMode) {
+  if (trackDrawingMode && objectEditMode === 'CREATE_NEW') {
     const point = coord_DisplayTo3D();
     const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone());
     cube_clone.position.set(point.x, point.y, point.z);
@@ -439,7 +439,7 @@ function handleMouseDown() {
   }
 
   // 通常のオブジェクト選択・移動モード
-  if (choice_object != false){
+  if (choice_object != false && objectEditMode === 'MOVE_EXISTING'){
     if (search_object){
       search_object = false
       choice_object.material.color.set(0x0000ff)
@@ -462,7 +462,7 @@ function handleMouseDown() {
 window.addEventListener('mousedown', handleMouseDown);
 window.addEventListener('touchstart', (e) => {
   e.preventDefault();      // ← スクロールを止める
-  search_point(); // Update the display
+  if (objectEditMode === 'MOVE_EXISTING') { search_point(); }
   handleMouseDown();      // ← 同じ関数に渡している
 }, { passive: false });
 
@@ -476,7 +476,7 @@ document.addEventListener('touchmove', (e) => {
 // 物体移動完了
 document.addEventListener('mouseup', () => {
   handleMouseUp();
-  search_point(); // Update the display
+  if (objectEditMode === 'MOVE_EXISTING') { search_point(); }
 });
 document.addEventListener('touchend', () => {
   // e.preventDefault(); ← 多分ここは不要（あとで説明）
@@ -509,13 +509,39 @@ const ModeRicons = [
 
 let polePlacementMode = false;
 let trackDrawingMode = false;
+// let trackEditSubMode = 'CREATE_NEW'; // 'CREATE_NEW' or 'MOVE_EXISTING'
+let objectEditMode = 'CREATE_NEW'; // 'CREATE_NEW' or 'MOVE_EXISTING'
+
+const trackCreateNewBtn = document.getElementById('track-create-new');
+const trackMoveExistingBtn = document.getElementById('track-move-existing');
 
 function deactivateAllModes() {
   polePlacementMode = false;
   trackDrawingMode = false;
   createPoleBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
   drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+  trackCreateNewBtn.style.display = "none";
+  trackMoveExistingBtn.style.display = "none";
 }
+
+function setObjectEditMode(mode) {
+  objectEditMode = mode;
+  if (objectEditMode === 'CREATE_NEW') {
+    trackCreateNewBtn.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+    trackMoveExistingBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+    search_object = false
+  } else {
+    trackCreateNewBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+    trackMoveExistingBtn.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+    if (objectEditMode === 'MOVE_EXISTING') { search_point(); }
+  }
+}
+
+trackCreateNewBtn.addEventListener('touchstart', () => setObjectEditMode('CREATE_NEW'));
+trackCreateNewBtn.addEventListener('click', () => setObjectEditMode('CREATE_NEW'));
+
+trackMoveExistingBtn.addEventListener('touchstart', () => setObjectEditMode('MOVE_EXISTING'));
+trackMoveExistingBtn.addEventListener('click', () => setObjectEditMode('MOVE_EXISTING'));
 
 createPoleBtn.addEventListener('touchstart', handleCreatePoleClick);
 createPoleBtn.addEventListener('click', handleCreatePoleClick);
@@ -542,6 +568,9 @@ function handleDrawTrackClick() {
   if (trackDrawingMode) {
     drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
     createPoleBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+    trackCreateNewBtn.style.display = "block";
+    trackMoveExistingBtn.style.display = "block";
+    setTrackEditSubMode(objectEditMode); // Apply current sub-mode style
   } else {
     deactivateAllModes();
   }
@@ -562,7 +591,7 @@ function handleModeChangeClick() {
     EditRmode = 0
     EditRmode = toggleMode(EditRBtn,EditRicons,EditRmode);
     setMeshListOpacity(targetObjects, 1);
-    search_point()
+    // search_point()
   } else {
     // 閲覧モード
     createPoleBtn.style.display = "none";
