@@ -75,12 +75,10 @@ scene.add(dirLight);
 const mouse = new THREE.Vector2();
 // マウスイベントを登録
 canvas.addEventListener('mousemove', (e) => {
-  console.log('マウス')
   handleMouseMove(e.clientX, e.clientY);
 });
 // タッチイベント
 document.addEventListener("touchmove", (e) => {
-  console.log('タッチ')
   e.preventDefault(); // スクロール防止
   const touch = e.touches[0];
   handleMouseMove(touch.clientX, touch.clientY);
@@ -359,6 +357,9 @@ function handleDrag(event) {
 }
 
 function handleMouseUp() {
+  
+  console.log('UP')
+
   dragging = false;
   if (OperationMode === 0){return}
 
@@ -436,24 +437,23 @@ function handleMouseDown(event) {
 // 物体移動開始
 window.addEventListener('mousedown', handleMouseDown);
 window.addEventListener('touchstart', (e) => {
-  console.log('タップ')
   e.preventDefault();      // ← スクロールを止める
   handleMouseDown(e);      // ← 同じ関数に渡している
-});
+}, { passive: false });
 
 // 物体移動追尾
 document.addEventListener('mousemove', handleDrag);
 document.addEventListener('touchmove', (e) => {
   e.preventDefault();
   handleDrag(e);
-});
+}, { passive: false });
 
 // 物体移動完了
 document.addEventListener('mouseup', handleMouseUp);
-document.addEventListener('touchend', (e) => {
+document.addEventListener('touchend', () => {
   // e.preventDefault(); ← 多分ここは不要（あとで説明）
-  console.log('指')
-  handleMouseUp(e);
+  // console.log('UP')
+  handleMouseUp();
 });
 
 
@@ -489,7 +489,7 @@ function deactivateAllModes() {
   drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
 }
 
-createPoleBtn.addEventListener('touchstart', () => handleCreatePoleClick);
+createPoleBtn.addEventListener('touchstart', handleCreatePoleClick);
 createPoleBtn.addEventListener('click', handleCreatePoleClick);
 
 function handleCreatePoleClick() {
@@ -504,7 +504,7 @@ function handleCreatePoleClick() {
   }
 }
 
-drawTrackBtn.addEventListener('touchstart', () => handleDrawTrackClick);
+drawTrackBtn.addEventListener('touchstart', handleDrawTrackClick);
 drawTrackBtn.addEventListener('click', handleDrawTrackClick);
 
 function handleDrawTrackClick() {
@@ -519,7 +519,7 @@ function handleDrawTrackClick() {
   }
 }
 
-ModeChangeBtn.addEventListener("touchstart", () => handleModeChangeClick);
+ModeChangeBtn.addEventListener("touchstart", handleModeChangeClick);
 ModeChangeBtn.addEventListener("click", handleModeChangeClick);
 
 function handleModeChangeClick() {
