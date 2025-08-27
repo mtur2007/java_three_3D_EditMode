@@ -78,6 +78,12 @@ canvas.addEventListener('mousemove', (e) => {
   handleMouseMove(e.clientX, e.clientY);
 });
 // タッチイベント
+document.addEventListener("touchstart", (e) => {
+  e.preventDefault(); // スクロール防止
+  const touch = e.touches[0];
+  handleMouseMove(touch.clientX, touch.clientY);
+}, { passive: false });
+
 document.addEventListener("touchmove", (e) => {
   e.preventDefault(); // スクロール防止
   const touch = e.touches[0];
@@ -388,6 +394,7 @@ function handleMouseUp() {
 }
   
 function handleMouseDown(event) {
+  console.log('Down')
   if (event.target.tagName === 'BUTTON') {
     pause = true;
   }
