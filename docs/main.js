@@ -690,7 +690,7 @@ canvas.addEventListener('touchmove', (e) => {
     const zoomAmount = lastDistance / currentDistance;
     const direction = new THREE.Vector3();
     camera.getWorldDirection(direction);
-    camera.position.addScaledVector(direction, (zoomAmount - 1) * 5);
+    camera.position.addScaledVector(direction, (zoomAmount - 1) * -5);
 
     // Pan
     const dx = midPoint.x - lastMidPoint.x;
@@ -700,7 +700,7 @@ canvas.addEventListener('touchmove', (e) => {
     const forward = new THREE.Vector3(Math.sin(cameraAngleY), 0, Math.cos(cameraAngleY));
 
     camera.position.addScaledVector(right.setY(0).normalize(), -dx * 0.1);
-    camera.position.addScaledVector(forward.setY(0).normalize(), -dy * 0.1);
+    camera.position.addScaledVector(forward.setY(0).normalize(), dy * 0.1);
 
     lastPosition1 = currentPosition1;
     lastPosition2 = currentPosition2;
