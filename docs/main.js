@@ -383,7 +383,6 @@ function handleMouseUp() {
 
   search_object = true;
   choice_object = false; // Deselect the object
-  search_point(); // Update the display
 
   GuideLine.visible = false;
   GuideGrid.visible = false;
@@ -445,6 +444,7 @@ function handleMouseDown(event) {
 window.addEventListener('mousedown', handleMouseDown);
 window.addEventListener('touchstart', (e) => {
   e.preventDefault();      // ← スクロールを止める
+  search_point(); // Update the display
   handleMouseDown(e);      // ← 同じ関数に渡している
 }, { passive: false });
 
@@ -456,7 +456,10 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 // 物体移動完了
-document.addEventListener('mouseup', handleMouseUp);
+document.addEventListener('mouseup', () => {
+  handleMouseUp();
+  search_point(); // Update the display
+});
 document.addEventListener('touchend', () => {
   // e.preventDefault(); ← 多分ここは不要（あとで説明）
   // console.log('UP')
