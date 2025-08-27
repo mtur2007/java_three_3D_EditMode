@@ -75,13 +75,16 @@ scene.add(dirLight);
 const mouse = new THREE.Vector2();
 // マウスイベントを登録
 canvas.addEventListener('mousemove', (e) => {
+  console.log('マウス')
   handleMouseMove(e.clientX, e.clientY);
 });
-
-canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  handleMouseMove(e.touches[0].clientX, e.touches[0].clientY);
-});
+// タッチイベント
+document.addEventListener("touchmove", (e) => {
+  console.log('タッチ')
+  e.preventDefault(); // スクロール防止
+  const touch = e.touches[0];
+  handleMouseMove(touch.clientX, touch.clientY);
+}, { passive: false });
 
 // マウスを動かしたときのイベント
 function handleMouseMove(x, y) {
@@ -118,6 +121,8 @@ function toggleMode(Btn,Ricons,Mode) {
 
   return Mode
 }
+
+
 
 
 let pause = false;
@@ -353,34 +358,38 @@ function handleDrag(event) {
   }
 }
 
-document.addEventListener('mousemove', handleDrag);
-
-function handleMouseUp(event) {
+function handleMouseUp() {
   dragging = false;
-  if (pause | OperationMode === 0){return}
+  if (OperationMode === 0){return}
+
   // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
   let point= 0
-  if (!move_direction_y){
-    point = coord_DisplayTo3D(choice_object.position)
-  } else {
-    point = coord_DisplayTo3D(choice_object.position)
+  if (choice_object) { // Only update position if an object was chosen
+    if (!move_direction_y){
+      point = coord_DisplayTo3D(choice_object.position)
+    } else {
+      point = coord_DisplayTo3D(choice_object.position)
+    }
+    choice_object.position.set(point.x,point.y,point.z)
+    choice_object.material.color.set(0xff0000) // Reset color to red
   }
-  choice_object.position.set(point.x,point.y,point.z)
-  choice_object.material.color.set(0xff0000)
-  search_object = true
-  search_point();
 
-  choice_object = false
+  search_object = true;
+  choice_object = false; // Deselect the object
+  search_point(); // Update the display
 
-  GuideLine.visible = false
-  GuideGrid.visible = false
+  GuideLine.visible = false;
+  GuideGrid.visible = false;
+
+  drawingObject();
 
   console.log("ドラッグ終了");
 }
-
-document.addEventListener('mouseup', handleMouseUp);
   
 function handleMouseDown(event) {
+  if (event.target.tagName === 'BUTTON') {
+    pause = true;
+  }
   if (pause || OperationMode !== 1) { return; }
 
   // 架線柱配置モード
@@ -424,17 +433,29 @@ function handleMouseDown(event) {
   }
 }
 
+// 物体移動開始
 window.addEventListener('mousedown', handleMouseDown);
 window.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  handleMouseDown(e);
+  console.log('タップ')
+  e.preventDefault();      // ← スクロールを止める
+  handleMouseDown(e);      // ← 同じ関数に渡している
 });
 
+// 物体移動追尾
+document.addEventListener('mousemove', handleDrag);
+document.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  handleDrag(e);
+});
+
+// 物体移動完了
 document.addEventListener('mouseup', handleMouseUp);
 document.addEventListener('touchend', (e) => {
-  e.preventDefault();
+  // e.preventDefault(); ← 多分ここは不要（あとで説明）
+  console.log('指')
   handleMouseUp(e);
 });
+
 
 function setMeshListOpacity(list, opacity) {
   list.forEach(mesh => {
@@ -468,7 +489,10 @@ function deactivateAllModes() {
   drawTrackBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
 }
 
-createPoleBtn.addEventListener('click', () => {
+createPoleBtn.addEventListener('touchstart', () => handleCreatePoleClick);
+createPoleBtn.addEventListener('click', handleCreatePoleClick);
+
+function handleCreatePoleClick() {
   if (OperationMode !== 1) return;
   polePlacementMode = !polePlacementMode;
   trackDrawingMode = false;
@@ -478,9 +502,12 @@ createPoleBtn.addEventListener('click', () => {
   } else {
     deactivateAllModes();
   }
-});
+}
 
-drawTrackBtn.addEventListener('click', () => {
+drawTrackBtn.addEventListener('touchstart', () => handleDrawTrackClick);
+drawTrackBtn.addEventListener('click', handleDrawTrackClick);
+
+function handleDrawTrackClick() {
   if (OperationMode !== 1) return;
   trackDrawingMode = !trackDrawingMode;
   polePlacementMode = false;
@@ -490,9 +517,12 @@ drawTrackBtn.addEventListener('click', () => {
   } else {
     deactivateAllModes();
   }
-});
+}
 
-ModeChangeBtn.addEventListener("click", () => {
+ModeChangeBtn.addEventListener("touchstart", () => handleModeChangeClick);
+ModeChangeBtn.addEventListener("click", handleModeChangeClick);
+
+function handleModeChangeClick() {
   OperationMode = toggleMode(ModeChangeBtn,ModeRicons,OperationMode);
   if (OperationMode === 1){
     // 編集モード
@@ -516,7 +546,7 @@ ModeChangeBtn.addEventListener("click", () => {
     dragging = false
     setMeshListOpacity(targetObjects, 0.0);
   }
-});
+}
 
 
 const EditRBtn = document.getElementById("edit-rotation")
@@ -528,10 +558,13 @@ const EditRicons = [
   { bg: '⏥', fg: '⇡' },  // モード1
 ]
 
-EditRBtn.addEventListener("click", () => {
+EditRBtn.addEventListener("touchstart", handleEditRClick);
+EditRBtn.addEventListener("click", handleEditRClick);
+
+function handleEditRClick() {
   move_direction_y = !move_direction_y
   EditRmode = toggleMode(EditRBtn,EditRicons,EditRmode);
-});
+}
 
 // 非表示
 EditRBtn.style.display = "none";
@@ -554,7 +587,7 @@ let lastPosition2 = { x: 0, y: 0 };
 let lastDistance = 0;
 
 canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
+  // e.preventDefault();
   switch (e.touches.length) {
     case 1:
       touchState = 'ROTATE';
@@ -569,10 +602,15 @@ canvas.addEventListener('touchstart', (e) => {
     default:
       touchState = 'NONE';
   }
-});
+}, { passive: false });
 
 canvas.addEventListener('touchmove', (e) => {
+  // e.preventDefault();
   e.preventDefault();
+
+  // Update mouse vector for raycasting (from handleMouseMove)
+  handleMouseMove(e.touches[0].clientX, e.touches[0].clientY);
+
   if (touchState === 'NONE') return;
 
   if (e.touches.length === 1 && touchState === 'ROTATE') {
