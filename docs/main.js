@@ -146,6 +146,27 @@ buttons.forEach(btn => {
   });
 });
 
+buttons.forEach(btn => {
+  // 指がボタンに触れたとき（mouseenter 相当）
+  btn.addEventListener("touchstart", (e) => {
+    e.preventDefault(); // ページスクロールを防止
+    console.log("指がボタンに触れた:", btn.textContent);
+    pause = true; // 一時停止
+  }, { passive: false });
+
+  // 指がボタンから離れたとき（mouseleave 相当）
+  btn.addEventListener("touchend", () => {
+    console.log("指がボタンから離れた:", btn.textContent);
+    pause = false; // 再開
+  });
+
+  // タッチがキャンセルされたとき（例: 指が画面外にずれた）
+  btn.addEventListener("touchcancel", () => {
+    console.log("タッチキャンセル:", btn.textContent);
+    pause = false; // 再開
+  });
+});
+
 // 物体の削除
 function clean_object(namesToFind){
   const targets = [];
@@ -337,7 +358,7 @@ function coord_DisplayTo3D(Axis_num=false){
 }
 
 let dragging = false;
-function handleDrag(event) {
+function handleDrag() {
   if (dragging) {
     let point = 0
     console.log(`ドラッグ中:`);
@@ -392,11 +413,8 @@ function handleMouseUp() {
   console.log("ドラッグ終了");
 }
   
-function handleMouseDown(event) {
+function handleMouseDown() {
   console.log('Down')
-  if (event.target.tagName === 'BUTTON') {
-    pause = true;
-  }
   if (pause || OperationMode !== 1) { return; }
 
   // 架線柱配置モード
@@ -445,14 +463,14 @@ window.addEventListener('mousedown', handleMouseDown);
 window.addEventListener('touchstart', (e) => {
   e.preventDefault();      // ← スクロールを止める
   search_point(); // Update the display
-  handleMouseDown(e);      // ← 同じ関数に渡している
+  handleMouseDown();      // ← 同じ関数に渡している
 }, { passive: false });
 
 // 物体移動追尾
 document.addEventListener('mousemove', handleDrag);
 document.addEventListener('touchmove', (e) => {
   e.preventDefault();
-  handleDrag(e);
+  handleDrag();
 }, { passive: false });
 
 // 物体移動完了
@@ -623,7 +641,7 @@ canvas.addEventListener('touchmove', (e) => {
 
   if (touchState === 'NONE') return;
 
-  if (e.touches.length === 1 && touchState === 'ROTATE') {
+  if (e.touches.length === 1 && dragging === false && touchState === 'ROTATE') {
     const dx = e.touches[0].clientX - lastPosition1.x;
     const dy = e.touches[0].clientY - lastPosition1.y;
 
@@ -805,7 +823,7 @@ function animate() {
     // サブカメラ：画面右下に小さく表示
     const insetWidth = window.innerWidth / 4;  // 画面幅の1/4サイズ
     const insetHeight = window.innerHeight / 4; // 画面高の1/4サイズ
-    const insetX = window.innerWidth - insetWidth - 10; // 右下から10pxマージン
+    const insetX = 10; // 右下から10pxマージン
     const insetY = window.innerHeight - insetHeight - 10; // 下から10pxマージン
 
     renderer.setViewport(insetX, insetY, insetWidth, insetHeight);
