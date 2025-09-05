@@ -106,13 +106,6 @@ function handleMouseMove(x, y) {
 
 // レイキャストを作成
 const raycaster = new THREE.Raycaster();
-const targetObjects = [];
-// for (let i = 1; i < 4; i++) {
-//   const cube = new THREE.Mesh(geometry, material.clone()); // 色変更できるようにclone
-//   cube.position.set(i * 2, 0.5, 0); // X方向に2ずつ離して配置
-//   scene.add(cube);
-//   targetObjects.push(cube);
-// }
 
 // モード切替関数
 function toggleMode(Btn,Ricons,Mode) {
@@ -127,9 +120,8 @@ function toggleMode(Btn,Ricons,Mode) {
 }
 
 
-
-
-let pause = false;
+const targetObjects = []; // 変更する描画物体のポイントを格納
+let pause = false; // 処理状況
 
 // すべてのボタンに hover 検出を付ける
 const buttons = document.querySelectorAll("button");
@@ -296,6 +288,7 @@ function search_point() {
   requestAnimationFrame(search_point);
 }
 
+// マウスの位置2D座標を3D座標に変換する関数_平面移動/垂直移動
 function coord_DisplayTo3D(Axis_num=false){
 
   const pos = camera.position
@@ -357,6 +350,7 @@ function coord_DisplayTo3D(Axis_num=false){
   return point
 }
 
+// ドラッグ処理
 let dragging = false;
 function handleDrag() {
   if (dragging) {
@@ -383,6 +377,7 @@ function handleDrag() {
   }
 }
 
+// ドラッグ終了時、位置を確定させる処理
 function handleMouseUp() {
   
   console.log('UP')
@@ -412,7 +407,8 @@ function handleMouseUp() {
 
   console.log("ドラッグ終了");
 }
-  
+
+// ドラック開始時の処理
 function handleMouseDown() {
   console.log('Down')
   if (pause || OperationMode !== 1) { return; }
