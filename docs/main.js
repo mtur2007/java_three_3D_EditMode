@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169/build/three.module.js';
+import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.169/examples/jsm/webxr/ARButton.js';
 
 const canvas = document.getElementById('three-canvas');
-// const canvas = document.querySelector('#myCanvas');
 const scene = new THREE.Scene();
 
 // 昼の環境マップ（初期）
@@ -17,10 +17,19 @@ const envMap = new THREE.CubeTextureLoader()
     scene.background = texture;
   });
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-camera.position.z = 5;
-const renderer = new THREE.WebGLRenderer({ canvas });
+const camera = new THREE.PerspectiveCamera(
+  75, window.innerWidth/window.innerHeight, 0.1, 1000
+);
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+
+// 🔹 ARボタンを追加
+document.body.appendChild(
+  ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] })
+);
+
 
 // サブカメラ（別角度）
 const cameraSub = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -329,9 +338,8 @@ function coord_DisplayTo3D(Axis_num=false){
     console.log('•-• : '+hypotenuse)
     console.log('_./ : '+mouAngleY + ' x,'+ Math.sin(mouAngleY) + ' y,'+Math.cos(mouAngleY))
     console.log('--,-: '+(hypotenuse/Math.cos(mouAngleY))*Math.cos(mouAngleY),hypotenuse/Math.cos(mouAngleY)*dir.y)
-    // t = hypotenuse/dir.x
-    t = hypotenuse/(Math.cos(cameraAngleY)*dir.z+Math.sin(cameraAngleY)*dir.x)//,dir.z
-    // t = hypotenuse
+    // t = hypotenuse/(Math.cos(cameraAngleY)*dir.z)
+    t = hypotenuse /(Math.cos(cameraAngleY)*dir.z+Math.sin(cameraAngleY)*dir.x)//,dir.z
     
     console.log('/ : '+hypotenuse+' '+Math.floor(Math.cos(cameraAngleY)*dir.z+Math.sin(cameraAngleY)*dir.x))
     console.log('t : '+t)
@@ -383,6 +391,9 @@ function handleMouseUp() {
   console.log('UP')
 
   dragging = false;
+  if (event.target.tagName === 'BUTTON') {
+    pause = false;
+  }
   if (OperationMode === 0){return}
 
   // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
@@ -411,6 +422,9 @@ function handleMouseUp() {
 // ドラック開始時の処理
 function handleMouseDown() {
   console.log('Down')
+  if (event.target.tagName === 'BUTTON') {
+    pause = true;
+  }
   if (pause || OperationMode !== 1) { return; }
 
   // 架線柱配置モード
@@ -566,7 +580,7 @@ function handleDrawTrackClick() {
     createPoleBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
     trackCreateNewBtn.style.display = "block";
     trackMoveExistingBtn.style.display = "block";
-    setTrackEditSubMode(objectEditMode); // Apply current sub-mode style
+    setObjectEditMode(objectEditMode); // Apply current sub-mode style
   } else {
     deactivateAllModes();
   }
@@ -588,7 +602,8 @@ function handleModeChangeClick() {
     EditRmode = toggleMode(EditRBtn,EditRicons,EditRmode);
     setMeshListOpacity(targetObjects, 1);
     // search_point()
-  } else {
+  }
+  else {
     // 閲覧モード
     createPoleBtn.style.display = "none";
     drawTrackBtn.style.display = "none";
@@ -658,15 +673,36 @@ canvas.addEventListener('touchstart', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('touchmove', (e) => {
-  // e.preventDefault();
   e.preventDefault();
 
   // Update mouse vector for raycasting (from handleMouseMove)
   handleMouseMove(e.touches[0].clientX, e.touches[0].clientY);
 
+  // Object Dragging Logic
+  if (dragging) { // If dragging is true, it means an object was selected in handleMouseDown
+    let point = 0;
+    console.log(`ドラッグ中:`);
+    if (!move_direction_y){
+      point = coord_DisplayTo3D(choice_object.position);
+    } else {
+      point = coord_DisplayTo3D(choice_object.position);
+    }
+
+    choice_object.position.set(point.x,point.y,point.z);
+
+    GuideLine.position.set(point.x,point.y,point.z);
+    if (!move_direction_y){
+      GuideGrid.position.set(point.x,point.y,point.z);
+      GuideGrid.material.color.set(0x8888aa);
+    }
+    drawingObject();
+    return; // Object dragging takes precedence over camera controls
+  }
+
+  // Camera control logic
   if (touchState === 'NONE') return;
 
-  if (e.touches.length === 1 && dragging === false && touchState === 'ROTATE') {
+  if (e.touches.length === 1 && touchState === 'ROTATE') {
     const dx = e.touches[0].clientX - lastPosition1.x;
     const dy = e.touches[0].clientY - lastPosition1.y;
 
