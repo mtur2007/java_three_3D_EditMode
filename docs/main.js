@@ -821,7 +821,7 @@ function animate() {
     
   // 数字キー押下で倍率設定
   if (key >= '1' && key <= '9') {
-    baseSpeed = parseInt(key, 10) * (parseInt(key, 10) *0.005);
+    baseSpeed = parseInt(key, 10) * (parseInt(key, 10) *0.05);
   }
   // 0キーで倍率リセット
   else if (key === '0') {

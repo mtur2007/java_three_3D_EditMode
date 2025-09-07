@@ -7,77 +7,69 @@ export class BuildingSystem {
     this.camera = camera;
     this.renderer = renderer;
 
-    // 仮の tileset JSON
+    // カメラ位置を中心に「むちゃくちゃ大きい球」を設定（選択段階のカリング回避）
+    const c = camera.position;
     const fakeTileset = {
       asset: { version: "1.0" },
-      geometricError: 500,
+      geometricError: 1e6,
       root: {
-        boundingVolume: { box: [0,0,0, 50,0,0, 0,50,0, 0,0,50] },
-        geometricError: 500,
+        // ← ここを box ではなく sphere に。半径は超巨大に。
+        boundingVolume: { sphere: [c.x, c.y, c.z, 1e9] },
+        geometricError: 1e6,
         refine: "ADD",
-        children: [
-          {
-            boundingVolume: { box: [0,0,0, 50,0,0, 0,50,0, 0,0,50] },
-            geometricError: 0,
-            content: { uri: b3dmUrl }
-          }
-        ]
+        children: [{
+          boundingVolume: { sphere: [c.x, c.y, c.z, 1e9] },
+          geometricError: 0,
+          content: { uri: b3dmUrl }
+        }]
       }
     };
 
     const blob = new Blob([JSON.stringify(fakeTileset)], { type: "application/json" });
     const tilesetUrl = URL.createObjectURL(blob);
 
-    this.tiles = new TilesRenderer(tilesetUrl);
-    this.tiles.lruCache.maxSize = 1;
-    this.tiles.downloadQueue.maxJobs = 1;
+    const tiles = this.tiles = new TilesRenderer(tilesetUrl);
 
-    this.tiles.setCamera(camera);
-    this.tiles.setResolutionFromRenderer(camera, renderer);
+    // 「選択段階」での読み込み量を増やす方向にチューニング
+    tiles.stopAtEmptyTiles = false;   // 空タイルでもさらに潜る
+    tiles.errorTarget = 0.0;          // 画面上の誤差許容量（小さいほど細かく読む）
+    tiles.maxDepth = Infinity;
 
-    scene.add(this.tiles.group);
+    // キュー/キャッシュ（必要に応じて）
+    tiles.downloadQueue.maxJobs = 4;
+    tiles.lruCache.maxSize = 128;
 
-    this.tiles.onLoadTileSet = () => {
-      console.log("✅ b3dm 読み込み完了");
+    tiles.setCamera(camera);
+    tiles.setResolutionFromRenderer(camera, renderer);
 
-      const box = new THREE.Box3().setFromObject(this.tiles.group);
-      const center = new THREE.Vector3();
-      box.getCenter(center);
+    // group を追加
+    scene.add(tiles.group);
 
-      // カメラを中心に向ける
-      const size = box.getSize(new THREE.Vector3()).length();
-      camera.position.set(center.x + size, center.y + size*0.5, center.z + size);
-      camera.up.set(0,1,0);
-      camera.lookAt(center);
-      // --------------------------
-      // transform 行列の逆適用で水平化
-      // --------------------------
-      const rootTransform = this.tiles.tileset.root?.transform; 
-      if(rootTransform){
-        const m = new THREE.Matrix4();
-        m.fromArray(rootTransform);
-        const mInv = new THREE.Matrix4();
-        mInv.copy(m).invert(); // 逆行列
-
-        // wrapper グループを作り逆行列を適用
-        const wrapper = new THREE.Group();
-        wrapper.add(this.tiles.group);
-        wrapper.applyMatrix4(mInv);  // 逆行列適用で水平化
-        this.scene.add(wrapper);
-      }
+    // モデルがロードされた直後に Mesh のカリングを無効化（“表示後”のカリング対策）
+    tiles.onLoadModel = (root /* THREE.Object3D */, tile) => {
+      root.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
     };
 
-    this.tiles.onError = (err) => console.error("❌ タイル読み込みエラー:", err);
+    // tilesetが読めたらカメラ調整
+    tiles.onLoadTileSet = () => {
+      // 万一、b3dm が遠くに出ても見えるように far を拡大
+      camera.far = 1e9;
+      camera.updateProjectionMatrix();
+
+      // 中心を向く（中心が取れない場合はスキップしてもOK）
+      const box = new THREE.Box3().setFromObject(tiles.group);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      if (isFinite(center.x)) camera.lookAt(center);
+    };
+
+    tiles.onError = (err) => console.error("❌ タイル読み込みエラー:", err);
   }
 
-  update() {
-    if (this.tiles) this.tiles.update();
-  }
-
+  update() { this.tiles && this.tiles.update(); }
   dispose() {
-    if (this.tiles) {
-      this.tiles.dispose();
-      if (this.tiles.group) this.scene.remove(this.tiles.group);
-    }
+    if (!this.tiles) return;
+    this.tiles.dispose();
+    if (this.tiles.group) this.scene.remove(this.tiles.group);
   }
 }
