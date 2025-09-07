@@ -1,5 +1,14 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169/build/three.module.js';
 
+console.log('import_city')
+
+
+import { BuildingSystem } from './CityBuilder.js';
+
+console.log('import_Train')
+
+import { TrainSystem } from './functions.js';
+
 const canvas = document.getElementById('three-canvas');
 // const canvas = document.querySelector('#myCanvas');
 const scene = new THREE.Scene();
@@ -19,6 +28,11 @@ const envMap = new THREE.CubeTextureLoader()
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
 camera.position.z = 5;
+
+camera.far = 100000; // デフォルトは 100000 など
+camera.updateProjectionMatrix();
+
+
 const renderer = new THREE.WebGLRenderer({ canvas });
 renderer.setSize(window.innerWidth, window.innerHeight);
 
@@ -27,8 +41,17 @@ const cameraSub = new THREE.PerspectiveCamera(75, window.innerWidth/window.inner
 cameraSub.position.set(10, 5, 0);
 cameraSub.lookAt(0, 0, 0);
 
-import { TrainSystem } from './functions.js';
+// --- 鉄道用 ---
 const TSys = new TrainSystem(scene);
+
+// --- 建物 ---
+// 東京駅周辺（千代田区）サンプル
+const path = 'bldg/13100_tokyo/13102_chuo-ku/notexture';
+const url = `https://plateau.geospatial.jp/main/data/3d-tiles/${path}/tileset.json`;
+
+const buildings = new BuildingSystem('https://b3dm.netlify.app/data0.b3dm', camera, renderer, scene);
+
+console.log(scene)
 
 // --- GridHelper 追加（初回のみ） ---
 const grid = new THREE.GridHelper(200, 80);
@@ -713,6 +736,30 @@ canvas.addEventListener('touchend', (e) => {
 });
 
 
+// ボタン操作
+const b6dm = scene.children[0]
+document.getElementById("rotLeft").addEventListener("click", () => {
+  b6dm.rotation.x += THREE.MathUtils.degToRad(10); // Y軸回転
+});
+document.getElementById("rotRight").addEventListener("click", () => {
+  b6dm.chib.rotation.y += THREE.MathUtils.degToRad(10);
+});
+document.getElementById("rotUp").addEventListener("click", () => {
+  b6dm.rotation.z += THREE.MathUtils.degToRad(10); // X軸回転
+});
+document.getElementById("rotDown").addEventListener("click", () => {
+  console.log(b6dm.rotation)
+});
+
+b6dm.rotation.set(
+  5.585053606381851,    // X軸ラジアン
+  0,                     // Y軸ラジアン
+  11.693705988361998,    // Z軸ラジアン
+  'XYZ'                  // 回転順序
+)
+
+b6dm.position.y = 0
+
 // アナロク操作（デバッグ用）
 // カメラの位置（視点の位置）
 
@@ -731,7 +778,6 @@ document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
 let cameraAngleY = 0;  // 水平回転
 let cameraAngleX = 0;  // 垂直回転
 camera.position.y += 10
-cameraAngleX = -1.5
 // ========== ボタン UI ========== //
 // 状態フラグ
 let speedUp = false;
@@ -764,6 +810,8 @@ document.addEventListener('keydown', (e) => {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  console.log(b6dm.rotation)
 
   const moveSpeed = baseSpeed;
 
@@ -842,6 +890,9 @@ function animate() {
   renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
   renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
   renderer.setScissorTest(true);
+
+  buildings.update(); // 建物LODを更新
+
   renderer.render(scene, camera); 
 
   if (dragging){
@@ -871,6 +922,7 @@ function animate() {
       GuideGrid_Center_z.visible = false
     }
   }
+
 }
 
 animate();
