@@ -738,27 +738,39 @@ canvas.addEventListener('touchend', (e) => {
 
 // ボタン操作
 const b6dm = scene.children[0]
-document.getElementById("rotLeft").addEventListener("click", () => {
-  b6dm.rotation.x += THREE.MathUtils.degToRad(10); // Y軸回転
-});
-document.getElementById("rotRight").addEventListener("click", () => {
-  b6dm.chib.rotation.y += THREE.MathUtils.degToRad(10);
-});
-document.getElementById("rotUp").addEventListener("click", () => {
-  b6dm.rotation.z += THREE.MathUtils.degToRad(10); // X軸回転
-});
-document.getElementById("rotDown").addEventListener("click", () => {
-  console.log(b6dm.rotation)
-});
-
 b6dm.rotation.set(
-  5.585053606381851,    // X軸ラジアン
-  0,                     // Y軸ラジアン
-  11.693705988361998,    // Z軸ラジアン
+  -0.6349463936181191,    // X軸ラジアン
+  0.18000000000000016,                     // Y軸ラジアン
+  11.833705988361995,    // Z軸ラジアン
   'XYZ'                  // 回転順序
 )
 
-b6dm.position.y = 0
+b6dm.position.y = -64
+
+const r_speed = 0.02
+let r_x = 0
+document.getElementById("r_x").addEventListener('mousedown', () => r_x = r_speed);
+document.getElementById("r_x").addEventListener('mouseup', () => r_x = 0);
+document.getElementById("mr_x").addEventListener('mousedown', () => r_x = -r_speed);
+document.getElementById("mr_x").addEventListener('mouseup', () => r_x = 0);
+
+let r_y = false
+document.getElementById("r_y").addEventListener('mousedown', () => r_y = r_speed);
+document.getElementById("r_y").addEventListener('mouseup', () => r_y = 0);
+document.getElementById("mr_y").addEventListener('mousedown', () => r_y = -r_speed);
+document.getElementById("mr_y").addEventListener('mouseup', () => r_y = 0);
+
+let r_z = false
+document.getElementById("r_z").addEventListener('mousedown', () => r_z = r_speed);
+document.getElementById("r_z").addEventListener('mouseup', () => r_z = 0);
+document.getElementById("mr_z").addEventListener('mousedown', () => r_z = -r_speed);
+document.getElementById("mr_z").addEventListener('mouseup', () => r_z = 0);
+
+function r_move(){
+  b6dm.rotation.x += r_x
+  b6dm.rotation.y += r_y
+  b6dm.rotation.z += r_z
+}
 
 // アナロク操作（デバッグ用）
 // カメラの位置（視点の位置）
@@ -922,6 +934,10 @@ function animate() {
       GuideGrid_Center_z.visible = false
     }
   }
+
+  b6dm.rotation.x += r_x
+  b6dm.rotation.y += r_y
+  b6dm.rotation.z += r_z
 
 }
 
