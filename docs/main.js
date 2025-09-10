@@ -46,10 +46,7 @@ const TSys = new TrainSystem(scene);
 
 // --- 建物 ---
 // 東京駅周辺（千代田区）サンプル
-const path = 'bldg/13100_tokyo/13102_chuo-ku/notexture';
-const url = `https://plateau.geospatial.jp/main/data/3d-tiles/${path}/tileset.json`;
-
-const buildings = new BuildingSystem('https://b3dm.netlify.app/data0.b3dm', camera, renderer, scene);
+const buildings = new BuildingSystem('https://pub-704b702d2b1546eda689c6a34570bb1f.r2.dev/data0.b3dm', camera, renderer, scene);
 
 console.log(scene)
 
@@ -823,7 +820,7 @@ document.addEventListener('keydown', (e) => {
 function animate() {
   requestAnimationFrame(animate);
 
-  console.log(b6dm.rotation)
+  // console.log(b6dm.rotation)
 
   const moveSpeed = baseSpeed;
 
