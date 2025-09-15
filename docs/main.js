@@ -46,12 +46,12 @@ const TSys = new TrainSystem(scene);
 
 // --- 建物 ---
 // 東京駅周辺（千代田区）サンプル
-const buildings = new BuildingSystem('https://pub-704b702d2b1546eda689c6a34570bb1f.r2.dev/data0.b3dm', camera, renderer, scene);
-
+const buildings = new BuildingSystem('https://pub-704b702d2b1546eda689c6a34570bb1f.r2.dev/data0.b3dm', camera, renderer, scene, 2.4392520936419584, 0);
+//139.77, 35.66
 console.log(scene)
 
 // --- GridHelper 追加（初回のみ） ---
-const grid = new THREE.GridHelper(200, 80);
+const grid = new THREE.GridHelper(3500, 80);
 grid.name = "Keep";
 scene.add(grid);
 
@@ -333,7 +333,6 @@ function coord_DisplayTo3D(Axis_num=false){
     const dir = raycaster.ray.direction
 
     const t = Math.abs((camera.position.y - set_y)/dir.y)
-    console.log(dir)
     
     // 交点を計算
     point = new THREE.Vector3(
@@ -343,6 +342,13 @@ function coord_DisplayTo3D(Axis_num=false){
     );
 
     console.log(point)
+    // if (targetObjects.length === 2){
+    //   const pos_0 = targetObjects[0].position
+    //   const phi = 0.768 + 1.5708
+    //   const phi_rangth = Math.sqrt((point.x - pos_0.x)**2 + (point.z - pos_0.z)**2) 
+    //   point.x = pos_0.x + Math.sin(phi) * phi_rangth
+    //   point.z = pos_0.z + Math.cos(phi) * phi_rangth
+    // }
 
   } else {
     raycaster.setFromCamera(mouse, camera);
@@ -734,13 +740,14 @@ canvas.addEventListener('touchend', (e) => {
 
 
 // ボタン操作
+console.log(scene)
 const b6dm = scene.children[0]
-b6dm.rotation.set(
-  -0.6349463936181191,    // X軸ラジアン
-  0.18000000000000016,                     // Y軸ラジアン
-  11.833705988361995,    // Z軸ラジアン
-  'XYZ'                  // 回転順序
-)
+// b6dm.rotation.set(
+//   -0.6349463936181191,    // X軸ラジアン
+//   0.18000000000000016,                     // Y軸ラジアン
+//   11.833705988361995,    // Z軸ラジアン
+//   'XYZ'                  // 回転順序
+// )
 
 b6dm.position.y = -64
 
@@ -787,6 +794,7 @@ document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
 let cameraAngleY = 0;  // 水平回転
 let cameraAngleX = 0;  // 垂直回転
 camera.position.y += 10
+camera.position.x = -1
 // ========== ボタン UI ========== //
 // 状態フラグ
 let speedUp = false;
