@@ -1,7 +1,7 @@
-# 3Dジオラマ製作中 
+# 3Dジオラマ製作中 動作テスト用
 >  ジオラマは **JR御茶ノ水駅** 周辺を再現しています。
 
-マップへのアクセスはこちら ▷ https://mtur2007.github.io/java_three_3D/
+マップへのアクセスはこちら ▷  https://mtur2007.github.io/java_three_3D_EditMode/
 
 > ### 閲覧時は Safari の使用をおすすめします
 >このサイトは、Apple製品（MacやiPad）＋Safariの組み合わせで、<br>
