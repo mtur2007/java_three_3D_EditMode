@@ -2,11 +2,34 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>Three.js 編集モードデモ</title>
+  <title>Three.js 模型デモ</title>
   <style>body { margin: 0; overflow: hidden; }</style>
 
+  <!-- Google Analytics 設定 閲覧数の測定用です。-->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-B8X9Y12345"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-E7Z2FM74H9');
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"
+    }
+  }
+  </script>
 </head>
 <body>
+<!--   
+  <button id="speed-up" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 200px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">▶︎▷</button>
+
+  <button id="speed-down" class="no-touch-highlight" style="position: fixed; left: 95px; bottom: 200px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">◀︎◁</button>
+  
+  <button id="btn-up" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 120px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">🔺</button>
+  
+  <button id="btn-down" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 40px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">🔻</button> -->
   <style>
     .control-button {
       position: fixed;
@@ -29,16 +52,32 @@
       -webkit-tap-highlight-color: transparent;
       -webkit-touch-callout: none;
     }
-    
-    .control-button:active {
-      transform: scale(0.93);
-      opacity: 0.5;
-    }
 
-    .control-square-button {
+  .control-square-button {
     position: fixed;
     width: 400px;
     height: 40px;
+    font-size: 24px;
+    border: none;
+    border-radius: 4px; /* ← 四角っぽい角丸（完全に四角なら 0 に） */
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+    z-index: 20;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: all 0.1s ease-in-out;
+
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  .log-control-square-button {
+    position: fixed;
+    width: 800px;
+    height: 400px;
     font-size: 24px;
     border: none;
     border-radius: 4px; /* ← 四角っぽい角丸（完全に四角なら 0 に） */
@@ -90,59 +129,197 @@
     color: black;
     font-size: 1.3em;
   }
+  
+  .credits-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255,255,255,0.9);
+    padding: 6px 12px;
+    font-size: 12px;
+    text-align: center;
+    z-index: 9999;
+    box-shadow: 0 -1px 6px rgba(0,0,0,0.12);
+  }
+  .credits-footer a { color: #0645ad; text-decoration: underline; }
+
+  /* コントローラーのスタイル */
+  .circle-ctrl-area {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.95);
+    background: rgba(0,0,0,0.5);
+    border: 2px solid #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transform: translate(-50%, -50%); /* left/top を中心にする */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    touch-action: none;
+    cursor: grab;
+    pointer-events: auto;
+  }
+  /* .circle-ctrl-area { cursor: grabbing; } */
+
+  .circle-ctrl {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    border: 2px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transform: translate(-50%, -50%); /* left/top を中心にする */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    touch-action: none;
+    cursor: grab;
+    pointer-events: auto;
+  }
+  /* .circle-ctrl:active { cursor: grabbing; } */
+  #UiGroup {
+    position: relative; /* ここを基準にする */
+    width: 10%;
+    height: 590px;
+    border: 1px solid rgba(221, 221, 221, 0.2); /* 透明度 0.5 (=50%) */
+  }
+  #UiGroup button {
+    position: absolute; /* top が効くようにする */
+    left: 0;
+    width: 72px;
+    height: 28px;
+  }
+
 </style>
-
-  <button id="r_x" class="control-button" style="bottom: 70px;">X</button>
-  <button id="r_y"class="control-button" style="left: 50px; bottom: 70px;">Y</button>
-  <button id="r_z"class="control-button" style=" left: 100px; bottom: 70px;">Z</button>
-
-  <button id="mr_x" class="control-button" style="bottom: 20px;">-X</button>
-  <button id="mr_y"class="control-button" style="left: 50px; bottom: 20px;">-Y</button>
-  <button id="mr_z"class="control-button" style=" left: 100px; bottom: 20px;">-Z</button>
-
   
-  <button id="speed-up" class="control-button" style="left: 20px; bottom: 200px;">▶︎▷</button>
-  <button id="speed-down" class="control-button" style="left: 95px; bottom: 200px;">◀︎◁</button>
-  <button id="btn-up" class="control-button" style="left: 20px; bottom: 120px;">🔺</button>
-  <button id="btn-down" class="control-button" style="left: 20px; bottom: 40px;">🔻</button>
+  <button id="speed-up" class="control-button" style="right: 20px; bottom: 200px;">◀︎◁</button>
+  <button id="speed-down" class="control-button" style="right: 95px; bottom: 200px;">▶︎▷</button>
+  <button id="btn-up" class="control-button" style="right: 160px; bottom: 150px;">🔺</button>
+  <button id="btn-down" class="control-button" style="right: 160px; bottom: 70px;">🔻</button>
+      
+  <!-- 左スティック（左下に表示） -->
+  <button id="controller-area" class="circle-ctrl-area" style="left: 160px; bottom: 60px; width: 80px; height: 80px"></button>
+  <button id="controller" class="circle-ctrl" style="left: 160px; bottom: 110px; width: 30px; height: 30px"></button>
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.8.6/nipplejs.min.js"></script>
+  <div id="left-stick" style="user-select: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; position: fixed; left: 7vw; bottom: 0; width: 40vw; height: 60vh; z-index: 10;"></div>
+  <div id="right-stick" style="user-select: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; position: fixed; right: 7vw; bottom: 0; width: 40vw; height: 60vh; z-index: 10;"></div> -->
 
-  <!-- <button id="edit-rotation" class="control-button" style="right: 20px; bottom: 40px;">🌐</button> -->
+  <button id="log" class="control-button" style="right: 20px; top: 40px;">📤</button>
 
+  </button>
+
+  <!-- モード切り替え -->
+  <div id="UiGroup" style="position: fixed; top: 140px; left: 20px; z-index: 100;">
+    <button id = 'see' style = 'top: 10px;' > 🎦 </button>
+    <button id = 'edit' style = 'top: 40px;' > 🛠️ </button>
+    <button id = 'rail' style = 'top: 70px; left:10px;' > 🛤️ </button>
+    <button id = 'new' style = 'top: 100px; left:20px;' > + </button>
+    <button id = 'move' style = 'top: 130px; left:20px;' > 💫 </button>
+    <button id = 'x_z' style = 'top: 160px; left:30px;' > ⤮ </button>
+    <button id = 'y' style = 'top: 190px; left:30px;' > ⇡ </button>
+    <button id = 'poll' style = 'top: 220px; left:10px;' > ⚡️ </button>
+    <button id = 'new/2' style = 'top: 250px; left:20px;' > + </button>
+    <button id = 'move/2' style = 'top: 280px; left:20px;' > 💫 </button>
+    <button id = 'x_z/2' style = 'top: 310px; left:30px;' > ⤮ </button>
+    <button id = 'y/2' style = 'top: 340px; left:30px;' > ⇡ </button>
+    <button id = 'creat' style = 'top: 370px; left:10px;' > 🪄 </button>
+    <button id = 'sphere' style = 'top: 400px; left:20px;' > 🌐 </button>
+    <button id = 'cube' style = 'top: 430px; left:20px;' > 📦 </button>
+    <button id = 'pick' style = 'top: 460px; left:20px;' > ⌖ </button>
+    <button id = 'move/3' style = 'top: 490px; left:20px;' > 💫 </button>
+    <button id = 'x_z/3' style = 'top: 520px; left:30px;' > ⤮ </button>
+    <button id = 'y/3' style = 'top: 550px; left:30px;' > ⇡ </button> 
+    <button id = 'custom' style = 'top: 220px; left: 100px;' > ♾ </button>
+    <button id = 'new/3' style = 'top: 250px; left: 20px;' > + </button>
+    <button id = 'construct' style = 'top: 280px; left: 20px;' > 🌐 </button>
+    <button id = 'move/4' style = 'top: 310px; left: 20px;' > 💫 </button>
+    <button id = 'x_z/4' style = 'top: 340px; left: 30px;' > ⤮ </button>
+    <button id = 'y/4' style = 'top: 370px; left: 30px;' > ⇡ </button>
+
+    <!-- <button id = 'see' style = 'top: 10px; left: 0px;' > </button>
+    <button id = 'edit' style = 'top: 40px; left: 0px;' > </button>
+    <button id = 'rail' style = 'top: 70px; left: 10px;' > </button>
+    <button id = 'new' style = 'top: 100px; left: 20px;' > </button>
+    <button id = 'move' style = 'top: 130px; left: 20px;' > </button>
+    <button id = 'x_z' style = 'top: 160px; left: 30px;' > </button>
+    <button id = 'y' style = 'top: 190px; left: 30px;' > </button>
+    <button id = 'poll' style = 'top: 220px; left: 10px;' > </button>
+    <button id = 'new/2' style = 'top: 250px; left: 20px;' > </button>
+    <button id = 'move/2' style = 'top: 280px; left: 20px;' > </button>
+    <button id = 'x_z/2' style = 'top: 310px; left: 30px;' > </button>
+    <button id = 'y/2' style = 'top: 340px; left: 30px;' > </button>
+    <button id = 'creat' style = 'top: 370px; left: 10px;' > </button>
+    <button id = 'sphere' style = 'top: 400px; left: 20px;' > </button>
+    <button id = 'cube' style = 'top: 430px; left: 20px;' > </button>
+    <button id = 'pick' style = 'top: 460px; left: 20px;' > </button>
+    <button id = 'x_z/3' style = 'top: 490px; left: 30px;' > </button>
+    <button id = 'y/3' style = 'top: 520px; left: 30px;' > </button>
+    -->
+  </div>
+
+  <button id="toggle-crossover" class="control-square-button" style="
+    position: absolute;
+    left: 20px;
+    top: 20px;
+    padding: 10px;
+    font-size: 14px;
+    z-index: 10;
+    backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
+    ">ランダム立体交差（クアトロ交差）切替</button> 
+
+  <div id="frontViewButtons" style="position: fixed; top: 20px; right: 20px; z-index: 100;">
+    <button class="frontViewBtn" data-train="1">1番線</button>
+    <button class="frontViewBtn" data-train="2">2番線</button>
+    <button class="frontViewBtn" data-train="3">3番線</button>
+    <button class="frontViewBtn" data-train="4">4番線</button>
+  </div>
   
-  <button id="mode-change" class="control-button" style="right: 20px; top: 40px;">
-    <span class="icon-wrapper">
-      <span class="background-icon">🌐</span>
-      <span class="foreground-icon">🛠️</span>
-    </span>
-  </button>
+  <!-- 🌞 昼夜切り替えボタン -->
+  <button id="toggle-daynight" style="
+    position: fixed;
+    top: 70px;
+    left: 20px;
+    z-index: 10;
+    padding: 10px 15px;
+    font-size: 16px;
+    border-radius: 8px;
+  ">🌙 夜にする</button>
 
-  <button id="edit-rotation" class="control-button" style="right: 20px; bottom: 40px;"> 
-    <span class="icon-wrapper">
-      <span class="background-icon">⏥</span>
-      <span class="foreground-icon">⤮</span>
-    </span>
-  </button>
-
-  <button id="create-pole" class="control-button" style="right: 95px; top: 40px; display: none;">
-    <span class="icon-wrapper">
-      <span class="background-icon"></span>
-      <span class="foreground-icon">⚡️</span>
-    </span>
-  </button>
-
-  <button id="draw-track" class="control-button" style="right: 170px; top: 40px; display: none;">
-    <span class="icon-wrapper">
-      <span class="background-icon"></span>
-      <span class="foreground-icon">🛤️</span>
-    </span>
-  </button>
-
-  <button id="track-create-new" class="control-button" style="right: 170px; top: 115px; display: none;">➕</button>
-  <button id="track-move-existing" class="control-button" style="right: 170px; top: 190px; display: none;">↔️</button>
+  <button id = "logwindow" class="log-control-square-button" style="
+  position: absolute;
+  left: 130px;
+  top: 20px;
+  padding: 10px;
+  font-size: 14px;
+  color: #000;
+  z-index: 10;
+  backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
+  ">モバイル出力用</button> 
 
   <canvas id="three-canvas"></canvas>
+  
+  <footer class="credits-footer" role="contentinfo" aria-label="出典情報">
+    <small>
 
-  <!-- <script src="functions.js"></script> -->
-  <script type="module" src="main.js"></script>
+      (ℹ️ <a href="https://github.com/mtur2007/java_three_3D/blob/main/README.md" target="_blank" rel="noopener noreferrer">操作方法はこちら</a>)
+      [クレジット / 
+      データ:
+      <a href="https://plateauview.mlit.go.jp/" target="_blank" rel="noopener noreferrer">PLATEAU</a>（国土交通省）|
+      ビジュアライズ: 
+      <a href="https://threejs.org/" target="_blank" rel="noopener noreferrer">
+      three.js (r0.169.0, MIT)</a> | 
+      変換: 
+      <a href="https://github.com/Project-PLATEAU/PLATEAU-GIS-Converter" target="_blank" rel="noopener noreferrer">
+      PLATEAU GIS Converter</a> ]
+    </small>
+  </footer>
+  
+  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/ui_toggle.js"></script>
+
 </body>
 </html>
