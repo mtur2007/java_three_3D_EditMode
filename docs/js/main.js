@@ -126,7 +126,7 @@ const loader = new THREE.TextureLoader();
     envMap = texture;
   });
 
-loader.load('textures/night.jpg', (texture_night) => {
+loader.load('textures/shanghai_bund_4k.jpg', (texture_night) => {
   texture_night.mapping = THREE.EquirectangularReflectionMapping;
   texture_night.colorSpace = THREE.SRGBColorSpace;
   // scene.background = texture_night;
@@ -673,24 +673,24 @@ function TrainSettings(
     // light.position.set(0,0,0);
     // car.add(light);
 
-    if (i === 0){
-      const headlight = new THREE.SpotLight(0xfff5e1, 7);
-      headlight.angle = Math.PI / 8;
-      headlight.penumbra = 0.2;
-      headlight.distance = 10;
-      headlight.decay = 1;
-      headlight.castShadow = false;
+    // if (i === 0){
+    //   const headlight = new THREE.SpotLight(0xfff5e1, 7);
+    //   headlight.angle = Math.PI / 8;
+    //   headlight.penumbra = 0.2;
+    //   headlight.distance = 10;
+    //   headlight.decay = 1;
+    //   headlight.castShadow = false;
 
-      headlight.position.set(0, -0.3, 1);  // 先頭部に合わせて調整（電車前方向に）
-      car.add(headlight);
-      car.add(headlight.target);   // スポットライトはtargetが必須
-      headlight.target.position.set(0, 0, 4);  // 向き（車両前方）に合わせて調整
+    //   headlight.position.set(0, -0.3, 1);  // 先頭部に合わせて調整（電車前方向に）
+    //   car.add(headlight);
+    //   car.add(headlight.target);   // スポットライトはtargetが必須
+    //   headlight.target.position.set(0, 0, 4);  // 向き（車両前方）に合わせて調整
 
-      // const light = new THREE.PointLight(0xffffff, 3, 5);
-      // light.position.set(0,0,0);
-      // car.add(light);
+    //   // const light = new THREE.PointLight(0xffffff, 3, 5);
+    //   // light.position.set(0,0,0);
+    //   // car.add(light);
 
-    } 
+    // } 
     
     // ▼ パンタグラフ設置（例: 1, 4, 7 両目など）
     if (i % 3 === 1) {
@@ -1307,19 +1307,19 @@ TSys.createRail(line_3)
 TSys.createRail(line_4)
 
 // 駅(プラットホーム)を生成
-TSys.createStation(track1,track2,200,y,0.7, '|[]|') // 島式 |[]| : 相対式 []||[]
-TSys.createStation(track3,track4,200,y,0.7, '|[]|') // 島式 |[]| : 相対式 []||[]
+TSys.createStation(track1,track2,200,y,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
+TSys.createStation(track3,track4,200,y,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
 
 // 駅(屋根)を生成
 TSys.placePlatformRoof(roof_track1,roof_track2,y+1.4,10)
 TSys.placePlatformRoof(roof_track3,roof_track4,y+1.4,10)
 
 const door_interval = train_width + car_Spacing
-const track1_doors = TSys.placePlatformDoors(track1, 0.9, door_interval, 'left');  // 左側に設置
-const track2_doors = TSys.placePlatformDoors(track2, 0.9, door_interval, 'right');  // 左側に設置
+const track1_doors = TSys.placePlatformDoors(track1, 0.7, door_interval, 'left');  // 左側に設置
+const track2_doors = TSys.placePlatformDoors(track2, 0.7, door_interval, 'right');  // 左側に設置
 
-const track3_doors = TSys.placePlatformDoors(track3, 0.9, door_interval, 'left');  // 左側に設置
-const track4_doors = TSys.placePlatformDoors(track4, 0.9, door_interval, 'right');  // 左側に設置
+const track3_doors = TSys.placePlatformDoors(track3, 0.7, door_interval, 'left');  // 左側に設置
+const track4_doors = TSys.placePlatformDoors(track4, 0.7, door_interval, 'right');  // 左側に設置
 
 // 壁の生成
 TSys.createWall(wall_track1,wall_track2,40,0.85,-0.85, 0.1, 0.1)
@@ -1419,14 +1419,14 @@ const add_speed = 0.000001 // 追加速度(加速/減速)
 const exhibition_tyuou = TrainSettings(
   train_width,
   0xa15110,
-  12,
+  3,
   1,
 );
 
 const exhibition_soubu = TrainSettings(
   train_width,
   0xaaaa00,
-  10,
+  3,
   1,
 );
 

@@ -237,7 +237,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
 
 // // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
-await loadModelToScene('trainD.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
+await loadModelToScene('trainG.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
   .then((root) => {
     console.log('GLB loaded and added to scene:', root);
     console.log('GLB',car)
