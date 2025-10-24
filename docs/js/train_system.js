@@ -902,30 +902,36 @@ export class TrainSystem {
 
     const points_1 = track_1.getPoints(delicacy);
     const points_2 = track_2.getPoints(delicacy);
-  
-    let track_1_s = 0;
-    let track_1_after = track_1_s
-    let track_1_m = points_1[0];
-    let track_1_f = points_1[1];
-  
-    let track_2_s = 0;
-    let track_2_after = track_2_s
-    let track_2_m = points_2[0];
-    let track_2_f = points_2[1];
-  
-    let track_1_diff = 0
-    let track_2_diff = 0
-  
+
+    let track_1_diff = Math.atan2(points_1[1].x - points_1[0].x,points_1[1].z - points_1[0].z) + (90 * Math.PI/180)
     let track_1a_atan2 = 0
     let track_1b_atan2 = 0
+
+    let track_1_s = 0
+    let track_1_after = 0
+    let track_1_m = points_1[0].clone();
+    track_1_m.x -= Math.sin(track_1_diff) *margin; // dx
+    track_1_m.z -= Math.cos(track_1_diff) *margin; // dy
+
+    let track_1_f = points_1[1];
+
+    let track_2_diff = Math.atan2(points_2[0].x - points_2[1].x,points_2[0].z - points_1[1].z) - (90 * Math.PI/180)
   
     let track_2a_atan2 = 0
     let track_2b_atan2 = 0
-  
+
+    let track_2_s = 0;
+    let track_2_after = 0
+    let track_2_m = points_2[0].clone();
+    track_2_m.x += Math.sin(track_1_diff) *margin; // dx
+    track_2_m.z += Math.cos(track_1_diff) *margin; // dy
+
+    let track_2_f = points_2[1];
+
     for (let i = 1; i < delicacy-3; i++) {
   
       track_1_after = track_1_m.clone();
-  
+      
       track_1_s = points_1[i-1].clone();
       track_1_m = points_1[i].clone();
       track_1_f = points_1[i+1].clone();

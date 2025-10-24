@@ -573,6 +573,9 @@ function createPantograph(Arm_rotation_z) {
   pantograph.add(contactGroup.clone())
   contactGroup.position.x = 0.05
   pantograph.add(contactGroup.clone())
+
+  pantograph.scale.set(1.8,1.3,1.8)
+
   return pantograph;
 }
 
@@ -588,7 +591,7 @@ function TrainSettings(
 ) {
   // const geo = new THREE.BoxGeometry(1, 1, length);
   // const geo = scene.getObjectById('train')//new THREE.BoxGeometry(1, 1, length);
-  console.log(geo)
+  // console.log(geo)
 
   const loader = new THREE.TextureLoader();
 
@@ -695,11 +698,11 @@ function TrainSettings(
     // ▼ パンタグラフ設置（例: 1, 4, 7 両目など）
     if (i % 3 === 1) {
       const pantograph = createPantograph(Math.PI / 2.7);
-      pantograph.position.set(0, 0.5, 2.8);
+      pantograph.position.set(0, 0.9, 5);
       car.add(pantograph);
 
       const pantograph2 = createPantograph(Math.PI / -2.1);
-      pantograph2.position.set(0, 0.5, -2.8);
+      pantograph2.position.set(0, 0.9, -5);
       car.add(pantograph2);
     }
 
@@ -762,9 +765,8 @@ function moveDoorsFromGroup(group, mode, distance = 0.32, duration = 2000) {
   });
 }
 
-
 // 列車の運行
-async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_point=0.5, start_position = 0) {
+async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_position={x: 0, y:0, z:0}, start_position = 0) {
 
   const Equal_root = TSys.getPointsEveryM(root, 0.01); // spacing=0.1mごと（細かすぎたら25に）
 
@@ -783,14 +785,27 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
   let t = start_position
 
   let speed = max_speed
-  let stop_point_diff = 0
+  let brake_range = 0
 
   while (speed >= 0){
     speed -= add_speed
-    stop_point_diff += speed};
+    brake_range += speed
+  };
+  brake_range = brake_range/length
   
-  const brake_point = stop_point - stop_point_diff
-
+  let min_index = 0
+  let min_range = Math.sqrt((Equal_root[min_index].x - stop_position.x) ** 2 + (Equal_root[min_index].z - stop_position.z)**2)
+  
+  for (let i = 0; i < totalPoints; i++){
+    let range =  Math.sqrt((Equal_root[i].x - stop_position.x) ** 2 + (Equal_root[i].z - stop_position.z)**2)
+    if (min_range > range){
+          min_range = range
+          min_index = i
+        }
+  }
+  
+  const brake_point = ((min_index/totalPoints) - brake_range)
+ 
   speed = max_speed
   
   let train_stoped = false
@@ -870,7 +885,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
         if (speed >= max_speed){speed = max_speed}
       }
       
-      t += speed;
+      t += (speed / length);
 
     } else {
 
@@ -922,7 +937,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-let y = 0
+let y = 6
 let Points_0 = []
 let Points_1 = []
 let Points_2 = []
@@ -939,8 +954,6 @@ let sinkansen_downbound_point = []
 let J_UJT_upbound_point = []
 let J_UJT_downbound_point = []
 
-
-y = 6
 const x_plus = 10
 const z_plus = 0
 const points = [
@@ -954,14 +967,28 @@ const points = [
   new THREE.Vector3(-5.198+x_plus, y-0.5, -107.883+z_plus),
 ]
 
+// main.js:2413 Vector3 {x: 27.362789238915582, y: 6.7, z: -156.65847734671016}
+// main.js:2413 Vector3 {x: 13.674506391911471, y: 6.5, z: -109.71311408416359}
+// main.js:2413 Vector3 {x: 5.5, y: 6, z: -50}
+// main.js:2413 Vector3 {x: 4.8, y: 6, z: -30}
+// main.js:2413 Vector3 {x: 4.8, y: 6, z: 50}
+// main.js:2413 Vector3 {x: 3, y: 6, z: 90}
+
 // --- JR中央線 track1 ---
 Points_0 = [
-  points[0],
-  points[1],
-  new THREE.Vector3(5.5, y, -50),
-  new THREE.Vector3(4.8, y, -30),
-  new THREE.Vector3(4.8, y, 50),     // お茶の水駅上空
-  new THREE.Vector3(3,y, 90), // 高架にする（y = 5）
+  new THREE.Vector3(392.67128478550694, y+0, -315.4410334832834 ),
+  new THREE.Vector3(341.30868102543195, y+0, -309.49474122471236 ),
+  new THREE.Vector3(287.24800128479785, y+0, -312.5420028222788 ),
+  new THREE.Vector3(224.77795156569454, y+0, -318.9938410288555 ),
+  new THREE.Vector3(154.41186961512471, y+0, -305.99512585620516 ),
+  new THREE.Vector3(118.18373131857555, y+0, -289.65403713174567 ),
+  new THREE.Vector3(91.81581239850537, y+0, -267.3829714557229 ),
+  new THREE.Vector3(62.11492680745896, y+0, -227.4627003441265 ),
+  new THREE.Vector3(27.362789238915582, y+0, -156.65847734671016 ),
+  new THREE.Vector3(12.081417809592365, y+0, -101.4484841825282 ),
+  new THREE.Vector3(4.8, y+0, -30 ),
+  new THREE.Vector3(4.8, y+0, 50 ),
+  new THREE.Vector3(3, y+0, 90 ), 
 ];
 // --- JR総武線 track2 ---
 Points_1 = [
@@ -974,25 +1001,44 @@ Points_1 = [
   new THREE.Vector3(-2, y, 90),
 ];
 
+Points_1 = [
+  new THREE.Vector3(-43.571731795652404, y+2.3000000000000007, -377.3311248469534),
+  new THREE.Vector3(-2.1415088979495724, y+2.3000000000000007, -149.48184156347162),
+  new THREE.Vector3(3.7202437230172687, y+2.3000000000000007, -115.68534135136476),
+  new THREE.Vector3(5.541472868705854, y+1.74852420099009, -92.18884113812409),
+  new THREE.Vector3(2.5, y+0, -50),
+  new THREE.Vector3(0.8, y+0, -25),
+  new THREE.Vector3(0.8, y+0, 50),
+  new THREE.Vector3(-2, y+0, 90),
+];
+
 // --- JR総武線 track3 ---
 Points_2 = [
-  new THREE.Vector3(-13.3, y+2.3, -170),
-  points[4],
-  points[5],
-  new THREE.Vector3(1, y, -50),
-  new THREE.Vector3(-0.8, y, -20),
-  new THREE.Vector3(-0.8, y, 50),     // お茶の水駅上空
-  new THREE.Vector3(-4,y, 90), // 高架にする（y = 5）
+  new THREE.Vector3(-45.47310236345598, y+2.3000000000000007, -377.494629127616),
+  new THREE.Vector3(-3.6618605957936374, y+2.3000000000000007, -149.00032744321223),
+  new THREE.Vector3(2.266473355551746, y+2.3000000000000007, -115.80757087048603),
+  new THREE.Vector3(4.274072749256901, y+1.7741472129005063, -92.4998197955785),
+  new THREE.Vector3(1, y+0, -50),
+  new THREE.Vector3(-0.8, y+0, -20),
+  new THREE.Vector3(-0.8, y+0, 50),
+  new THREE.Vector3(-4, y+0, 90),
 ];
 
 // --- JR中央線 track4 ---
 Points_3 = [ 
-  points[6],
-  points[7],
-  new THREE.Vector3(-2.5, y, -50),
-  new THREE.Vector3(-4.8, y, -20),
-  new THREE.Vector3(-4.8, y, 40),
-  new THREE.Vector3(-9, y, 90),
+  new THREE.Vector3(393.561145412789, y+0, -315.9595156679564 ),
+  new THREE.Vector3(340.9694343527353, y+0, -314.9710829078885 ),
+  new THREE.Vector3(296.0480030791661, y+0, -316.75865481692887 ),
+  new THREE.Vector3(235.69605471297635, y+0, -321.8365879658148 ),
+  new THREE.Vector3(153.95353586373534, y+0, -308.2106768420461 ),
+  new THREE.Vector3(117.52923302304345, y+0, -291.816121770434 ),
+  new THREE.Vector3(87.46491962573573, y+0, -265.4477312735476 ),
+  new THREE.Vector3(38.79449255756082, y+0.40000000000000036, -189.92134871967772 ),
+  new THREE.Vector3(9.740057031467396, y+-0.5, -126.966638691169 ),
+  new THREE.Vector3(-2.2934311218832653, y+0, -52.254625245314486 ),
+  new THREE.Vector3(-4.8, y+0, -20 ),
+  new THREE.Vector3(-4.8, y+0, 40 ),
+  new THREE.Vector3(-9, y+0, 90 ),
 ];
 
 // --- JR京浜東北線(JK) 上り(upbound) ---
@@ -1262,6 +1308,10 @@ const station_loof_f = { x:-0.3852393328186856 , y:6.394628223749855 , z:-3.5351
 const station_f = { x:-0.023948863771414863, y:6.394628223749855, z:47.51354120550737 }
 const wall_f = {x:3.5989745081382956, y:6.394628223749855, z:-97.26135689524132}
 const tunnel_f ={ x: 6.600868195728852, y: 7.382920205399699, z: -114.92055445840528}
+const GirderBridge_2s = { x: 5.001398579127916, y:8.083673215609398, z:-112.97485249672447}
+const GirderBridge_3s = { x:4.230750095101928, y:8.083673215609398, z:-107.2650424352493}
+const GirderBridge_2f = { x:0.6169566203936264, y:8.083673215609398, z:-131.36793571309448}
+const GirderBridge_3f = { x:-0.25619051153051203, y:8.083673215609398, z:-129.1500954585025}
 
 const track1 = findCurveRange(line_1, station_s, station_f)
 const track2 = findCurveRange(line_2, station_s, station_f)
@@ -1282,6 +1332,12 @@ const wall_track4 = findCurveRange(line_4, station_s, wall_f)
 const tunnel_1 = findCurveRange(line_4, wall_f, tunnel_f)
 const tunnel_2 = findCurveRange(line_4, wall_f, tunnel_f)
 
+const bridge_2 = findCurveRange(line_2, GirderBridge_2s, GirderBridge_2f)
+const bridge_3 = findCurveRange(line_3, GirderBridge_3s, GirderBridge_3f)
+
+const Elevated_2 = findCurveRange(line_2, Points_1[0], GirderBridge_2s)
+const Elevated_3 = findCurveRange(line_3, Points_2[0], GirderBridge_3f)
+
 TSys.createTrack(line_1, 1.83, 0x000000)
 TSys.createTrack(line_2, 1.83, 0x000000)
 
@@ -1297,8 +1353,8 @@ TSys.generateElevated(sliceCurvePoints(line_2, Elevated_start, Elevated_end), 10
 TSys.generateElevated(sliceCurvePoints(line_3, Elevated_start+0.02, Elevated_end), 10, interval);
 TSys.generateElevated(line_4, 10, interval);
 
-TSys.createBridgeGirder(sliceCurvePoints(line_2, 0, Elevated_start), 10, interval);
-TSys.createBridgeGirder(sliceCurvePoints(line_3, 0, Elevated_start+0.02), 10, interval);
+// TSys.createBridgeGirder(sliceCurvePoints(line_2, 0, Elevated_start), 10, interval);
+// TSys.createBridgeGirder(sliceCurvePoints(line_3, 0, Elevated_start+0.02), 10, interval);
 
 // 線路生成
 TSys.createRail(line_1)
@@ -1330,9 +1386,12 @@ const quantity = 3
 TSys.createWall(tunnel_1,tunnel_1,40,-0.9,-0.9,0,2.2)
 TSys.createWall(tunnel_1,tunnel_1,40,0.9,0.9,0,2.2)
 
-TSys.createWall(line_4,line_4,40,0.885,2,0,-4) // 線路側:壁
-TSys.createWall(line_4,line_4,40,10,10,-4,-3) // 対岸側:壁
-TSys.createWall(line_4,line_4,40,10,30,-3,-3) // 対岸側:地面
+const river = findCurveRange(line_4, Points_3[Points_3.length-1], {x:38.79449255756082, y:y+0.40000000000000036, z:-189.92134871967772 })
+console.log(river)
+
+TSys.createWall(river,river,40,0.885,2,0,-4) // 線路側:壁
+TSys.createWall(river,river,40,10,10,-4,-3) // 対岸側:壁
+TSys.createWall(river,river,40,10,30,-3,-3) // 対岸側:地面
 
 const water_material = new THREE.MeshStandardMaterial({
   color: 0x005555,         // 白ベース
@@ -1341,7 +1400,7 @@ const water_material = new THREE.MeshStandardMaterial({
   envMapIntensity: 1,    // 環境マップの反射強度（あるとリアル）
   side: THREE.DoubleSide   // 両面描画（必要なら）
 });
-TSys.createWall(line_4,line_4,40,2,10,-4,-4,0x003355,water_material)
+TSys.createWall(river,river,40,2,10,-4,-4,0x003355,water_material)
 
 const board_length_1 = tunnel_1.getLength(line_4)/quantity;
 const board_length_2 = tunnel_2.getLength(line_4)/quantity;
@@ -1394,13 +1453,13 @@ for(let i=0; i<Poles.children.length; i++){
 }
 scene.add(Poles)
 
-const poletrak = sliceCurvePoints(line_3, 0, 0.8);
+const poletrak = findCurveRange(line_3, Points_2[0], station_f)
 const point_data2 = TSys.RailMargin(TSys.getPointsEveryM(poletrak, 8), 1, true);
 const pole_line2 = point_data2[0]
 const pole_angle2 = point_data2[1]
 
 // right_height, left_height, beamLength, beam_height
-const Poles2 = TSys.createCatenaryPole(2.8,2.8,3.5,2.3, 16)
+const Poles2 = TSys.createCatenaryPole(2.8,2.8,3.5,2.3, 40)
 for(let i=0; i<Poles2.children.length; i++){
   Poles2.children[i].rotation.y += pole_angle2[i]
   Poles2.children[i].position.set(pole_line2[i].x,pole_line2[i].y,pole_line2[i].z)
@@ -1408,13 +1467,13 @@ for(let i=0; i<Poles2.children.length; i++){
 scene.add(Poles2)
 
 // 桁橋 実装中
-TSys.placeGirderBridge(sliceCurvePoints(line_2, 0.24, 0.32),sliceCurvePoints(line_3, 0.25, 0.34),8,2)
+TSys.placeGirderBridge(bridge_2,bridge_3,8,2)
 
 // 電車の運行
 // const max_speed = 0.001 // 制限速度(最高)
 // const add_speed = 0.0000010 // 追加速度(加速/減速)
-const max_speed = 0.0004 // 制限速度(最高)
-const add_speed = 0.000001 // 追加速度(加速/減速)
+const max_speed = 0.08 // 制限速度(最高)
+const add_speed = 0.00005 // 追加速度(加速/減速)
 
 const exhibition_tyuou = TrainSettings(
   train_width,
@@ -1547,10 +1606,10 @@ document.getElementById("toggle-crossover").addEventListener("touchstart", () =>
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, 0.7695)
-runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
-runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
-runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, 0.5439)
+runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
+runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
+runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
+runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
 
 // 全面展望 -----------------------------------------------------------------
 
@@ -1822,12 +1881,12 @@ TSys.generateElevated(J_UJT_upbound, 10, interval);
 
 // markPointsWithPins(sinkansen_upbound_point);
 // markPointsWithPins(sinkansen_downbound_point);
-
+// markPointsWithPins(Points_0);
 
 // レイキャストを作成
 const raycaster = new THREE.Raycaster();
-// resetMeshListOpacity(targetObjects, JK_downbound_point);
-// setMeshListOpacity(targetObjects, 0);
+resetMeshListOpacity(targetObjects, Points_3);
+setMeshListOpacity(targetObjects, 0);
 
 // for (let i = 1; i < 4; i++) {
 //   const cube = new THREE.Mesh(geometry, material.clone()); // 色変更できるようにclone
@@ -1920,19 +1979,20 @@ function drawingObject(){
   const line = new THREE.CatmullRomCurve3(Points);
 
 
-  // TSys.generateElevated(line, 5, 1);
-  if (editObject === 'ORIGINAL'){
-    if (dragging){
-      TSys.createTrack(line, 0, 0x00ff00, 'Rail')
-    } else {
-      const mesh = TSys.createBoxBetweenPoints3D(Points[0], Points[1], 0.1, 0.1)
-      mesh.name = 'OBJECT' + group_EditNow
-      group_object[group_EditNow] = mesh
-      scene.add(mesh)
-    }
-  }else{
-    TSys.createRail(line, true)
-  }
+  // TSys.generateElevated(line, 5, 1, 'Rail');
+  TSys.createTrack(line, 0, 0x00ff00, 'Rail')
+  // if (editObject === 'ORIGINAL'){
+  //   if (dragging){
+  //     TSys.createTrack(line, 0, 0x00ff00, 'Rail')
+  //   } else {
+  //     const mesh = TSys.createBoxBetweenPoints3D(Points[0], Points[1], 0.1, 0.1)
+  //     mesh.name = 'OBJECT' + group_EditNow
+  //     group_object[group_EditNow] = mesh
+  //     scene.add(mesh)
+  //   }
+  // }else{
+  //   TSys.createRail(line, true)
+  // }
   // console.log(positions); // [Vector3, Vector3, ...]
 }
 
@@ -2072,7 +2132,6 @@ async function onerun_search_point() {
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
-        console.log('1_green')
         choice_object.material.color.set(0xff0000)
         GuideLine.visible = false
         GuideGrid.visible = false
@@ -2095,7 +2154,6 @@ async function onerun_search_point() {
   
 
   } else {
-    console.log('1_green_clean')
     if (choice_object !== false){choice_object.material.color.set(0xff0000)}
     choice_object = false;
 
@@ -2363,8 +2421,13 @@ async function handleMouseUp(mobile = false) {
         } else {
           point = coord_DisplayTo3D(choice_object.position)
         }
-
-        // console.log(targetObjects)
+        
+        let txt = ''
+        for (let i = 0; i < targetObjects.length; i++){
+          const pos = targetObjects[i].position
+          txt += ' new THREE.Vector3('+pos.x+', y+'+(pos.y - y)+', '+pos.z+' ),\n'
+        }
+        console.log(txt)
 
         // if (editObject === 'ORIGINAL'){}
         choice_object.position.set(point.x,point.y,point.z)
@@ -2412,7 +2475,9 @@ async function handleMouseDown() {
     const point = coord_DisplayTo3D();
     const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone());
     if (editObject === 'RAIL' || editObject === 'CUSTOM'){
+
       cube_clone.position.set(point.x, point.y, point.z);
+      // cube_clone.position.set(5.1567957781852725, 5.786358250355474, 37.50032584968354);
       scene.add(cube_clone);
       targetObjects.push(cube_clone);
 

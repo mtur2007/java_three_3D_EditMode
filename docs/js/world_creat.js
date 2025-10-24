@@ -198,7 +198,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
               }
 
               // 確認用ログ
-              console.log(o.name, o.material.name || '(no name)', o.material.envMapIntensity);
+              // console.log(o.name, o.material.name || '(no name)', o.material.envMapIntensity);
             }
           });
 
@@ -240,7 +240,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
 await loadModelToScene('trainG.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
   .then((root) => {
     console.log('GLB loaded and added to scene:', root);
-    console.log('GLB',car)
+    // console.log('GLB',car)
   })
   .catch((err) => {
     console.error('モデルの読み込みで失敗:', err);
@@ -710,8 +710,8 @@ function createDoubleArcPoints(params1, params2) {
   return ArchBridge
 }
 const ArchBridge = createDoubleArcPoints(arcA, arcB)
-ArchBridge.position.set(-6.2,-17,-145)
-ArchBridge.rotation.y = 107 * Math.PI / 180
+ArchBridge.position.set(-4,-17,-145)
+ArchBridge.rotation.y = 1.750662913747207//79.66 * Math.PI / 180
 scene.add(ArchBridge)
 
 console.log('return',car)
