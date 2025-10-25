@@ -766,7 +766,7 @@ function moveDoorsFromGroup(group, mode, distance = 0.32, duration = 2000) {
 }
 
 // 列車の運行
-async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_position={x: 0, y:0, z:0}, start_position = 0) {
+async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_position={x: 0, y:0, z:0}, start_position = 0, rapid = false, random_time = 1) {
 
   const Equal_root = TSys.getPointsEveryM(root, 0.01); // spacing=0.1mごと（細かすぎたら25に）
 
@@ -808,7 +808,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
  
   speed = max_speed
   
-  let train_stoped = false
+  let train_stoped = rapid
   if (quattro > 0){train_stoped = true}
 
   trainCars.visible = false;   // 再表示する
@@ -825,7 +825,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
   const front_right = trainCars.userData.cars[0].children[0]
 
   // ランダムな秒数（1000〜5000ミリ秒）
-  await sleep( 1000 + Math.random() * 15000);
+  await sleep( 1000 + (Math.random()*random_time) * 15000);
   trainCars.visible = true;   // 再表示する
 
   async function runCar() {
@@ -838,9 +838,9 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
       };
 
       speed = max_speed
-      train_stoped = false
+      train_stoped = rapid
       t = 0
-      await sleep( 1000 + Math.random() * 20000);
+      await sleep( 1000 + (Math.random()*random_time) * 15000);
       // return NaN
       
     }
@@ -1473,7 +1473,7 @@ TSys.placeGirderBridge(bridge_2,bridge_3,8,2)
 // const max_speed = 0.001 // 制限速度(最高)
 // const add_speed = 0.0000010 // 追加速度(加速/減速)
 const max_speed = 0.08 // 制限速度(最高)
-const add_speed = 0.00005 // 追加速度(加速/減速)
+const add_speed = 0.000065 // 追加速度(加速/減速)
 
 const exhibition_tyuou = TrainSettings(
   train_width,
@@ -1526,8 +1526,77 @@ const Train_3 = TrainSettings(
   1,
 );
 
+const Train_5 = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+
+const Train_6 = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+
+const Train_7 = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+const Train_8 = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+
+const Train_9 = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+const Train_a = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+
+const Train_b = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+const Train_c = TrainSettings(
+  train_width,
+  0xaaaaaa,
+  10,
+  1,
+);
+
+
 const reversedCurve_3 = new THREE.CatmullRomCurve3(
   line_3.getPoints(100).reverse()
+);
+
+const J_UJT_U = new THREE.CatmullRomCurve3(
+  J_UJT_upbound.getPoints(100).reverse()
+);
+const si_U = new THREE.CatmullRomCurve3(
+  sinkansen_upbound.getPoints(100).reverse()
+);
+
+const JK_U = new THREE.CatmullRomCurve3(
+  JK_upbound.getPoints(100).reverse()
+);
+
+const JY_U = new THREE.CatmullRomCurve3(
+  JY_upbound.getPoints(100).reverse()
 );
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1610,6 +1679,19 @@ runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x:
 runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
 runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
 runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
+
+runTrain(Train_5, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_6, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_7, sinkansen_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_8, si_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+
+runTrain(Train_9, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_a, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+
+runTrain(Train_b, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_c, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+
+// runTrain(, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654}, true)
 
 // 全面展望 -----------------------------------------------------------------
 

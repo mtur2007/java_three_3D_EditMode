@@ -338,20 +338,26 @@ export class TrainSystem {
   // 線路の座標を指定されたmで均等に分ける為の関数
   getPointsEveryM(curve, interval = 25) {
     const length = curve.getLength();
-    const divisions = Math.floor(length / interval);
     const points = [];
-
-    let num = divisions
-    for (let i = 0; i <= divisions; i++) {
-        const t = Math.min((interval * i) / length,1);
-        const point = curve.getPointAt(t).clone();
-        points.push(point);
+  
+    // 等間隔の精度向上（必要に応じて増やす）
+    curve.arcLengthDivisions = Math.max(200, Math.ceil(length / interval) * 10);
+  
+    // 距離 s を 0..length で刻む
+    for (let s = 0; s <= length; s += interval) {
+      const u = s / length;                 // u は 0..1
+      points.push(curve.getPointAt(u).clone());
     }
-
+  
+    // 終点 (u=1) を必ず追加（重複チェック）
+    const end = curve.getPointAt(1);
+    const last = points[points.length - 1];
+    if (!last || last.distanceTo(end) > 1e-6) {
+      points.push(end.clone());
+    }
+  
     return points;
-    }
-
-  // --- 角度計算 ---
+  }  // --- 角度計算 ---
   
   // 縦方向の角度を求める関数
   getVerticalAngle(p1, p2) {
