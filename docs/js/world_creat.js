@@ -83,7 +83,7 @@ if (useDraco) {
   gltfLoader.setDRACOLoader(dracoLoader);
 }
 
-let car = null
+let car = [null,null,null]
 
 /**
  * modelUrl の glb を読み込んでシーンに追加するユーティリティ。
@@ -92,7 +92,8 @@ let car = null
  * - マテリアルに scene.environment を適用（PBR反射）
  * - シャドウ設定（必要なら有効化）
  */
-async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
+
+async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkansen = 0) {
   const {
     autoCenter = true,
     autoScaleMax = 1000,   // モデルの最大寸法がこの値を超えるなら縮小する閾値
@@ -171,8 +172,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
         } else {
           root.position.set(0.5,0,0)
           root.scale.setScalar(0.5);
-          console.log(root)
-
+         
           // --- root以下のメッシュに対してマテリアル調整 ---
           root.traverse(o => {
             if (o.isMesh && o.material) {
@@ -202,8 +202,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
             }
           });
 
-          car = root
-
+          car[sinkansen] = root
           
         }
 
@@ -238,6 +237,26 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true) {
 // // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
 await loadModelToScene('trainG.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
+  .then((root) => {
+    console.log('GLB loaded and added to scene:', root);
+    // console.log('GLB',car)
+  })
+  .catch((err) => {
+    console.error('モデルの読み込みで失敗:', err);
+    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+  });
+
+await loadModelToScene('sin_3.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false,1)
+  .then((root) => {
+    console.log('GLB loaded and added to scene:', root);
+    // console.log('GLB',car)
+  })
+  .catch((err) => {
+    console.error('モデルの読み込みで失敗:', err);
+    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+  });
+
+await loadModelToScene('sin_2.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false,2)
   .then((root) => {
     console.log('GLB loaded and added to scene:', root);
     // console.log('GLB',car)

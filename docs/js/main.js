@@ -75,7 +75,10 @@ const train_width = 6.8
 const car_Spacing = 0.15
 
 console.log('WorldCreat')
-let geo = await WorldCreat(scene, train_width, car_Spacing);
+let loadcars = await WorldCreat(scene, train_width, car_Spacing);
+let geo = loadcars[0]
+
+console.log('cars : ',loadcars)
 console.log('geo : ',geo)
 
 // world_creat()
@@ -724,6 +727,84 @@ function TrainSettings(
   
 }
 
+// 車両設定（新幹線用）
+function Sin_TrainSettings(
+  cars,
+  textureHead = {},
+  textureMiddle = {},
+  textureTail = {}
+) {
+  // const geo = new THREE.BoxGeometry(1, 1, length);
+  // const geo = scene.getObjectById('train')//new THREE.BoxGeometry(1, 1, length);
+  // console.log(geo)
+
+  const loader = new THREE.TextureLoader();
+
+  // テクスチャ読み込みヘルパー
+  function loadTexture(path) {
+    const texture = loader.load(path);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  const trainGroup = new THREE.Group(); // これをまとめる親
+  const trainCars = [];
+
+  for (let i = 0; i < cars; i++) {
+    let textureSet;
+
+    if (i === 0 && Object.keys(textureHead).length > 0) {
+      textureSet = textureHead;
+    } else if (i === cars - 1 && Object.keys(textureTail).length > 0) {
+      textureSet = textureTail;
+    } else {
+      textureSet = textureMiddle;
+    }
+
+    // const car = new THREE.Mesh(geo, materials.map(m => m.clone()));
+
+    // ▼ 車両の位置を z 方向にずらす（中央起点）
+    const spacing = 6.95; // 車両の長さと同じだけ間隔を空ける
+    let car = null
+    if (i === 0 || i === cars-1){
+      car = loadcars[1].clone()
+      car.position.z = - i * spacing;
+      if ( i === 0){
+        car.rotation.y = 90 * Math.PI/180
+      }
+    } else {
+      car = loadcars[2].clone()
+      car.position.z = - i * spacing;
+    }
+    
+    // ▼ パンタグラフ設置（例: 1, 4, 7 両目など）
+    if (i % 3 === 1) {
+      const pantograph = createPantograph(Math.PI / 2.7);
+      pantograph.position.set(0, 0.9, 5);
+ 
+      const pantograph2 = createPantograph(Math.PI / -2.1);
+      pantograph2.position.set(0, 0.9, -5);
+    }
+
+    // const Opposition = car.clone()
+    // Opposition.rotation.y = Math.PI
+    // trainCars.push(Opposition);
+    // trainGroup.add(Opposition); // グループに追加
+    
+    trainCars.push(car);
+    trainGroup.add(car); // グループに追加
+  }
+
+  trainGroup.userData.cars = trainCars; // 必要ならアクセスしやすく保存
+  trainGroup.visible = false;   // 再表示する
+  
+  scene.add(trainGroup); // シーンに一括追加
+
+  return trainGroup;
+  
+}
 
 // --- アニメーション ---
 // ホームドア開閉
@@ -874,7 +955,14 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
       
         car = trainCars.userData.cars[i]; // ← ここだけ変わる
         car.position.copy(Pos);
-        car.lookAt(Pos.clone().add(Tan));
+        if (i === 0){
+          Tan.x *= -1
+          Tan.z *= -1
+          Tan.y *= -1
+          car.lookAt(Pos.clone().add(Tan));
+        } else {
+          car.lookAt(Pos.clone().add(Tan));
+        }
       
       }
 
@@ -1540,17 +1628,11 @@ const Train_6 = TrainSettings(
   1,
 );
 
-const Train_7 = TrainSettings(
-  train_width,
-  0xaaaaaa,
+const Train_7 = Sin_TrainSettings(
   10,
-  1,
 );
-const Train_8 = TrainSettings(
-  train_width,
-  0xaaaaaa,
+const Train_8 = Sin_TrainSettings(
   10,
-  1,
 );
 
 const Train_9 = TrainSettings(
@@ -1682,8 +1764,9 @@ runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_s
 
 runTrain(Train_5, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 runTrain(Train_6, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_7, sinkansen_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_8, si_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+
+runTrain(Train_7, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+runTrain(Train_8, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
 runTrain(Train_9, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 runTrain(Train_a, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
