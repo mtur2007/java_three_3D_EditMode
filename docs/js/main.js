@@ -3166,6 +3166,10 @@ document.addEventListener('touchend',(e)=>{
   } else {
     ctrl_num = 0
     camera_num = 1
+
+    // 2本以上指が置かれいた場合に備えて、最後のベクトルを格納
+    lastPosition1 = { x: e.touches[e.touches.length-1].clientX, y: e.touches[e.touches.length-1].clientY }
+
   }
 
   // 編集モード
