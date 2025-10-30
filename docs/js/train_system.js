@@ -2,10 +2,39 @@
 import * as THREE from 'three';
 
 export class TrainSystem {
-  constructor(scene) {
+  constructor(scene, light) {
     this.scene = scene;
+    this.light = light
   }
-
+  
+  fitDirectionalLightShadowForObject(rootObj, light) {
+    const box = new THREE.Box3().setFromObject(rootObj);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+  
+    const factor = 1.25;
+    const halfWidth = Math.max(size.x, size.z) * factor * 0.5;
+  
+    light.target.position.copy(center);
+    this.scene.add(light.target);
+    light.target.updateMatrixWorld();
+  
+    light.shadow.camera.left = -halfWidth;
+    light.shadow.camera.right =  halfWidth;
+    light.shadow.camera.top =    halfWidth;
+    light.shadow.camera.bottom = -halfWidth;
+    light.shadow.camera.near = 0.5;
+    light.shadow.camera.far  = Math.max(500, size.y * 10);
+    light.shadow.mapSize.set(2048, 2048);
+    light.shadow.bias = -0.0005;
+    light.shadow.normalBias = 0.05;
+    light.shadow.radius = 4;
+    light.shadow.camera.updateProjectionMatrix();
+    light.updateMatrixWorld();
+  
+  
+  }
+  
   Map_pin(x, z, y = 5, Thickness = 0.5, color = 0xff0000) {
     const height = 5
     const geometry = new THREE.BoxGeometry(Thickness, height - 2, Thickness);
@@ -235,18 +264,21 @@ export class TrainSystem {
           
           // console.log(min_point.x+Math.sin(rotation)*obstacle_len,min_point.z+Math.cos(rotation)*obstacle_len,min_point.y)
           // // this.Map_pin(min_point.x+Math.sin(rotation)*obstacle_len,min_point.z+Math.cos(rotation)*obstacle_len,min_point.y)
-          this.createBridgePillar(min_point.x+Math.sin(rotation)*obstacle_len, min_point.z+Math.cos(rotation)*obstacle_len, position.y);
-          const avoid_point = {
-            x: min_point.x+Math.sin(rotation)*obstacle_len,
-            y: position.y,
-            z: min_point.z+Math.cos(rotation)*obstacle_len
-          }
-          const point = {
-            x: position.x,
-            y: position.y,
-            z: position.z
-          }
-          this.scene.add(this.createBoxBetweenPoints3D(point,avoid_point,0.15,0.7))
+         this.createBridgePillar(min_point.x+Math.sin(rotation)*obstacle_len, min_point.z+Math.cos(rotation)*obstacle_len, position.y);
+         min_point.x = min_point.x+Math.sin(rotation)*obstacle_len
+         min_point.z = min_point.z+Math.cos(rotation)*obstacle_len
+         
+         // const avoid_point = {
+          //   x: min_point.x+Math.sin(rotation)*obstacle_len,
+          //   y: position.y-0.3,
+          //   z: min_point.z+Math.cos(rotation)*obstacle_len
+          // }
+          // const point = {
+          //   x: position.x,
+          //   y: position.y-0.3,
+          //   z: position.z
+          // }
+          // this.scene.add(this.createBoxBetweenPoints3D(point,avoid_point,0.7,0.7))
 
 
           if (obstacle.length === 0){
@@ -409,9 +441,9 @@ export class TrainSystem {
   //物体を生成する補助関数
   createBoxBetweenPoints3D(p1, p2, thickness, depth, material = new THREE.MeshStandardMaterial({//color: 0x3399cc 
     color: 0xaaaaaa,      // 暗めのグレー（鉄色）
-    metalness: 0.8,       // 金属光沢最大
-    roughness: 0.1,       // 少しザラザラ（低くするとツルツル）
-    envMapIntensity: 1.0,    // 環境マップの反射強度（envMapを使うなら）
+    // metalness: 0.8,       // 金属光沢最大
+    // roughness: 0.1,       // 少しザラザラ（低くするとツルツル）
+    // envMapIntensity: 1.0,    // 環境マップの反射強度（envMapを使うなら）
     side: THREE.FrontSide,
   })
 ) {
@@ -441,6 +473,8 @@ export class TrainSystem {
     });
     const pillar = new THREE.Mesh(geometry, material);
     pillar.position.set(x, height / 2, z);
+    pillar.receiveShadow = true
+    pillar.castShadow = true;
     this.scene.add(pillar);
   }
   
@@ -488,30 +522,136 @@ export class TrainSystem {
     girder.rotation.y = Math.atan2(dx,dz)-1.57;
     girder.rotation.z = Math.atan2(dy,length);
     this.scene.add(girder);
+    
+    // this.fitDirectionalLightShadowForObject(girder, this.light)
+    girder.receiveShadow = true
+    girder.castShadow = true;
   }
 
   // 高架線路生成(線型に沿う)
-  generateElevated(curve, pillarInterval = 10, interval = 25, obstacle = false) {
+  generateElevated(curve, pillarInterval = 10, interval = 25, obstacle = false, curve2 = false) {
     const points = this.getPointsEveryM(curve, interval);
-
     const angles_y = this.RailMargin(points, 0, true)[1]
 
-    for (let i = 0; i < points.length; i += pillarInterval) {
-      const p = points[i];
-    if (!obstacle){
+    let points2 = false
+    let angles2_y = false
+    if (curve2 != false){
+      points2 = this.getPointsEveryM(curve2, interval);
+      angles2_y = this.RailMargin(points2, 0, true)[1]
+    }
+
+    for (let i = 0; i < points.length; i += pillarInterval*2) {
+      let p = points[i];
+      let p2 = points2[i];
+
+      let PillarPoint = points[i]
+     
+      if (!obstacle){
+          this.createBridgePillar(p.x, p.z, p.y);
+        } else {
+          const l_p = {x:p.x, y:p.y, z:p.z}
+          const pillar_Coordinatpoint = this.sampleCurveCoordinates(obstacle, l_p, angles_y[i], interval = 1)
+          const len =  pillar_Coordinatpoint.length
+          if (len === 0){
+            this.createBridgePillar(p.x, p.z, p.y);
+          } else {
+            console.log(pillar_Coordinatpoint[0])
+            PillarPoint = pillar_Coordinatpoint[0]
+          }
+        }
+    
+      if (i + pillarInterval < points.length) {
+        const p1e = points[i + pillarInterval];
+        this.createDeckSlab(p, p1e);
+      }
+
+      if (curve2 != false){
+        this.createBridgePillar(p2.x, p2.z, p2.y);
+        if (i + pillarInterval < points2.length) {
+          const p2e = points2[i + pillarInterval];
+          this.createDeckSlab(p2, p2e);
+        }
+      }
+
+    if (i + pillarInterval*2 < points.length) {
+  
+      p = points[i + 3];
+      let PillarPoint2 = p
+      if (!obstacle){
         this.createBridgePillar(p.x, p.z, p.y);
       } else {
         const l_p = {x:p.x, y:p.y, z:p.z}
-        const len = this.sampleCurveCoordinates(obstacle, l_p, angles_y[i], interval = 1).length
+        const pillar_Coordinatpoint = this.sampleCurveCoordinates(obstacle, l_p, angles_y[i], interval = 2)
+        const len =  pillar_Coordinatpoint.length 
         if (len === 0){
           this.createBridgePillar(p.x, p.z, p.y);
+        } else {
+          console.log(pillar_Coordinatpoint[0])
+          PillarPoint2 = pillar_Coordinatpoint[0]
         }
       }
-    
-      if (i + pillarInterval < points.length) {
-        const p2 = points[i + pillarInterval];
-        this.createDeckSlab(p, p2);
+
+      const p1e = points[i + pillarInterval*2];
+      this.createDeckSlab(p, p1e);
+  
+      if (p2 != undefined){
+        console.log(p2)
+        const avoid_point = {
+          x: PillarPoint.x,
+          y: p2.y-0.3,
+          z: PillarPoint.z
+        }
+        const point = {
+          x: p2.x,
+          y: p2.y-0.3,
+          z: p2.z
+        }
+        this.scene.add(this.createBoxBetweenPoints3D(point,avoid_point,0.7,0.7))
       }
+
+      p2 = points2[i + 3];
+      console.log(p2)
+      if (curve2 != false){
+        this.createBridgePillar(p2.x, p2.z, p2.y);
+        if (i + pillarInterval*2 < points2.length) {
+          const p2e = points2[i + pillarInterval*2];
+          this.createDeckSlab(p2, p2e);
+        }
+      }
+
+      if (p2 != undefined){
+        console.log(p2)
+        const avoid_point = {
+          x: PillarPoint2.x,
+          y:  p2.y-0.3,
+          z: PillarPoint2.z
+        }
+        const point = {
+          x: p2.x,
+          y: p2.y-0.3,
+          z: p2.z
+        }
+        this.scene.add(this.createBoxBetweenPoints3D(point,avoid_point,0.7,0.7))
+      }
+
+      if (p2 != undefined){
+        console.log(p2)
+        const p1 = points2[i]
+        const avoid_point = {
+          x: p1.x,
+          y: p1.y-0.3,
+          z: p1.z
+        }
+
+        const point = {
+          x: p2.x,
+          y: p2.y-0.3,
+          z: p2.z
+        }
+        this.scene.add(this.createBoxBetweenPoints3D(point,avoid_point,0.7,0.7))
+      }
+    }
+
     }
   } 
   
@@ -758,6 +898,8 @@ export class TrainSystem {
     
     if (material === false){material =  new THREE.MeshStandardMaterial({ color: color, side: THREE.DoubleSide })};
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.receiveShadow = true
+
     this.scene.add(mesh);
     
   }

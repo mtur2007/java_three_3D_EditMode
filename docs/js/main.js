@@ -63,11 +63,7 @@ log_hidden.addEventListener("touchstart", () => {
 });
 
 import * as THREE from 'three';
-
 const scene = new THREE.Scene();
-import { TrainSystem } from './train_system.js';
-const TSys = new TrainSystem(scene);
-
 import { WorldCreat } from './world_creat.js';
 
 // 駅(ホームドア)を生成
@@ -75,15 +71,19 @@ const train_width = 6.8
 const car_Spacing = 0.15
 
 console.log('WorldCreat')
-let loadcars = await WorldCreat(scene, train_width, car_Spacing);
-let geo = loadcars[0]
+let LoadModels = await WorldCreat(scene, train_width, car_Spacing);
+let geo = LoadModels[0]
 
-console.log('cars : ',loadcars)
+console.log('cars : ',LoadModels)
 console.log('geo : ',geo)
 
 // world_creat()
 
 const dirLight = scene.getObjectByName('dirLight');
+
+import { TrainSystem } from './train_system.js';
+const TSys = new TrainSystem(scene,dirLight);
+
 
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas });
@@ -218,7 +218,7 @@ let run_num = 0
 
 // --- エスカレーター ---
 let path_x = 2.8
-let path_y = 6.536
+let path_y = 7
 let path_z = 20.2
 // ② 軌道を定義
 const path_1 = new THREE.CatmullRomCurve3([
@@ -769,13 +769,13 @@ function Sin_TrainSettings(
     const spacing = 6.95; // 車両の長さと同じだけ間隔を空ける
     let car = null
     if (i === 0 || i === cars-1){
-      car = loadcars[1].clone()
+      car = LoadModels[1].clone()
       car.position.z = - i * spacing;
       if ( i === 0){
         car.rotation.y = 90 * Math.PI/180
       }
     } else {
-      car = loadcars[2].clone()
+      car = LoadModels[2].clone()
       car.position.z = - i * spacing;
     }
     
@@ -1064,19 +1064,19 @@ const points = [
 
 // --- JR中央線 track1 ---
 Points_0 = [
-  new THREE.Vector3(392.67128478550694, y+0, -315.4410334832834 ),
-  new THREE.Vector3(341.30868102543195, y+0, -309.49474122471236 ),
-  new THREE.Vector3(287.24800128479785, y+0, -312.5420028222788 ),
-  new THREE.Vector3(224.77795156569454, y+0, -318.9938410288555 ),
-  new THREE.Vector3(154.41186961512471, y+0, -305.99512585620516 ),
-  new THREE.Vector3(118.18373131857555, y+0, -289.65403713174567 ),
-  new THREE.Vector3(91.81581239850537, y+0, -267.3829714557229 ),
-  new THREE.Vector3(62.11492680745896, y+0, -227.4627003441265 ),
-  new THREE.Vector3(27.362789238915582, y+0, -156.65847734671016 ),
-  new THREE.Vector3(12.081417809592365, y+0, -101.4484841825282 ),
-  new THREE.Vector3(4.8, y+0, -30 ),
-  new THREE.Vector3(4.8, y+0, 50 ),
-  new THREE.Vector3(3, y+0, 90 ), 
+  new THREE.Vector3(392.67128478550694, y+1, -315.4410334832834 ),
+  new THREE.Vector3(341.30868102543195, y+1, -309.49474122471236 ),
+  new THREE.Vector3(287.24800128479785, y+1, -312.5420028222788 ),
+  new THREE.Vector3(224.77795156569454, y+1, -318.9938410288555 ),
+  new THREE.Vector3(154.41186961512471, y+1, -305.99512585620516 ),
+  new THREE.Vector3(118.18373131857555, y+1, -289.65403713174567 ),
+  new THREE.Vector3(91.81581239850537, y+1, -267.3829714557229 ),
+  new THREE.Vector3(69.23283697877618, y+1, -233.20085006915187 ),
+  new THREE.Vector3(53.95632969220243, y+1, -198.9430015036203 ),
+  new THREE.Vector3(20.626354252682948, y+1, -130.8928875200878 ),
+  new THREE.Vector3(5.050109858624982, y+1, -47.616354744514396 ),
+  new THREE.Vector3(5.511494773206939, y+1, 62.119201885396755 ),
+  new THREE.Vector3(0.6808876967751938, y+1, 92.03432022584624 ),
 ];
 // --- JR総武線 track2 ---
 Points_1 = [
@@ -1090,138 +1090,154 @@ Points_1 = [
 ];
 
 Points_1 = [
-  new THREE.Vector3(-43.571731795652404, y+2.3000000000000007, -377.3311248469534),
-  new THREE.Vector3(-2.1415088979495724, y+2.3000000000000007, -149.48184156347162),
-  new THREE.Vector3(3.7202437230172687, y+2.3000000000000007, -115.68534135136476),
-  new THREE.Vector3(5.541472868705854, y+1.74852420099009, -92.18884113812409),
-  new THREE.Vector3(2.5, y+0, -50),
-  new THREE.Vector3(0.8, y+0, -25),
-  new THREE.Vector3(0.8, y+0, 50),
-  new THREE.Vector3(-2, y+0, 90),
+  // new THREE.Vector3(-43.571731795652404, y+3.3000000000000007, -377.3311248469534 ),
+  // new THREE.Vector3(-2.1415088979495724, y+3.3000000000000007, -149.48184156347162 ),
+  // new THREE.Vector3(3.7202437230172687, y+3.3000000000000007, -115.68534135136476 ),
+  // new THREE.Vector3(5.850916341148994, y+3.3000000000000007, -91.98630396838364 ),
+  // new THREE.Vector3(2.142780442848252, y+1.6700793658375268, -49.26060581960828 ),
+  // new THREE.Vector3(-0.2757741973427099, y+1.1943737035084077, -10.48004390547996 ),
+  // new THREE.Vector3(0.1411819909520453, y+1, 50.8311082736278 ),
+  // new THREE.Vector3(-3.0251895719352513, y+1, 89.90748300765287 ),
+  new THREE.Vector3(-43.62333969281642, y+3.3000000000000007, -377.5536108396719 ),
+  new THREE.Vector3(-2.470424119546368, y+3.3000000000000007, -149.9881887116168 ),
+  new THREE.Vector3(3.5546702989112298, y+3.3000000000000007, -114.72808467502945 ),
+  new THREE.Vector3(5.850916341148994, y+3.3000000000000007, -91.98630396838364 ),
+  new THREE.Vector3(2.142780442848252, y+1.6700793658375268, -49.26060581960828 ),
+  new THREE.Vector3(-0.2757741973427099, y+1.1943737035084077, -10.48004390547996 ),
+  new THREE.Vector3(0.1411819909520453, y+1, 50.8311082736278 ),
+  new THREE.Vector3(-3.0251895719352513, y+1, 89.90748300765287 ),
 ];
 
 // --- JR総武線 track3 ---
 Points_2 = [
-  new THREE.Vector3(-45.47310236345598, y+2.3000000000000007, -377.494629127616),
-  new THREE.Vector3(-3.6618605957936374, y+2.3000000000000007, -149.00032744321223),
-  new THREE.Vector3(2.266473355551746, y+2.3000000000000007, -115.80757087048603),
-  new THREE.Vector3(4.274072749256901, y+1.7741472129005063, -92.4998197955785),
-  new THREE.Vector3(1, y+0, -50),
-  new THREE.Vector3(-0.8, y+0, -20),
-  new THREE.Vector3(-0.8, y+0, 50),
-  new THREE.Vector3(-4, y+0, 90),
-];
+  // new THREE.Vector3(-45.47310236345598, y+3.3000000000000007, -377.494629127616 ),
+  // new THREE.Vector3(-3.6618605957936374, y+3.3000000000000007, -149.00032744321223 ),
+  // new THREE.Vector3(1.9460157416815536, y+3.3000000000000007, -116.8331866851318 ),
+  // new THREE.Vector3(4.4711597778605805, y+3.3000000000000007, -92.05565874223615 ),
+  // new THREE.Vector3(-0.47196094631201924, y+1.4823484950636914, -42.58165153734902 ),
+  // new THREE.Vector3(-1.3585128970237768, y+1.1943737035084077, -19.75358039176905 ),
+  // new THREE.Vector3(-2.071902211032886, y+1, 50.86223548286895 ),
+  // new THREE.Vector3(-5.17092361570831, y+1, 89.91693929322986 ),
+  new THREE.Vector3(-45.34836347339763, y+3.3000000000000007, -377.6567270292773 ),
+  new THREE.Vector3(-3.936020943655347, y+3.3000000000000007, -148.88261629393622 ),
+  new THREE.Vector3(1.6526844849855333, y+3.3000000000000007, -116.56745857079535 ),
+  new THREE.Vector3(4.258366020324478, y+3.3000000000000007, -92.27140763933077 ),
+  new THREE.Vector3(-0.23495658000216235, y+1.4823484950636914, -42.79513099381161 ),
+  new THREE.Vector3(-1.3585128970237768, y+1.1943737035084077, -19.75358039176905 ),
+  new THREE.Vector3(-2.071902211032886, y+1, 50.86223548286895 ),
+  new THREE.Vector3(-5.17092361570831, y+1, 89.91693929322986 ),
+]
 
 // --- JR中央線 track4 ---
 Points_3 = [ 
-  new THREE.Vector3(393.561145412789, y+0, -315.9595156679564 ),
-  new THREE.Vector3(340.9694343527353, y+0, -314.9710829078885 ),
-  new THREE.Vector3(296.0480030791661, y+0, -316.75865481692887 ),
-  new THREE.Vector3(235.69605471297635, y+0, -321.8365879658148 ),
-  new THREE.Vector3(153.95353586373534, y+0, -308.2106768420461 ),
-  new THREE.Vector3(117.52923302304345, y+0, -291.816121770434 ),
-  new THREE.Vector3(87.46491962573573, y+0, -265.4477312735476 ),
-  new THREE.Vector3(38.79449255756082, y+0.40000000000000036, -189.92134871967772 ),
-  new THREE.Vector3(9.740057031467396, y+-0.5, -126.966638691169 ),
-  new THREE.Vector3(-2.2934311218832653, y+0, -52.254625245314486 ),
-  new THREE.Vector3(-4.8, y+0, -20 ),
-  new THREE.Vector3(-4.8, y+0, 40 ),
-  new THREE.Vector3(-9, y+0, 90 ),
+  new THREE.Vector3(393.561145412789, y+1, -315.9595156679564 ),
+  new THREE.Vector3(340.9694343527353, y+1, -314.9710829078885 ),
+  new THREE.Vector3(296.0480030791661, y+1, -316.75865481692887 ),
+  new THREE.Vector3(235.69605471297635, y+1, -321.8365879658148 ),
+  new THREE.Vector3(153.95353586373534, y+1, -308.2106768420461 ),
+  new THREE.Vector3(117.52923302304345, y+1, -291.816121770434 ),
+  new THREE.Vector3(87.46491962573573, y+1, -265.4477312735476 ),
+  new THREE.Vector3(26.45973100879835, y+1, -150.81020893071818 ),
+  new THREE.Vector3(4.306650662616788, y+1, -90.68516920578828 ),
+  new THREE.Vector3(-2.7306664547049286, y+1, -52.0370397306884 ),
+  new THREE.Vector3(-5.126448115537234, y+1, -21.30479358073424 ),
+  new THREE.Vector3(-6.9012489771805035, y+1, 64.69795684147067 ),
+  new THREE.Vector3(-8.261186827284078, y+1, 89.90583523165931 ),
 ];
 
 // --- JR京浜東北線(JK) 上り(upbound) ---
 JK_upbound_point = [
-  new THREE.Vector3(-111.76990362335863, y+0, -295.55533787884985),
-  new THREE.Vector3(-89.28536046011544, y+0, -298.1541893646885),
-  new THREE.Vector3(-57.711307454803375, y+0, -301.1911328283426),
-  new THREE.Vector3(-4.018352121806821, y+0, -311.1907667542943),
-  new THREE.Vector3(37.11147026940992, y+0, -321.31858416862843),
-  new THREE.Vector3(61.76861895808672, y+0, -325.94921343406867),
-  new THREE.Vector3(96.96201204744818, y+0, -329.0490279551624),
-  new THREE.Vector3(162.70344013787383, y+0, -328.0021231693154),
-  new THREE.Vector3(247.85810344992842, y+0, -323.93439483106204),
-  new THREE.Vector3(287.7631243456569, y+0, -319.77343263388633),
-  new THREE.Vector3(324.5430417668258, y+0, -317.28342052560583),
-  new THREE.Vector3(368.5693719852972, y+0, -316.4539250192787),
-  new THREE.Vector3(394.06074396630294, y+0, -317.7655486002887),
+  new THREE.Vector3(-111.76990362335863, y+1, -295.55533787884985),
+  new THREE.Vector3(-89.28536046011544, y+1, -298.1541893646885),
+  new THREE.Vector3(-57.711307454803375, y+1, -301.1911328283426),
+  new THREE.Vector3(-4.018352121806821, y+1, -311.1907667542943),
+  new THREE.Vector3(37.11147026940992, y+1, -321.31858416862843),
+  new THREE.Vector3(61.76861895808672, y+1, -325.94921343406867),
+  new THREE.Vector3(96.96201204744818, y+1, -329.0490279551624),
+  new THREE.Vector3(162.70344013787383, y+1, -328.0021231693154),
+  new THREE.Vector3(247.85810344992842, y+1, -323.93439483106204),
+  new THREE.Vector3(287.7631243456569, y+1, -319.77343263388633),
+  new THREE.Vector3(324.5430417668258, y+1, -317.28342052560583),
+  new THREE.Vector3(368.5693719852972, y+1, -316.4539250192787),
+  new THREE.Vector3(394.06074396630294, y+1, -317.7655486002887),
 ];
 
 
 JY_upbound_point = [
-  new THREE.Vector3(-125.21339859227305, y+0, -296.69577623835823),
-  new THREE.Vector3(-94.8777375074411, y+0, -300.3658537739735),
-  new THREE.Vector3(-80.2605922089954, y+0, -302.6421916314635),
-  new THREE.Vector3(-60.97801415541439, y+0, -305.76947418492296),
-  new THREE.Vector3(-5.442546655264097, y+0, -315.8814542201736),
-  new THREE.Vector3(35.41232161533707, y+0, -323.75981941243475),
-  new THREE.Vector3(61.197688730203055, y+0, -327.55845607928376),
-  new THREE.Vector3(96.51938083502435, y+0, -330.48356730370244),
-  new THREE.Vector3(162.21662969199488, y+0, -329.3996829195323),
-  new THREE.Vector3(247.4301434594096, y+0, -325.4854096663424),
-  new THREE.Vector3(288.9963926349608, y+0, -323.33523864671946),
-  new THREE.Vector3(323.88760471246167, y+0, -320.7344575653564),
-  new THREE.Vector3(368.30682704399777, y+0, -318.2831628078685),
-  new THREE.Vector3(394.09187011088176, y+0, -319.4755886056227),
+  new THREE.Vector3(-125.21339859227305, y+1, -296.69577623835823),
+  new THREE.Vector3(-94.8777375074411, y+1, -300.3658537739735),
+  new THREE.Vector3(-80.2605922089954, y+1, -302.6421916314635),
+  new THREE.Vector3(-60.97801415541439, y+1, -305.76947418492296),
+  new THREE.Vector3(-5.442546655264097, y+1, -315.8814542201736),
+  new THREE.Vector3(35.41232161533707, y+1, -323.75981941243475),
+  new THREE.Vector3(61.197688730203055, y+1, -327.55845607928376),
+  new THREE.Vector3(96.51938083502435, y+1, -330.48356730370244),
+  new THREE.Vector3(162.21662969199488, y+1, -329.3996829195323),
+  new THREE.Vector3(247.4301434594096, y+1, -325.4854096663424),
+  new THREE.Vector3(288.9963926349608, y+1, -323.33523864671946),
+  new THREE.Vector3(323.88760471246167, y+1, -320.7344575653564),
+  new THREE.Vector3(368.30682704399777, y+1, -318.2831628078685),
+  new THREE.Vector3(394.09187011088176, y+1, -319.4755886056227),
 ];
 
 
 JY_downbound_point = [
-  new THREE.Vector3(-122.17215393661779, y+0, -298.8925460232571),
-  new THREE.Vector3(-80.42881516425733, y+0, -304.82795056563515),
-  new THREE.Vector3(-5.826757239045998, y+0, -318.15368741852643),
-  new THREE.Vector3(34.84569022775433, y+0, -325.76125009407633),
-  new THREE.Vector3(60.79020296479766, y+0, -329.30590534698786),
-  new THREE.Vector3(96.18968993409968, y+0, -332.07909452761186),
-  new THREE.Vector3(161.91727922480115, y+0, -330.9822439341698),
-  new THREE.Vector3(247.10434070276528, y+0, -327.26442699646265),
-  new THREE.Vector3(289.0982280344045, y+0, -325.2560382392302),
-  new THREE.Vector3(356.8688576378576, y+0, -322.30395429003124),
-  new THREE.Vector3(399.59040208745387, y+0, -320.1676357058684),
+  new THREE.Vector3(-122.17215393661779, y+1, -298.8925460232571),
+  new THREE.Vector3(-80.42881516425733, y+1, -304.82795056563515),
+  new THREE.Vector3(-5.826757239045998, y+1, -318.15368741852643),
+  new THREE.Vector3(34.84569022775433, y+1, -325.76125009407633),
+  new THREE.Vector3(60.79020296479766, y+1, -329.30590534698786),
+  new THREE.Vector3(96.18968993409968, y+1, -332.07909452761186),
+  new THREE.Vector3(161.91727922480115, y+1, -330.9822439341698),
+  new THREE.Vector3(247.10434070276528, y+1, -327.26442699646265),
+  new THREE.Vector3(289.0982280344045, y+1, -325.2560382392302),
+  new THREE.Vector3(356.8688576378576, y+1, -322.30395429003124),
+  new THREE.Vector3(399.59040208745387, y+1, -320.1676357058684),
 ];
 
 JK_downbound_point = [
-  new THREE.Vector3(-124.43022443921315, y+0, -300.3020874375335),
-  new THREE.Vector3(-81.16116758122712, y+0, -309.17838157877924),
-  new THREE.Vector3(-61.176654786959716, y+0, -313.612216326006),
-  new THREE.Vector3(8.215521387265273, y+0, -325.5308680196141),
-  new THREE.Vector3(94.9341065540915, y+0, -333.71399243406285),
-  new THREE.Vector3(161.62389558698544, y+0, -332.71128002847263),
-  new THREE.Vector3(221.4487986731928, y+0, -330.9206960719724),
-  new THREE.Vector3(263.70157276228207, y+0, -331.7715381178346),
-  new THREE.Vector3(289.02060154904507, y+0, -331.68351199544094),
-  new THREE.Vector3(324.6413521542111, y+0, -327.6754938537136),
-  new THREE.Vector3(357.5320762061322, y+0, -323.7494132257973),
-  new THREE.Vector3(399.1569336423814, y+0, -321.6563331013228),
+  new THREE.Vector3(-124.43022443921315, y+1, -300.3020874375335),
+  new THREE.Vector3(-81.16116758122712, y+1, -309.17838157877924),
+  new THREE.Vector3(-61.176654786959716, y+1, -313.612216326006),
+  new THREE.Vector3(8.215521387265273, y+1, -325.5308680196141),
+  new THREE.Vector3(94.9341065540915, y+1, -333.71399243406285),
+  new THREE.Vector3(161.62389558698544, y+1, -332.71128002847263),
+  new THREE.Vector3(221.4487986731928, y+1, -330.9206960719724),
+  new THREE.Vector3(263.70157276228207, y+1, -331.7715381178346),
+  new THREE.Vector3(289.02060154904507, y+1, -331.68351199544094),
+  new THREE.Vector3(324.6413521542111, y+1, -327.6754938537136),
+  new THREE.Vector3(357.5320762061322, y+1, -323.7494132257973),
+  new THREE.Vector3(399.1569336423814, y+1, -321.6563331013228),
 ];
 
 J_UJT_upbound_point = [
-  new THREE.Vector3(-120.01522869733687, y+0, -302.9188732688797),
-  new THREE.Vector3(-82.09186013719402, y+0, -310.7281630112079),
-  new THREE.Vector3(-58.947028586666164, y+0, -316.1657368440674),
-  new THREE.Vector3(8.489518914759882, y+0, -327.4768270890304),
-  new THREE.Vector3(94.98860814005752, y+0.789958964891393, -335.41675188918447),
-  new THREE.Vector3(170.61735648548975, y+2.631426048102636, -334.0304355439938),
-  new THREE.Vector3(231.00421612962472, y+3.2085414706180426, -332.4570173414121),
-  new THREE.Vector3(266.3810561630889, y+3.695212192977211, -333.2835940670695),
-  new THREE.Vector3(291.88024877381997, y+3.387685383703271, -332.51227713636956),
-  new THREE.Vector3(327.45730771861037, y+3.368951525840888, -328.6081402659737),
-  new THREE.Vector3(366.6797428823438, y+2.6516091213290274, -324.7058647644941),
-  new THREE.Vector3(404.0778447587348, y+2.1572608865051848, -322.15962385213055),
+  new THREE.Vector3(-120.01522869733687, y+1, -302.9188732688797 ),
+  new THREE.Vector3(-82.09186013719402, y+1, -310.7281630112079 ),
+  new THREE.Vector3(-58.947028586666164, y+1, -316.1657368440674 ),
+  new THREE.Vector3(8.489518914759882, y+1, -327.4768270890304 ),
+  new THREE.Vector3(94.98860814005752, y+1.7500609394026156, -335.41675188918447 ),
+  new THREE.Vector3(170.61735648548975, y+3.8857632809598392, -334.0304355439938 ),
+  new THREE.Vector3(231.00421612962472, y+5.789730410011575, -332.4570173414121 ),
+  new THREE.Vector3(266.3810561630889, y+6.00109330144459, -333.2835940670695 ),
+  new THREE.Vector3(291.88024877381997, y+6.00109330144459, -332.51227713636956 ),
+  new THREE.Vector3(327.45730771861037, y+6.00109330144459, -328.6081402659737 ),
+  new THREE.Vector3(366.6797428823438,  y+5.469830550179832, -324.7058647644941 ),
+  new THREE.Vector3(404.0778447587348, y+4.273249333892474, -322.15962385213055 ), 
 ];
 
 J_UJT_downbound_point = [
-  new THREE.Vector3(-119.77980725578028, y+0, -304.61572140275007),
-  new THREE.Vector3(-83.35126362095043, y+0, -312.1580862515084),
-  new THREE.Vector3(-59.48419187511876, y+0, -317.925500389709),
-  new THREE.Vector3(8.799902422258866, y+0, -329.33207033365204),
-  new THREE.Vector3(94.72769020659211, y+0.789958964891393, -337.06032212652366),
-  new THREE.Vector3(172.4969543843784, y+2.631426048102636, -335.53647208749794),
-  new THREE.Vector3(230.72892309903594, y+3.2085414706180426, -334.19845517414586),
-  new THREE.Vector3(266.588538621058, y+3.695212192977211, -335.01404080819106),
-  new THREE.Vector3(292.0234571425137, y+3.3876853837032694, -334.68245942245693),
-  new THREE.Vector3(328.14684315034026, y+3.368951525840888, -330.6026061310047),
-  new THREE.Vector3(366.5493245858342, y+2.6516091213290274, -326.2626751173474),
-  new THREE.Vector3(404.5031641357191, y+2.1572608865051848, -323.870955377407),
+  new THREE.Vector3(-119.77980725578028, y+1, -304.61572140275007 ),
+  new THREE.Vector3(-83.35126362095043, y+1, -312.1580862515084 ),
+  new THREE.Vector3(-59.48419187511876, y+1, -317.925500389709 ),
+  new THREE.Vector3(8.799902422258866, y+1, -329.33207033365204 ),
+  new THREE.Vector3(94.72769020659211, y+1.7500609394026156, -337.06032212652366 ),
+  new THREE.Vector3(172.4969543843784, y+3.8857632809598392, -335.53647208749794 ),
+  new THREE.Vector3(230.72892309903594, y+5.789730410011575, -334.19845517414586 ),
+  new THREE.Vector3(266.588538621058, y+6.001093301444591, -335.01404080819106 ),
+  new THREE.Vector3(292.0234571425137, y+6.00109330144459, -334.68245942245693 ),
+  new THREE.Vector3(328.14684315034026, y+6.00109330144459, -330.6026061310047 ),
+  new THREE.Vector3(366.5493245858342, y+5.469830550179832, -326.2626751173474 ),
+  new THREE.Vector3(404.5031641357191, y+4.273249333892474, -323.870955377407 ),
 ];
 
 sinkansen_upbound_point = [
@@ -1229,31 +1245,31 @@ sinkansen_upbound_point = [
   new THREE.Vector3(-43.804755338386585, y-1.2589600310431734, -325.73815144008734),
   new THREE.Vector3(-12.249485519096753, y-0.8082158373489516, -331.030730959448),
   new THREE.Vector3(29.164320175824187, y-0.2065329936222744, -335.9110014242368),
-  new THREE.Vector3(96.17907740615152, y+0, -340.3307306113299),
-  new THREE.Vector3(148.0044984457235, y+0.2261471373060342, -338.2284969602672),
-  new THREE.Vector3(185.49776590926083, y+0.495248588404289, -334.9896528965828),
-  new THREE.Vector3(227.06322572615449, y+1.2280396483740894, -333.5313586165467),
-  new THREE.Vector3(262.9788547470736, y+1.2520147649648683, -334.33302915427737),
-  new THREE.Vector3(290.7642685239293, y+1.154187254070644, -334.37698409462143),
-  new THREE.Vector3(325.49879946980997, y+0.788423129441572, -330.561524390554),
-  new THREE.Vector3(366.3108366923121, y+0.257075531569086, -327.20410351982184),
-  new THREE.Vector3(406.3293279112425, y+0, -327.2559831011056),
+  new THREE.Vector3(96.17907740615152, y+0.36371253277489135, -340.3307306113299),
+  new THREE.Vector3(148.0044984457235, y+0.9259497185170478, -338.2284969602672),
+  new THREE.Vector3(185.49776590926083, y+1.495248588404289, -334.9896528965828),
+  new THREE.Vector3(227.06322572615449, y+2.2280396483740894, -333.5313586165467),
+  new THREE.Vector3(262.9788547470736, y+2.2520147649648683, -334.33302915427737),
+  new THREE.Vector3(290.7642685239293, y+2.25201476496486834, -334.37698409462143),
+  new THREE.Vector3(325.49879946980997, y+1.9807299557896076, -330.561524390554),
+  new THREE.Vector3(366.3108366923121, y+1.6909038512907566, -327.20410351982184),
+  new THREE.Vector3(406.3293279112425, y+1.4258049149040684, -327.2559831011056),
 ];
   
 sinkansen_downbound_point = [
-  new THREE.Vector3(-117.91571602764624, y-1.1378560032556138, -310.02676011747116),
-  new THREE.Vector3(-43.710394568340334, y-1.2589600310431734, -327.56791979462525),
-  new THREE.Vector3(-11.897866325379892, y-0.8082158373489516, -332.70875051820747),
-  new THREE.Vector3(29.680698889210568, y-0.2065329936222744, -337.6380230626265),
-  new THREE.Vector3(96.51592973835274, y+0, -342.0452285480721),
-  new THREE.Vector3(147.98442160890954, y+0.2261471373060342, -339.9166111836655),
-  new THREE.Vector3(185.0950260588999, y+0.495248588404289, -336.8849097480831),
-  new THREE.Vector3(226.33041713930058, y+1.2280396483740894, -335.3565345694915),
-  new THREE.Vector3(262.5745484664577, y+1.2520147649648683, -336.160613390138),
-  new THREE.Vector3(290.7558015205605, y+1.154187254070644, -336.41475365974344),
-  new THREE.Vector3(325.8841863700687, y+0.788423129441572, -332.2026513481826),
-  new THREE.Vector3(367.3440010679313, y+0.257075531569086, -329.3563162418554),
-  new THREE.Vector3(406.0943207437069, y+0, -329.2244867534149),
+  new THREE.Vector3(-117.91571602764624, y+-1.1378560032556138, -310.02676011747116 ),
+  new THREE.Vector3(-43.710394568340334, y+-1.2589600310431734, -327.56791979462525 ),
+  new THREE.Vector3(-11.897866325379892, y+-0.8082158373489516, -332.70875051820747 ),
+  new THREE.Vector3(29.680698889210568, y+-0.2065329936222744, -337.6380230626265 ),
+  new THREE.Vector3(96.51592973835274, y+0.36371253277489135, -342.0452285480721 ),
+  new THREE.Vector3(147.98442160890954, y+0.9259497185170478, -339.9166111836655 ),
+  new THREE.Vector3(185.0950260588999, y+1.495248588404289, -336.8849097480831 ),
+  new THREE.Vector3(226.33041713930058, y+2.2280396483740894, -335.3565345694915 ),
+  new THREE.Vector3(262.5745484664577, y+2.252014764964869, -336.160613390138 ),
+  new THREE.Vector3(290.7558015205605, y+2.2520147649648683, -336.41475365974344 ),
+  new THREE.Vector3(325.8841863700687, y+1.9807299557896076, -332.2026513481826 ),
+  new THREE.Vector3(367.3440010679313, y+1.6909038512907566, -329.3563162418554 ),
+  new THREE.Vector3(406.0943207437069, y+1.4258049149040684, -329.2244867534149 ), 
 ];
 
 
@@ -1391,9 +1407,9 @@ function findCurveRange(curve, targetA, targetB, { axis = 'z', resolution = 1000
   return Range.sliceCurve ?? sliceCurvePoints(curve, Range.startRatio, Range.endRatio);
 }
 
-const station_s = { x:1.9018166962470082, y:6.394628223749855 , z:-49.67098084774971 }
+const station_s = { x:-0.08825664191497662, y:6.394628223749855 , z:-30.695962680017335 }
 const station_loof_f = { x:-0.3852393328186856 , y:6.394628223749855 , z:-3.535125641715606 }
-const station_f = { x:-0.023948863771414863, y:6.394628223749855, z:47.51354120550737 }
+const station_f = { x:-0.023948863771414863, y:6.394628223749855, z:60.51354120550737 }
 const wall_f = {x:3.5989745081382956, y:6.394628223749855, z:-97.26135689524132}
 const tunnel_f ={ x: 6.600868195728852, y: 7.382920205399699, z: -114.92055445840528}
 const GirderBridge_2s = { x: 5.001398579127916, y:8.083673215609398, z:-112.97485249672447}
@@ -1401,10 +1417,16 @@ const GirderBridge_3s = { x:4.230750095101928, y:8.083673215609398, z:-107.26504
 const GirderBridge_2f = { x:0.6169566203936264, y:8.083673215609398, z:-131.36793571309448}
 const GirderBridge_3f = { x:-0.25619051153051203, y:8.083673215609398, z:-129.1500954585025}
 
+const JB_elevated_s = {x:-5.7208845108099355, y:3.4737070495198132, z:-163.0539699013825 }
+const JB_elevated_f = {x:17.981473636001454, y:3.4737070495198132, z:-232.08566441107527 }
+
 const track1 = findCurveRange(line_1, station_s, station_f)
 const track2 = findCurveRange(line_2, station_s, station_f)
 const track3 = findCurveRange(line_3, station_s, station_f)
 const track4 = findCurveRange(line_4, station_s, station_f)
+
+const JB_u_elevated = findCurveRange(line_2, JB_elevated_s, JB_elevated_f)
+const JB_d_elevated = findCurveRange(line_3, JB_elevated_s, JB_elevated_f)
 
 const roof_track1 = findCurveRange(line_1, station_s, station_loof_f);
 const roof_track2 = findCurveRange(line_2, station_s, station_loof_f);
@@ -1432,31 +1454,13 @@ TSys.createTrack(line_2, 1.83, 0x000000)
 TSys.createTrack(line_3, 1.83, 0x000000)
 TSys.createTrack(line_4, 1.83, 0x000000)
 
-// 高架(柱/床版)を生成
-const interval = 1
-const Elevated_start = 0.32
-const Elevated_end = 1
-TSys.generateElevated(line_1, 10, interval);
-TSys.generateElevated(sliceCurvePoints(line_2, Elevated_start, Elevated_end), 10, interval);
-TSys.generateElevated(sliceCurvePoints(line_3, Elevated_start+0.02, Elevated_end), 10, interval);
-TSys.generateElevated(line_4, 10, interval);
-
-// TSys.createBridgeGirder(sliceCurvePoints(line_2, 0, Elevated_start), 10, interval);
-// TSys.createBridgeGirder(sliceCurvePoints(line_3, 0, Elevated_start+0.02), 10, interval);
-
-// 線路生成
-TSys.createRail(line_1)
-TSys.createRail(line_2)
-TSys.createRail(line_3)
-TSys.createRail(line_4)
-
 // 駅(プラットホーム)を生成
-TSys.createStation(track1,track2,200,y,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
-TSys.createStation(track3,track4,200,y,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
+TSys.createStation(track1,track2,200,y+1,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
+TSys.createStation(track3,track4,200,y+1,0.6, '|[]|') // 島式 |[]| : 相対式 []||[]
 
 // 駅(屋根)を生成
-TSys.placePlatformRoof(roof_track1,roof_track2,y+1.4,10)
-TSys.placePlatformRoof(roof_track3,roof_track4,y+1.4,10)
+TSys.placePlatformRoof(roof_track1,roof_track2,y+2.4,10)
+TSys.placePlatformRoof(roof_track3,roof_track4,y+2.4,10)
 
 const door_interval = train_width + car_Spacing
 const track1_doors = TSys.placePlatformDoors(track1, 0.7, door_interval, 'left');  // 左側に設置
@@ -1522,7 +1526,7 @@ for(let i=0; i < points_1.length-1; i++){
   const mesh = new THREE.Mesh(geometry, material);
 
   mesh.rotation.x = 91 * Math.PI / 180;
-  mesh.position.y = 6.25; // 高さ1.5に移動
+  mesh.position.y = 7.25; // 高さ1.5に移動
 
   scene.add(mesh);
 
@@ -1554,8 +1558,23 @@ for(let i=0; i<Poles2.children.length; i++){
 }
 scene.add(Poles2)
 
+// 架線柱の配置(上野東京ライン)
+const margin_data = TSys.RailMargin(TSys.getPointsEveryM(J_UJT_downbound, 9.5), 1, true);
+const margin = margin_data[0]
+const margin_angle = margin_data[1]
+const pole = LoadModels[3]
+for(let i=0; i<margin.length; i++){
+  let clone_pole = pole.clone()
+  clone_pole.rotation.y += margin_angle[i] + 90*Math.PI/180
+  const i_margin = margin[i]
+  console.log(i_margin)
+  clone_pole.position.set(i_margin.x,i_margin.y+1.1,i_margin.z)
+  scene.add(clone_pole)
+}
+
+
 // 桁橋 実装中
-TSys.placeGirderBridge(bridge_2,bridge_3,8,2)
+TSys.placeGirderBridge(bridge_2,bridge_3,9,2)
 
 // 電車の運行
 // const max_speed = 0.001 // 制限速度(最高)
@@ -2001,6 +2020,26 @@ function resetMeshListOpacity(list, pointsSource) {
   });
 
 }
+// 高架(柱/床版)を生成
+const interval = 1
+const Elevated_start = 0.32
+const Elevated_end = 1
+TSys.generateElevated(line_1, 10, interval);
+TSys.generateElevated(sliceCurvePoints(line_2, Elevated_start, Elevated_end), 10, interval);
+TSys.generateElevated(sliceCurvePoints(line_3, Elevated_start+0.02, Elevated_end), 10, interval);
+TSys.generateElevated(line_4, 10, interval);
+
+TSys.generateElevated(JB_d_elevated, 10, interval);
+TSys.generateElevated(JB_u_elevated, 10, interval);
+
+// TSys.createBridgeGirder(sliceCurvePoints(line_2, 0, Elevated_start), 10, interval);
+// TSys.createBridgeGirder(sliceCurvePoints(line_3, 0, Elevated_start+0.02), 10, interval);
+
+// 線路生成
+TSys.createRail(line_1)
+TSys.createRail(line_2)
+TSys.createRail(line_3)
+TSys.createRail(line_4)
 
 TSys.createRail(JK_upbound)
 TSys.createRail(JY_upbound)
@@ -2011,8 +2050,10 @@ TSys.createWall(JK_upbound, JK_downbound, 40,1,-1,0,0, 0x6d5c4e)
 
 TSys.createRail(J_UJT_upbound)
 TSys.createRail(J_UJT_downbound)
-TSys.createWall(J_UJT_upbound, J_UJT_upbound, 40,0.9,0.9,0.8,0, 0x999999)
-TSys.createWall(J_UJT_downbound, J_UJT_downbound, 40,-0.9,-0.9,0.8,0, 0x999999)
+TSys.createWall(J_UJT_upbound, J_UJT_upbound, 40,0.9,0.9,0.8,0, 0xbbbbbb)
+TSys.createWall(J_UJT_upbound, J_UJT_upbound, 40,1,1,0.8,0, 0xbbbbbb)
+TSys.createWall(J_UJT_upbound, J_UJT_upbound, 40,1,0.9,0.8,0.8, 0xbbbbbb)
+TSys.createWall(J_UJT_downbound, J_UJT_downbound, 40,-0.9,-0.9,0.8,0, 0xbbbbbb)
 
 TSys.createRail(sinkansen_upbound)
 TSys.createRail(sinkansen_downbound)
@@ -2024,8 +2065,13 @@ TSys.createWall(sinkansen_downbound, sinkansen_downbound, 40,-0.9,-0.9,0.8,0, 0x
 
 // TSys.sampleCurveCoordinates(sinkansen_upbound,{x: 187.35576904181207, y: 6.550897661798941, z: -335.1433442621323},0*Math.PI/180)//1.54)
 
-TSys.generateElevated(J_UJT_downbound, 10, interval, sinkansen_downbound);
-TSys.generateElevated(J_UJT_upbound, 10, interval);
+TSys.generateElevated(J_UJT_downbound, 10, interval, sinkansen_downbound,J_UJT_upbound);
+// TSys.generateElevated(J_UJT_upbound, 10, interval);
+
+// markPointsWithPins(Points_1);
+
+resetMeshListOpacity(targetObjects, Points_1);
+setMeshListOpacity(targetObjects, 0);
 
 // TSys.generateElevated(JK_upbound, 10, interval);
 
@@ -2050,8 +2096,6 @@ TSys.generateElevated(J_UJT_upbound, 10, interval);
 
 // レイキャストを作成
 const raycaster = new THREE.Raycaster();
-resetMeshListOpacity(targetObjects, Points_3);
-setMeshListOpacity(targetObjects, 0);
 
 // for (let i = 1; i < 4; i++) {
 //   const cube = new THREE.Mesh(geometry, material.clone()); // 色変更できるようにclone

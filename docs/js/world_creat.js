@@ -9,11 +9,11 @@ import { DRACOLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples
 export async function WorldCreat(scene,train_width,car_Spacing){
 
 // ライト作成
-const dirLight = new THREE.DirectionalLight(0xffeeee, 1);
+const dirLight = new THREE.DirectionalLight(0xffeeee, 6);
 dirLight.name = 'dirLight'
 
 // ライトの位置（光が来る方）
-dirLight.position.set(0, 0, 0); // 例: 斜め上（単位はシーンの単位に依存）
+dirLight.position.set(200, 200, 200); // 例: 斜め上（単位はシーンの単位に依存）
 
 // ターゲット（ライトが向く場所）
 dirLight.target.position.set(0, 0, 0); // 原点を向かせる例
@@ -24,11 +24,12 @@ scene.add(dirLight);
 
 // // --- 既存の DirectionalLight(dirLight) にシャドウ設定を追加 ---
 dirLight.castShadow = true;           // ライトがシャドウを投げる
-dirLight.shadow.mapSize.width = 2048; // 解像度（要調整：2048/1024/4096）
-dirLight.shadow.mapSize.height = 2048;
+// dirLight.shadow.mapSize.width = 4000; // 解像度（要調整：2048/1024/4096）
+// dirLight.shadow.mapSize.height = 4000;
+dirLight.shadow.mapSize.set(4000, 4000); // 必要に応じて解像度を下げる
 dirLight.shadow.radius = 4;           // ソフトネス（three r0.150+ で有効）
 dirLight.shadow.bias = -0.0005;       // 影のアーティファクト（自動調整必要）
-dirLight.shadow.normalBias = 0.05;    // 法線オフセット（改善される場合あり）
+dirLight.shadow.normalBias = 0.5;    // 法線オフセット（改善される場合あり）
 
 // 4) マトリクスを強制更新（これで即時反映）
 dirLight.updateMatrixWorld(true);
@@ -55,9 +56,9 @@ function fitDirectionalLightShadowForObject(rootObj, light) {
   // シャドウカメラをモデルにフィットさせる（余白 factor を入れる）
   const factor = 1.25;
   const halfWidth = Math.max(size.x, size.z) * factor * 0.5;
-  light.position.set(center.x + size.x * 0.5, center.y + Math.max(size.y, 50), center.z + size.z * 0.5); // ライト位置を調整
-  light.target.position.copy(center);
-  scene.add(light.target);
+  // light.position.set(center.x + size.x * 0.5, center.y + Math.max(size.y, 50), center.z + size.z * 0.5); // ライト位置を調整
+  // light.target.position.copy(center);
+  // scene.add(light.target);
 
   light.shadow.camera.left = -halfWidth;
   light.shadow.camera.right = halfWidth;
@@ -66,7 +67,8 @@ function fitDirectionalLightShadowForObject(rootObj, light) {
 
   light.shadow.camera.near = 0.5;
   light.shadow.camera.far = Math.max(500, size.y * 10);
-  light.shadow.mapSize.set(2048, 2048); // 必要に応じて解像度を下げる
+  // light.shadow.mapSize.set(2048, 2048); // 必要に応じて解像度を下げる
+  // light.shadow.mapSize.set(4000, 4000); // 必要に応じて解像度を下げる
   light.shadow.bias = -0.0005;
   light.shadow.normalBias = 0.05;
   light.shadow.radius = 4;
@@ -83,7 +85,7 @@ if (useDraco) {
   gltfLoader.setDRACOLoader(dracoLoader);
 }
 
-let car = [null,null,null]
+let car = [null,null,null,null]
 
 /**
  * modelUrl の glb を読み込んでシーンに追加するユーティリティ。
@@ -163,7 +165,13 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
 
         // 手動調整
         
-        fitDirectionalLightShadowForObject(root, dirLight);
+        if (adjustment){
+          fitDirectionalLightShadowForObject(root, dirLight);
+        }else{
+          console.log('false.shadow')
+          root.receiveShadow = true
+          root.castShadow = true;
+        }
 
         if (adjustment){
           root.rotation.y = 100 * Math.PI / 180
@@ -268,6 +276,14 @@ await loadModelToScene('sin_2.glb', { autoCenter: true, autoScaleMax: 10000, sca
 
 // -----------------------------------------------------------------
 
+await loadModelToScene('poll.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false,3)
+  .then((root) => {
+    console.log('GLB loaded and added to scene:', root);
+  })
+  .catch((err) => {
+    console.error('モデルの読み込みで失敗:', err);
+    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+  });
 
 // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
@@ -403,7 +419,7 @@ if (true) {
     return light;
   }  
 
-  let beam_y = 9
+  let beam_y = 10
   let beam_z = 20
   object_update({ins_obj: beam_pillar, ins_idx: 0, pos_x: 5.5,  pos_y: beam_y, pos_z: beam_z, rot_x: NaN, rot_y: NaN, rot_z: NaN,scale: NaN})      // | : : : : : : :
   object_update({ins_obj: beam_pillar, ins_idx: 1, pos_x: 4,  pos_y: beam_y, pos_z: beam_z, rot_x: NaN, rot_y: NaN, rot_z: NaN,scale: NaN})      // : | : : : : : :
@@ -601,7 +617,7 @@ function createDoubleArcPoints(params1, params2) {
   );
   Bridge.add(box);
 
-  const Bridge_depth = 3.5
+  const Bridge_depth = 4
 
   for (let i = 1; i < Math.max(segments1, segments2) - 1; i++) {
     let x1 = xStart1 + i * stepX1;
@@ -729,7 +745,7 @@ function createDoubleArcPoints(params1, params2) {
   return ArchBridge
 }
 const ArchBridge = createDoubleArcPoints(arcA, arcB)
-ArchBridge.position.set(-4,-17,-145)
+ArchBridge.position.set(-4.5,-16,-145)
 ArchBridge.rotation.y = 1.750662913747207//79.66 * Math.PI / 180
 scene.add(ArchBridge)
 
