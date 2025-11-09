@@ -1,4 +1,5 @@
 // main.js
+"toggle-daynight"
 
 // モバイルデバッグ用　ログ画面出力
 
@@ -148,8 +149,8 @@ scene.environment = envMap;
 renderer.toneMappingExposure = 1;
 
 // --- ライト追加（初回のみ） ---
-const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-scene.add(ambient);
+// const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+// scene.add(ambient);
 
 // --- 昼夜切替 ---
 let isNight = false;
@@ -165,7 +166,7 @@ toggleBtn.addEventListener("click", () => {
     scene.environment = envMapNight;
     
     dirLight.visible = false;
-    ambient.visible = false;
+    // ambient.visible = false;
 
     toggleBtn.textContent = "☀️ 昼にする";
 
@@ -175,7 +176,7 @@ toggleBtn.addEventListener("click", () => {
     scene.environment = envMap;
 
     dirLight.visible = true;
-    ambient.visible = true;
+    // ambient.visible = true;
 
     toggleBtn.textContent = "🌙 夜にする";
   }
@@ -945,13 +946,13 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
         Pos = Equal_root[safeIndex];
         Tan = Equal_root[safeIndex+1].clone().sub(Pos).normalize();
         
-        if (i === 0 & isNight){
-          if (Pos.z <= -20) {
-            front_right.visible = true;
-          } else {
-            front_right.visible = false;
-          }
-        } else if (!isNight) {front_right.visible = false}
+        // if (i === 0 & isNight){
+        //   if (Pos.z <= -20) {
+        //     front_right.visible = true;
+        //   } else {
+        //     front_right.visible = false;
+        //   }
+        // } else if (!isNight) {front_right.visible = false}
       
         car = trainCars.userData.cars[i]; // ← ここだけ変わる
         car.position.copy(Pos);

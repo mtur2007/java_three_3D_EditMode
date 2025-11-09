@@ -244,7 +244,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
 
 // // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
-await loadModelToScene('trainG.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
+await loadModelToScene('ReMake_train_B.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
   .then((root) => {
     console.log('GLB loaded and added to scene:', root);
     // console.log('GLB',car)
@@ -747,6 +747,15 @@ function createDoubleArcPoints(params1, params2) {
 const ArchBridge = createDoubleArcPoints(arcA, arcB)
 ArchBridge.position.set(-4.5,-16,-145)
 ArchBridge.rotation.y = 1.750662913747207//79.66 * Math.PI / 180
+console.log(ArchBridge)
+for (let i = 0; i < ArchBridge.children.length; i++){
+  const mesh_group = ArchBridge.children[i]
+    for (let j = 0; i < mesh_group.children.length; i++){
+    const mesh = mesh_group.children[i]
+    mesh.receiveShadow = true
+    mesh.castShadow = true;
+  }
+}
 scene.add(ArchBridge)
 
 console.log('return',car)
