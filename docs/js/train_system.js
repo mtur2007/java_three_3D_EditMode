@@ -555,7 +555,7 @@ export class TrainSystem {
           if (len === 0){
             this.createBridgePillar(p.x, p.z, p.y);
           } else {
-            console.log(pillar_Coordinatpoint[0])
+            
             PillarPoint = pillar_Coordinatpoint[0]
           }
         }
@@ -586,7 +586,7 @@ export class TrainSystem {
         if (len === 0){
           this.createBridgePillar(p.x, p.z, p.y);
         } else {
-          console.log(pillar_Coordinatpoint[0])
+          
           PillarPoint2 = pillar_Coordinatpoint[0]
         }
       }
@@ -595,7 +595,7 @@ export class TrainSystem {
       this.createDeckSlab(p, p1e);
   
       if (p2 != undefined){
-        console.log(p2)
+        
         const avoid_point = {
           x: PillarPoint.x,
           y: p2.y-0.3,
@@ -610,7 +610,7 @@ export class TrainSystem {
       }
 
       p2 = points2[i + 3];
-      console.log(p2)
+      
       if (curve2 != false){
         this.createBridgePillar(p2.x, p2.z, p2.y);
         if (i + pillarInterval*2 < points2.length) {
@@ -620,7 +620,7 @@ export class TrainSystem {
       }
 
       if (p2 != undefined){
-        console.log(p2)
+        
         const avoid_point = {
           x: PillarPoint2.x,
           y:  p2.y-0.3,
@@ -635,7 +635,7 @@ export class TrainSystem {
       }
 
       if (p2 != undefined){
-        console.log(p2)
+        
         const p1 = points2[i]
         const avoid_point = {
           x: p1.x,

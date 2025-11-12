@@ -65,26 +65,6 @@ log_hidden.addEventListener("touchstart", () => {
 
 import * as THREE from 'three';
 const scene = new THREE.Scene();
-import { WorldCreat } from './world_creat.js';
-
-// 駅(ホームドア)を生成
-const train_width = 6.8
-const car_Spacing = 0.15
-
-console.log('WorldCreat')
-let LoadModels = await WorldCreat(scene, train_width, car_Spacing);
-let geo = LoadModels[0]
-
-console.log('cars : ',LoadModels)
-console.log('geo : ',geo)
-
-// world_creat()
-
-const dirLight = scene.getObjectByName('dirLight');
-
-import { TrainSystem } from './train_system.js';
-const TSys = new TrainSystem(scene,dirLight);
-
 
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas });
@@ -138,6 +118,24 @@ loader.load('textures/shanghai_bund_4k.jpg', (texture_night) => {
   envMapNight = texture_night ;
 });
 
+let ref_envMap = null
+let ref_envMapNight = null
+loader.load('textures/skyy.jpg', (ref) => {
+  ref.mapping = THREE.EquirectangularReflectionMapping;
+  ref.colorSpace = THREE.SRGBColorSpace;
+  ref_envMap = ref
+  scene.ref = ref_envMap;
+});
+
+loader.load('textures/shanghai_bund_4k.jpg', (ref_night) => {
+  ref_night.mapping = THREE.EquirectangularReflectionMapping;
+  ref_night.colorSpace = THREE.SRGBColorSpace;
+  // scene.background = texture_night;
+  // scene.environment = texture_night;
+  ref_envMapNight = ref_night ;
+  // scene.ref = ref_envMapNight;
+});
+
 // envMap = envMapNight
 
 scene.background = envMapNight;
@@ -148,12 +146,57 @@ scene.environment = envMap;
 
 renderer.toneMappingExposure = 1;
 
+// 駅(ホームドア)を生成
+const train_width = 6.8
+const car_Spacing = 0.15
+
+console.log('WorldCreat')
+
+import { WorldCreat } from './world_creat.js';
+let LoadModels = await WorldCreat(scene, train_width, car_Spacing);
+let geo = LoadModels[0]
+
+console.log('cars : ',LoadModels)
+console.log('geo : ',geo)
+
+// world_creat()
+
+const dirLight = scene.getObjectByName('dirLight');
+
+import { TrainSystem } from './train_system.js';
+const TSys = new TrainSystem(scene,dirLight);
+
 // --- ライト追加（初回のみ） ---
 // const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 // scene.add(ambient);
 
 // --- 昼夜切替 ---
 let isNight = false;
+
+function TextureToggle(){
+
+  for (let line = 0; line < Trains.length; line++){
+    for (let cars = 0; cars < Trains[line].children.length; cars++){
+      const car = Trains[line].children[cars]
+     
+      car.traverse((node) => {
+        if (node.isMesh) {
+          node.material.envMap = scene.ref;
+          node.material.needsUpdate = true;
+          if (node.name.includes('平面')) {
+            const tex = node.material.map;
+            node.material = new THREE.MeshBasicMaterial({
+              map: tex,
+              // transparent: true,
+              opacity: 1.0,
+              side: THREE.FrontSide
+            });
+          }
+
+        }})
+    }
+  }
+  }
 
 const toggleBtn = document.getElementById("toggle-daynight");
 
@@ -164,10 +207,12 @@ toggleBtn.addEventListener("click", () => {
     // 🌙 夜モード
     scene.background = envMapNight;
     scene.environment = envMapNight;
+
+    scene.ref = ref_envMapNight;
     
     dirLight.visible = false;
     // ambient.visible = false;
-
+    TextureToggle();
     toggleBtn.textContent = "☀️ 昼にする";
 
   } else {
@@ -175,9 +220,11 @@ toggleBtn.addEventListener("click", () => {
     scene.background = envMap;
     scene.environment = envMap;
 
+    scene.ref = ref_envMap;
+
     dirLight.visible = true;
     // ambient.visible = true;
-
+    TextureToggle();
     toggleBtn.textContent = "🌙 夜にする";
   }
 });
@@ -191,7 +238,8 @@ toggleBtn.addEventListener("touchstart", () => {
     scene.environment = envMapNight;
 
     dirLight.visible = false;
-    ambient.visible = false;
+    // ambient.visible = false;
+    TextureToggle();
 
     toggleBtn.textContent = "☀️ 昼にする";
 
@@ -201,7 +249,8 @@ toggleBtn.addEventListener("touchstart", () => {
     scene.environment = envMap;
 
     dirLight.visible = true;
-    ambient.visible = true;
+    // ambient.visible = true;
+    TextureToggle();
 
     toggleBtn.textContent = "🌙 夜にする";
   }
@@ -583,6 +632,8 @@ function createPantograph(Arm_rotation_z) {
   return pantograph;
 }
 
+const Trains = []
+
 // 車両設定（テクスチャ対応版）
 function TrainSettings(
   length,
@@ -671,6 +722,7 @@ function TrainSettings(
     // const car = new THREE.Mesh(geo, materials.map(m => m.clone()));
 
     const car = geo.clone()
+    // car.material.envMap = scene.ref;
 
     // ▼ 車両の位置を z 方向にずらす（中央起点）
     const spacing = 6.95; // 車両の長さと同じだけ間隔を空ける
@@ -723,6 +775,7 @@ function TrainSettings(
   trainGroup.visible = false;   // 再表示する
   
   scene.add(trainGroup); // シーンに一括追加
+  Trains.push(trainGroup)
 
   return trainGroup;
   
@@ -1568,7 +1621,7 @@ for(let i=0; i<margin.length; i++){
   let clone_pole = pole.clone()
   clone_pole.rotation.y += margin_angle[i] + 90*Math.PI/180
   const i_margin = margin[i]
-  console.log(i_margin)
+  // console.log(i_margin)
   clone_pole.position.set(i_margin.x,i_margin.y+1.1,i_margin.z)
   scene.add(clone_pole)
 }
@@ -1700,6 +1753,8 @@ const JK_U = new THREE.CatmullRomCurve3(
 const JY_U = new THREE.CatmullRomCurve3(
   JY_upbound.getPoints(100).reverse()
 );
+
+TextureToggle()
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // ボタン取得

@@ -9,7 +9,8 @@ import { DRACOLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples
 export async function WorldCreat(scene,train_width,car_Spacing){
 
 // ライト作成
-const dirLight = new THREE.DirectionalLight(0xffeeee, 6);
+const dirLight = new THREE.DirectionalLight(0xffeeee, 3
+);
 dirLight.name = 'dirLight'
 
 // ライトの位置（光が来る方）
@@ -115,28 +116,8 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
         // 1) マテリアル側に環境マップをセット（PBRの反射を有効化）
         root.traverse((node) => {
           if (node.isMesh) {
-            // ランタイムで環境マップがあれば適用
-            // if (scene.environment) {
-            //   console.log('run')
-            //   // 一部のマテリアルは envMap を直接参照しないことがあるが、通常はこれで反射が得られます
-            //   if (node.material) {
-            //     console.log('run')
-            //     if (Array.isArray(node.material)) {
-            //       node.material.forEach(m => {
-            //         if (m && 'envMap' in m) {
-            //           console.log('run0')
-            //           m.envMap = scene.environment;
-            //           m.needsUpdate = true;
-            //         }
-            //       });
-            //     } else {
-            //       if ('envMap' in node.material) {
-            //         node.material.envMap = scene.environment;
-            //         node.material.needsUpdate = true;
-            //       }
-            //     }
-            //   }
-            // }
+            
+            node.material.needsUpdate = true;
 
             // シャドウ（重くなる場合は false に）
             node.castShadow = castShadow;
