@@ -237,6 +237,8 @@ toggleBtn.addEventListener("touchstart", () => {
     scene.background = envMapNight;
     scene.environment = envMapNight;
 
+    scene.ref = ref_envMapNight;
+
     dirLight.visible = false;
     // ambient.visible = false;
     TextureToggle();
@@ -247,6 +249,8 @@ toggleBtn.addEventListener("touchstart", () => {
     // ☀️ 昼モード
     scene.background = envMap;
     scene.environment = envMap;
+
+    scene.ref = ref_envMap;
 
     dirLight.visible = true;
     // ambient.visible = true;
@@ -3267,9 +3271,10 @@ document.addEventListener('touchend',(e)=>{
     ctrl_num = 0
     camera_num = 1
 
-    // 2本以上指が置かれいた場合に備えて、最後のベクトルを格納
-    lastPosition1 = { x: e.touches[e.touches.length-1].clientX, y: e.touches[e.touches.length-1].clientY }
-
+    if (e.touches.length > 0){
+      // 2本以上指が置かれいた場合に備えて、最後のベクトルを格納
+      lastPosition1 = { x: e.touches[e.touches.length-1].clientX, y: e.touches[e.touches.length-1].clientY }
+    }
   }
 
   // 編集モード
