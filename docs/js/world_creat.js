@@ -116,7 +116,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
         // 1) マテリアル側に環境マップをセット（PBRの反射を有効化）
         root.traverse((node) => {
           if (node.isMesh) {
-            
+
             node.material.needsUpdate = true;
 
             // シャドウ（重くなる場合は false に）
@@ -156,8 +156,10 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
 
         if (adjustment){
           root.rotation.y = 100 * Math.PI / 180
-          root.position.set(145,40,-175)
-          root.scale.setScalar(0.45);
+          const scale = 0.35
+          const position_scale = scale/0.45
+          root.position.set(145*position_scale,40*position_scale,-175*position_scale)
+          root.scale.setScalar(scale);
         } else {
           root.position.set(0.5,0,0)
           root.scale.setScalar(0.5);
@@ -165,15 +167,6 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
           // --- root以下のメッシュに対してマテリアル調整 ---
           root.traverse(o => {
             if (o.isMesh && o.material) {
-              // // 例: 環境マップの影響を切りたいメッシュ名
-              // if (o.name.includes('平面')) {
-              //   // 方法1: 反射(IBL)をゼロ
-              //   o.material.envMapIntensity = 0;
-              //   // 方法2: さらにマットな質感へ
-              //   o.material.metalness = 0.0;
-              //   o.material.roughness = 1.0;
-              //   o.material.needsUpdate = true;
-              // }
 
               // 別例: サインなど完全Unlitにする
               if (o.name.includes('平面')) {
@@ -225,7 +218,7 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
 
 // // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
-await loadModelToScene('ReMake_train_B.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
+await loadModelToScene('ReMake_train_D.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 },false)
   .then((root) => {
     console.log('GLB loaded and added to scene:', root);
     // console.log('GLB',car)

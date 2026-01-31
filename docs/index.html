@@ -3,7 +3,176 @@
 <head>
   <meta charset="UTF-8" />
   <title>Three.js 模型デモ</title>
-  <style>body { margin: 0; overflow: hidden; }</style>
+  <style>
+    @font-face {
+      font-family: 'KH Dot Akihabara';
+      src: url('fonts/KH-Dot-Akihabara-16.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    body { margin: 0; overflow: auto; font-family: 'KH Dot Akihabara', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; }
+    /* Three.js のキャンバス状態 */
+    #three-canvas.full-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      z-index: 0;
+      background: transparent;
+    }
+    #three-canvas.intro-canvas {
+      position: relative;
+      /* プレビュー時はキャンバスのサイズを自動にして親要素内で中央に配置する */
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+      margin: auto;
+      z-index: 0;
+      background: transparent;
+      border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    }
+  </style>
+  <style>
+    /* LED-style marquee (電光掲示板風) */
+    .led-marquee {
+      overflow: hidden;
+      background: rgba(0,0,0,0.85);
+      color: #00ff66;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 18px;
+      line-height: 1;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      font-variant-ligatures: none;
+    }
+    .led-marquee__inner {
+      
+      display: grid;
+      grid-template-rows: repeat(3, 1fr);
+      align-items: center;
+      gap: 0; /* 単一メッセージを1回流すため gap は不要 */
+      white-space: nowrap;
+      will-change: transform;
+      animation-timing-function: linear;
+
+      /* animation-name / duration は JS で設定 */
+    }
+    .led-marquee__text { display: inline-block; }
+    .led-marquee:hover .led-marquee__inner { animation-play-state: paused; }
+    
+    @keyframes marquee {
+      from { transform: translateX(var(--marquee-from, 100%)); }
+      to   { transform: translateX(var(--marquee-to, -100%)); }
+    }
+
+    /* 左固定表示（流さない行） */
+    .led-row.static .led-marquee__text{
+      transform: none !important;
+    }
+
+    /* static の時は inner 全体のアニメを使わないので、行単位で制御する */
+    .led-row .led-marquee__text{
+      will-change: transform;
+    }
+
+    @keyframes marqueeRow {
+      from { transform: translateX(var(--row-from, 100%)); }
+      to   { transform: translateX(var(--row-to, -100%)); }
+    }
+
+    .led-color-white  { color:#ffffff; text-shadow:0 0 8px rgba(255,255,255,.8); }
+    .led-color-green  { color:#00ff66; text-shadow:0 0 8px rgba(0,255,102,.8); }
+    .led-color-orange { color:#ffb347; text-shadow:0 0 8px rgba(255,77,77,.8); }
+    .led-color-red    { color:#ff4d4d; text-shadow:0 0 8px rgba(255,77,77,.8); }
+    .led-color-blue   { color:#7be6ff; text-shadow:0 0 8px rgba(123, 143, 255, 0.8); }
+    .led-color-yellow { color:#ffe35a; text-shadow:0 0 8px rgba(255,227,90,.8); }
+    .led-color-pink   { color:#ff69b4; text-shadow:0 0 8px rgba(255,105,180,.8); }
+
+    .led-row.theme-orange .led-marquee__text { color:#ff6200; text-shadow:0 0 10px rgba(255,77,77,.8); }
+    .led-row.theme-green .led-marquee__text { color:#00ff66b8; text-shadow:0 0 10px rgba(0, 255, 102, 0.507); }
+    .led-row.theme-alert .led-marquee__text { color:#ff4d4d; text-shadow:0 0 10px rgba(255,77,77,.8); }
+    .led-row.theme-info  .led-marquee__text { color:#7be6ff; text-shadow:0 0 10px rgba(123,230,255,.7); }
+    .led-row.theme-local .led-marquee__text { color:#ffe35a; text-shadow:0 0 10px rgba(255,227,90,.7); }
+
+
+  </style>
+    <style>
+      /* Welcome overlay: disable internal scrolling so page scroll controls navigation */
+        #welcome { overflow: visible; -webkit-overflow-scrolling: auto; }
+        .welcome-content { max-height: none; overflow: visible; -webkit-overflow-scrolling: auto; }
+    </style>
+  <style>
+    /* 操作説明パネル */
+    #instructions-panel {
+      position: fixed;
+      top: 80px;
+      /* width: 320px; */
+      max-width: calc(100% - 32px);
+      max-height: calc(80vh);
+      overflow: auto;
+      background: rgba(255,255,255,0.95);
+      color: #111;
+      padding: 12px;
+      border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.2);
+      z-index: 9999;
+      display: none;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    #show-instructions-btn {
+      position: fixed;
+      right: 12px;
+      top: 20px;
+      z-index: 10000;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      touch-action: manipulation;
+    }
+  </style>
+
+  <style>
+    /* Canvas 上に重ねる UI 用コンテナ */
+    #three-ui {
+      position: absolute; /* intro 時は intro-wrapper 内で相対配置 */
+      inset: 0;
+      pointer-events: none; /* 子要素のみ反応させる */
+      z-index: 2;
+    }
+    /* canvas 内に移動した UI 要素はこれを付与して操作可能にする */
+    .canvas-ui { pointer-events: auto; }
+  </style>
+
+  <style>
+    /* 拡大表示時に canvas のみ表示するクラス */
+    body.only-canvas > * { display: none !important; }
+    body.only-canvas #three-canvas {
+      display: block !important;
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      z-index: 2147483646 !important;
+      background: transparent !important;
+    }
+    /* ただし three-ui（キャンバス上の UI）は表示する */
+    body.only-canvas #three-ui { display: block !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; pointer-events: auto !important; }
+    body.only-canvas .canvas-ui { pointer-events: auto !important; }
+  </style>
 
   <!-- Google Analytics 設定 閲覧数の測定用です。-->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-B8X9Y12345"></script>
@@ -31,8 +200,26 @@
   
   <button id="btn-down" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 40px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">🔻</button> -->
   <style>
+    .section {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.6);
+      z-index: 200;
+      min-height: 80vh; /* 少し短めにしてセクション間の余白を減らす */
+      padding: 12px 0 0 0;  /* 上方向のパディングのみにして下余白を無くす */
+      margin: 0; /* セクション間の外側の余白を無くす */
+    }
+
+    /* 連続するセクション間の隙間をゼロにする */
+    .section + .section { margin-top: 0; padding-top: 0; }
+
+    /* Welcome の内側余白も詰める */
+    .welcome-content { margin-bottom: 0; padding-bottom: 0; }
+
     .control-button {
-      position: fixed;
+      position: relative;
       width: 60px;
       height: 60px;
       font-size: 24px;
@@ -54,7 +241,7 @@
     }
 
   .control-square-button {
-    position: fixed;
+    position: relative;
     width: 400px;
     height: 40px;
     font-size: 24px;
@@ -75,7 +262,7 @@
     -webkit-touch-callout: none;
   }
   .log-control-square-button {
-    position: fixed;
+    position: relative;
     width: 800px;
     height: 400px;
     font-size: 24px;
@@ -131,7 +318,7 @@
   }
   
   .credits-footer {
-    position: fixed;
+    position: relative;
     left: 0;
     right: 0;
     bottom: 0;
@@ -196,116 +383,136 @@
 
 </style>
   
-  <button id="speed-up" class="control-button" style="right: 20px; bottom: 200px;">◀︎◁</button>
-  <button id="speed-down" class="control-button" style="right: 95px; bottom: 200px;">▶︎▷</button>
-  <button id="btn-up" class="control-button" style="right: 160px; bottom: 150px;">🔺</button>
-  <button id="btn-down" class="control-button" style="right: 160px; bottom: 70px;">🔻</button>
-      
-  <!-- 左スティック（左下に表示） -->
-  <button id="controller-area" class="circle-ctrl-area" style="left: 160px; bottom: 60px; width: 80px; height: 80px"></button>
-  <button id="controller" class="circle-ctrl" style="left: 160px; bottom: 110px; width: 30px; height: 30px"></button>
-  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.8.6/nipplejs.min.js"></script>
-  <div id="left-stick" style="user-select: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; position: fixed; left: 7vw; bottom: 0; width: 40vw; height: 60vh; z-index: 10;"></div>
-  <div id="right-stick" style="user-select: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; position: fixed; right: 7vw; bottom: 0; width: 40vw; height: 60vh; z-index: 10;"></div> -->
 
-  <button id="log" class="control-button" style="right: 20px; top: 40px;">📤</button>
+  <!-- Welcome overlay with a scaled-down canvas preview -->
+  <section id="welcome" class="section">
+      <div class="welcome-content" style="width: 80%; max-width: 960px; background: rgba(255,255,255,0.06); padding: 24px; border-radius: 12px; backdrop-filter: blur(6px);"> 
+      <div class="led-marquee" aria-label="announcement">
 
-  </button>
+        <div class="led-marquee__inner" id="led-marquee-inner">
+          <div class="led-row" data-row="0"><span class="led-marquee__text"></span></div>
+          <div class="led-row" data-row="1"><span class="led-marquee__text"></span></div>
+          <div class="led-row" data-row="2"><span class="led-marquee__text"></span></div>
+        </div>
 
-  <!-- モード切り替え -->
-  <div id="UiGroup" style="position: fixed; top: 140px; left: 20px; z-index: 100;">
-    <button id = 'see' style = 'top: 10px;' > 🎦 </button>
-    <button id = 'edit' style = 'top: 40px;' > 🛠️ </button>
-    <button id = 'rail' style = 'top: 70px; left:10px;' > 🛤️ </button>
-    <button id = 'new' style = 'top: 100px; left:20px;' > + </button>
-    <button id = 'move' style = 'top: 130px; left:20px;' > 💫 </button>
-    <button id = 'x_z' style = 'top: 160px; left:30px;' > ⤮ </button>
-    <button id = 'y' style = 'top: 190px; left:30px;' > ⇡ </button>
-    <button id = 'poll' style = 'top: 220px; left:10px;' > ⚡️ </button>
-    <button id = 'new/2' style = 'top: 250px; left:20px;' > + </button>
-    <button id = 'move/2' style = 'top: 280px; left:20px;' > 💫 </button>
-    <button id = 'x_z/2' style = 'top: 310px; left:30px;' > ⤮ </button>
-    <button id = 'y/2' style = 'top: 340px; left:30px;' > ⇡ </button>
-    <button id = 'creat' style = 'top: 370px; left:10px;' > 🪄 </button>
-    <button id = 'sphere' style = 'top: 400px; left:20px;' > 🌐 </button>
-    <button id = 'cube' style = 'top: 430px; left:20px;' > 📦 </button>
-    <button id = 'pick' style = 'top: 460px; left:20px;' > ⌖ </button>
-    <button id = 'move/3' style = 'top: 490px; left:20px;' > 💫 </button>
-    <button id = 'x_z/3' style = 'top: 520px; left:30px;' > ⤮ </button>
-    <button id = 'y/3' style = 'top: 550px; left:30px;' > ⇡ </button> 
-    <button id = 'custom' style = 'top: 220px; left: 100px;' > ♾ </button>
-    <button id = 'new/3' style = 'top: 250px; left: 20px;' > + </button>
-    <button id = 'construct' style = 'top: 280px; left: 20px;' > 🌐 </button>
-    <button id = 'move/4' style = 'top: 310px; left: 20px;' > 💫 </button>
-    <button id = 'x_z/4' style = 'top: 340px; left: 30px;' > ⤮ </button>
-    <button id = 'y/4' style = 'top: 370px; left: 30px;' > ⇡ </button>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <div id="intro-wrapper" style="flex: 1 1 480px; max-width: 640px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 8px; display:flex; align-items:center; justify-content:center; position: relative;">
+          <canvas id="three-canvas"></canvas>
+          <!-- three-ui: プレビュー時はここにボタン群を表示 -->
+          <div id="three-ui">
+            <div class="canvas-ui">
+              <button id="speed-up" class="control-button" style="right: 20px; bottom: 200px;">◀︎◁</button>
+              <button id="speed-down" class="control-button" style="right: 95px; bottom: 200px;">▶︎▷</button>
+              <button id="btn-up" class="control-button" style="right: 160px; bottom: 150px;">🔺</button>
+              <button id="btn-down" class="control-button" style="right: 160px; bottom: 70px;">🔻</button>
 
-    <!-- <button id = 'see' style = 'top: 10px; left: 0px;' > </button>
-    <button id = 'edit' style = 'top: 40px; left: 0px;' > </button>
-    <button id = 'rail' style = 'top: 70px; left: 10px;' > </button>
-    <button id = 'new' style = 'top: 100px; left: 20px;' > </button>
-    <button id = 'move' style = 'top: 130px; left: 20px;' > </button>
-    <button id = 'x_z' style = 'top: 160px; left: 30px;' > </button>
-    <button id = 'y' style = 'top: 190px; left: 30px;' > </button>
-    <button id = 'poll' style = 'top: 220px; left: 10px;' > </button>
-    <button id = 'new/2' style = 'top: 250px; left: 20px;' > </button>
-    <button id = 'move/2' style = 'top: 280px; left: 20px;' > </button>
-    <button id = 'x_z/2' style = 'top: 310px; left: 30px;' > </button>
-    <button id = 'y/2' style = 'top: 340px; left: 30px;' > </button>
-    <button id = 'creat' style = 'top: 370px; left: 10px;' > </button>
-    <button id = 'sphere' style = 'top: 400px; left: 20px;' > </button>
-    <button id = 'cube' style = 'top: 430px; left: 20px;' > </button>
-    <button id = 'pick' style = 'top: 460px; left: 20px;' > </button>
-    <button id = 'x_z/3' style = 'top: 490px; left: 30px;' > </button>
-    <button id = 'y/3' style = 'top: 520px; left: 30px;' > </button>
-    -->
-  </div>
+              <button id="controller-area" class="circle-ctrl-area" style="left: 160px; bottom: 60px; width: 80px; height: 80px"></button>
+              <button id="controller" class="circle-ctrl" style="left: 160px; bottom: 110px; width: 30px; height: 30px"></button>
 
-  <button id="toggle-crossover" class="control-square-button" style="
-    position: absolute;
-    left: 20px;
-    top: 20px;
-    padding: 10px;
-    font-size: 14px;
-    z-index: 10;
-    backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
-    ">ランダム立体交差（クアトロ交差）切替</button> 
+              <button id="log" class="control-button" style="right: 20px; top: 40px;">📤</button>
 
-  <div id="frontViewButtons" style="position: fixed; top: 20px; right: 20px; z-index: 100;">
-    <button class="frontViewBtn" data-train="1">1番線</button>
-    <button class="frontViewBtn" data-train="2">2番線</button>
-    <button class="frontViewBtn" data-train="3">3番線</button>
-    <button class="frontViewBtn" data-train="4">4番線</button>
-  </div>
-  
-  <!-- 🌞 昼夜切り替えボタン -->
-  <button id="toggle-daynight" style="
-    position: fixed;
-    top: 70px;
-    left: 20px;
-    z-index: 10;
-    padding: 10px 15px;
-    font-size: 16px;
-    border-radius: 8px;
-  ">🌙 夜にする</button>
+              <div id="UiGroup" style="position: fixed; top: 140px; left: 20px; z-index: 100;">
+                <button id = 'see' style = 'top: 10px;' > 🎦 </button>
+                <button id = 'edit' style = 'top: 40px;' > 🛠️ </button>
+                <button id = 'rail' style = 'top: 70px; left:10px;' > 🛤️ </button>
+                <button id = 'new' style = 'top: 100px; left:20px;' > + </button>
+                <button id = 'move' style = 'top: 130px; left:20px;' > 💫 </button>
+                <button id = 'x_z' style = 'top: 160px; left:30px;' > ⤮ </button>
+                <button id = 'y' style = 'top: 190px; left:30px;' > ⇡ </button>
+                <button id = 'poll' style = 'top: 220px; left:10px;' > ⚡️ </button>
+                <button id = 'new/2' style = 'top: 250px; left:20px;' > + </button>
+                <button id = 'move/2' style = 'top: 280px; left:20px;' > 💫 </button>
+                <button id = 'x_z/2' style = 'top: 310px; left:30px;' > ⤮ </button>
+                <button id = 'y/2' style = 'top: 340px; left:30px;' > ⇡ </button>
+                <button id = 'creat' style = 'top: 370px; left:10px;' > 🪄 </button>
+                <button id = 'sphere' style = 'top: 400px; left:20px;' > 🌐 </button>
+                <button id = 'cube' style = 'top: 430px; left:20px;' > 📦 </button>
+                <button id = 'pick' style = 'top: 460px; left:20px;' > ⌖ </button>
+                <button id = 'move/3' style = 'top: 490px; left:20px;' > 💫 </button>
+                <button id = 'x_z/3' style = 'top: 520px; left:30px;' > ⤮ </button>
+                <button id = 'y/3' style = 'top: 550px; left:30px;' > ⇡ </button>
+                <button id = 'custom' style = 'top: 220px; left: 100px;' > ♾ </button>
+                <button id = 'new/3' style = 'top: 250px; left: 20px;' > + </button>
+                <button id = 'construct' style = 'top: 280px; left: 20px;' > 🌐 </button>
+                <button id = 'move/4' style = 'top: 310px; left: 20px;' > 💫 </button>
+                <button id = 'x_z/4' style = 'top: 340px; left: 30px;' > ⤮ </button>
+                <button id = 'y/4' style = 'top: 370px; left: 30px;' > ⇡ </button>
+              </div>
 
-  <button id = "logwindow" class="log-control-square-button" style="
-  position: absolute;
-  left: 130px;
-  top: 20px;
-  padding: 10px;
-  font-size: 14px;
-  color: #000;
-  z-index: 10;
-  backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
-  ">モバイル出力用</button> 
+              <button id="toggle-crossover" class="control-square-button" style="position: absolute; left: 20px; top: 20px; padding: 10px; font-size: 14px; z-index: 10; backdrop-filter: blur(4px);">ランダム立体交差（クアトロ交差）切替</button>
 
-  <canvas id="three-canvas"></canvas>
+              <div id="frontViewButtons" style="position: fixed; top: 20px; right: 20px; z-index: 100;">
+                <button class="frontViewBtn" data-train="1">1番線</button>
+                <button class="frontViewBtn" data-train="2">2番線</button>
+                <button class="frontViewBtn" data-train="3">3番線</button>
+                <button class="frontViewBtn" data-train="4">4番線</button>
+              </div>
+
+              <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
+
+              <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 130px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
+              
+              <button id="show-instructions-btn">操作説明</button>
+
+              <div id="instructions-panel" role="region" aria-label="操作説明">
+                <h3 style="margin-top:0;">操作説明</h3>
+                <ul>
+                  [視点] 画面上をスライド/ドラッグで視点を回転・移動します。<br>
+                  [移動] 左下のコントローラで前後左右に移動できます。<br>
+                  [表示切替] 右上のボタンで列車ビュー等を切替えます。<br>
+                  [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
+                </ul>
+                <p style="margin-bottom:0;">※ モバイルでは画面を長押しするとズームします。</p>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <div style="flex: 1 1 260px; min-width: 220px;">
+          <div id="preview-feature" style="margin:12px 0; padding:16px; background: rgba(255,255,255,0.04); border-radius:10px; text-align:center;">
+            <h2 style="margin:0 0 8px 0; font-size:18px;">操作説明</h2>
+            <ul>
+                  [視点] 画面上をスライド/ドラッグで視点を回転・移動します。<br>
+                  [移動] 左下のコントローラで前後左右に移動できます。<br>
+                  [表示切替] 右上のボタンで列車ビュー等を切替えます。<br>
+                  [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
+            </ul>
+            <p style="margin-bottom:0;">※ モバイルでは画面を長押しするとズームします。</p>
+
+          </div>
+        </div>
+      </div>
+      <div style="flex: 1 1 260px; min-width: 220px;">
+        <div id="preview-feature" style="margin:12px 0; padding:16px; background: rgba(255,255,255,0.04); border-radius:10px; text-align:center;">
+          <h2 style="margin:0 0 8px 0; font-size:18px;">プレビュー用 操作パネル</h2>
+          <p style="margin:0 0 12px 0; opacity:0.9;">ここからフルスクリーン表示に切替えられます。</p>
+          <div style="display:flex; gap:10px; justify-content:center;">
+            <button id="preview-start" style="padding:14px 20px; font-size:18px; border-radius:10px; background:#0078d4; color:#fff; border:none;">表示を開始する</button>
+            <button id="preview-skip" style="padding:12px 16px; font-size:16px; border-radius:10px; background:rgba(0,0,0,0.6); color:#fff; border:none;">プレビューのまま閉じる</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="operation" class="section">
+    <div style="width: 80%; max-width: 960px; background: rgba(255,255,255,0.06); padding: 24px; border-radius: 12px; backdrop-filter: blur(6px); color: white;"> 
+      <h1 style="margin-top: 0;">操作説明</h1>
+      <p>操作について説明。</p>
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <div id="intro-wrapper" style="flex: 1 1 480px; max-width: 640px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 8px; display:flex; align-items:center; justify-content:center; position: relative;">
+          <canvas id="three-canvas"></canvas>
+          <!-- three-ui: プレビュー時はここにボタン群を表示 -->
+        </div>
+      <p style="opacity:0.8; font-size:13px; margin-top:12px;">※ モバイルではタッチ操作、デスクトップではマウスで操作できます。</p>
+    </div>
+  </section>
   
   <footer class="credits-footer" role="contentinfo" aria-label="出典情報">
     <small>
 
-      (ℹ️ <a href="https://github.com/mtur2007/java_three_3D/blob/main/README.md" target="_blank" rel="noopener noreferrer">操作方法はこちら</a>)
+      (ℹ️ <a id="show-intro-link" href="https://github.com/mtur2007/java_three_3D/blob/main/README.md" target="_blank" rel="noopener noreferrer">操作方法はこちら</a>)
       [クレジット / 
       データ:
       <a href="https://plateauview.mlit.go.jp/" target="_blank" rel="noopener noreferrer">PLATEAU</a>（国土交通省）|
@@ -320,6 +527,255 @@
   
   <script type="module" src="js/main.js"></script>
   <script type="module" src="js/ui_toggle.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  const inner = document.getElementById('led-marquee-inner');
+  if (!inner) return;
+
+  // 3行セット：text と mode を行ごとに指定
+  // mode: "scroll" | "static"
+  const messageSets = [
+    [
+      { text: '</whiteようこそ — 三次元模型デモ', mode: 'static' },
+      { text: '</orangeこのサイトではthree.jsで作成した空間を表示します。', mode: 'scroll' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</whiteようこそ — 三次元模型デモ', mode: 'static' },
+      { text: '</orangeまずは縮小プレビューで操作感をお試しください。', mode: 'scroll' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</redひかり 513', mode: 'static' },
+      { text: '</yellowのぞみ 111 ', mode: 'static' },
+      { text: '</blueたかし 657', mode: 'static' },
+    ],
+    [
+      { text: '</green　　普　通　　 15:06 郡山</orange 2', mode: 'static' },
+      { text: '</red喜多方ラーメン 15:25 郡山 1', mode: 'static' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</pink ３ </yellow 16:26 各停 新線新宿 １０両編成', mode: 'static' },
+      { text: '</pink ３ </yellow 16:27 各停 　調布　 ３２７２６８両編成', mode: 'static' },
+      { text: '', mode: 'static' },
+
+    ],
+    [
+      { text: '</orange☆日本は終了しました☆', mode: 'static' },
+      { text: '', mode: 'static' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</white local</orange 12:38 Naka-meguro </green8car', mode: 'static' },
+      { text: '</orange撃ち回り、外回り電車に遅れが出ております。', mode: 'scroll' },
+      { text: '</white local</orange 12:48 Naka-meguro </green7car', mode: 'static' },
+    ],
+    [
+      { text: '</green次は　</orangeオマエダ', mode: 'static' },
+      { text: '', mode: 'static' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</green　　普　通　　21:01 豊　橋 4両', mode: 'static', theme: 'green' },
+      { text: '</orangeお客様には大変ご迷惑しております。', mode: 'scroll', theme: 'orange'},
+      { text: '', mode: 'static' },
+    ],
+  ];
+
+  const SPEED_PX_PER_SEC = 120;
+  const MIN_SEC = 5;
+  const MAX_SEC = 120;
+
+  // フォントロード後に計測（任意だけどおすすめ）
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch (e) {}
+  }
+
+  let queue = [];
+  let currentIndex = -1;
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+  function refillQueue() {
+    queue = messageSets.map((_, i) => i);
+    shuffle(queue);
+    if (queue.length >= 2 && queue[0] === currentIndex) {
+      [queue[0], queue[1]] = [queue[1], queue[0]];
+    }
+  }
+  function pickNextIndex() {
+    if (messageSets.length === 0) return -1;
+    if (messageSets.length === 1) return 0;
+    if (queue.length === 0) refillQueue();
+    return queue.shift();
+  }
+
+  function parseColoredText(raw) {
+    if (!raw) return '';
+
+    // </colorText を解析
+    // 例: </green次は </orangeオマエダ
+    const regex = /<\/([a-zA-Z0-9_-]+)([^<]*)/g;
+
+    let result = '';
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(raw)) !== null) {
+      // タグ前の通常文字
+      result += raw.slice(lastIndex, match.index);
+
+      const color = match[1];
+      const text  = match[2];
+
+      result += `<span class="led-color-${color}">${text}</span>`;
+
+      lastIndex = regex.lastIndex;
+    }
+
+    // 残り文字
+    result += raw.slice(lastIndex);
+
+    return result;
+  }
+
+  function applyRow(rowEl, line) {
+
+    const span = rowEl.querySelector('.led-marquee__text');
+    if (!span) return;
+
+    const mode = line?.mode ?? 'scroll';
+    const text = line?.text ?? '';
+
+    // テキスト更新
+    span.innerHTML = parseColoredText(text);
+
+
+    // モード反映（classで分ける）
+    rowEl.classList.toggle('static', mode === 'static');
+
+    // アニメ一旦停止＆クリア
+    span.style.animation = 'none';
+    span.style.transform = 'translateX(0px)';
+    span.style.removeProperty('--row-from');
+    span.style.removeProperty('--row-to');
+  }
+
+  function startRowAnimation(rowEl) {
+    const span = rowEl.querySelector('.led-marquee__text');
+    if (!span) return;
+
+    // static の行は流さない（左固定）
+    if (rowEl.classList.contains('static')) {
+      span.style.animation = 'none';
+      span.style.transform = 'translateX(0px)';
+      return;
+    }
+
+    const container = inner.parentElement;
+    if (!container) return;
+
+    const containerWidth = container.getBoundingClientRect().width;
+    const textWidth = span.getBoundingClientRect().width;
+
+    const from = containerWidth;
+    const to = -textWidth;
+
+    span.style.setProperty('--row-from', from + 'px');
+    span.style.setProperty('--row-to', to + 'px');
+
+    const distance = containerWidth + textWidth;
+    const raw = distance / SPEED_PX_PER_SEC;
+    const duration = Math.max(MIN_SEC, Math.min(MAX_SEC, raw));
+
+    // 確実にリスタート
+    span.style.animation = 'none';
+    void span.offsetWidth;
+    span.style.animation = `marqueeRow ${duration}s linear 1 forwards`;
+  }
+
+  // 3行のうち「最後に終わった scroll 行」をトリガーに次セットへ
+  // ※ すべて static のセットでも進むようにフォールバックも入れる
+  let pendingScrollCount = 0;
+
+  function playSet(index) {
+    const set = messageSets[index];
+    const rows = inner.querySelectorAll('.led-row');
+
+    pendingScrollCount = 0;
+
+    rows.forEach((rowEl, i) => {
+      applyRow(rowEl, set[i]);
+    });
+
+    // DOM反映後に計測して開始
+    requestAnimationFrame(() => {
+      rows.forEach((rowEl) => {
+        if (!rowEl.classList.contains('static')) pendingScrollCount++;
+        startRowAnimation(rowEl);
+      });
+
+      // 全部 static のセットなら、一定時間後に次へ（見せる時間）
+      if (pendingScrollCount === 0) {
+        setTimeout(() => playNext(),  8000);
+      }
+    });
+  }
+
+  function playNext() {
+    const next = pickNextIndex();
+    if (next < 0) return;
+    currentIndex = next;
+    playSet(currentIndex);
+  }
+
+  // 行アニメ終了を監視（scroll 行だけカウント）
+  inner.addEventListener('animationend', (e) => {
+    const span = e.target.closest?.('.led-marquee__text');
+    if (!span) return;
+
+    const rowEl = span.closest('.led-row');
+    if (!rowEl || rowEl.classList.contains('static')) return;
+
+    pendingScrollCount = Math.max(0, pendingScrollCount - 1);
+    if (pendingScrollCount === 0) {
+      playNext();
+    }
+  });
+
+  // hoverで停止（行ごと）
+  const marquee = inner.closest('.led-marquee');
+  if (marquee) {
+    marquee.addEventListener('mouseenter', () => {
+      inner.querySelectorAll('.led-marquee__text').forEach(s => s.style.animationPlayState = 'paused');
+    });
+    marquee.addEventListener('mouseleave', () => {
+      inner.querySelectorAll('.led-marquee__text').forEach(s => s.style.animationPlayState = 'running');
+    });
+  }
+
+  // リサイズ時：今のセットを再スタート（ズレ防止）
+  const handleResize = () => {
+    if (currentIndex < 0) return;
+    playSet(currentIndex);
+  };
+  if ('ResizeObserver' in window) {
+    const ro = new ResizeObserver(() => handleResize());
+    ro.observe(inner.parentElement);
+  } else {
+    window.addEventListener('resize', handleResize, { passive: true });
+  }
+
+  playNext();
+});
+</script>
 
 </body>
 </html>

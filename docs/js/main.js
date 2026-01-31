@@ -1,5 +1,7 @@
 // main.js
 "toggle-daynight"
+"frontViewBtn"
+"停止"
 
 // モバイルデバッグ用　ログ画面出力
 
@@ -67,8 +69,71 @@ import * as THREE from 'three';
 const scene = new THREE.Scene();
 
 const canvas = document.getElementById('three-canvas');
-const renderer = new THREE.WebGLRenderer({ canvas });
-renderer.setSize(window.innerWidth, window.innerHeight);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+
+// 初期はウェルカム用の縮小プレビューがある場合、そのサイズに合わせる。
+const introWrapper = document.getElementById('intro-wrapper');
+// three-ui container (may be moved between intro wrapper and body)
+const threeUi = document.getElementById('three-ui');
+  const showInstructionsBtn = document.getElementById('show-instructions-btn');
+  const instructionsPanel = document.getElementById('instructions-panel');
+  const operationSection = document.getElementById('operation');
+  const previewFeature = document.getElementById('preview-feature');
+  const previewStartBtn = document.getElementById('preview-start');
+  const previewSkipBtn = document.getElementById('preview-skip');
+
+  // 初期表示: プレビューでは three-ui を隠してプレビュー用パネルを表示
+  if (threeUi) {
+    try { threeUi.style.display = 'none'; } catch (e) {}
+  }
+  if (previewFeature) {
+    try { previewFeature.style.display = 'block'; } catch (e) {}
+  }
+
+  if (showInstructionsBtn) {
+    showInstructionsBtn.addEventListener('click', () => {
+      // まず float パネルを優先表示する
+      if (instructionsPanel) {
+        const isOpen = instructionsPanel.style.display === 'block';
+        instructionsPanel.style.display = isOpen ? 'none' : 'block';
+        showInstructionsBtn.textContent = isOpen ? '操作説明' : '閉じる';
+        return;
+      }
+      // パネルが無ければページ内の operation セクションを切り替える
+      const welcomeEl = document.getElementById('welcome');
+      if (operationSection) {
+        const isOpenOp = operationSection.style.display === 'block';
+        if (isOpenOp) {
+          operationSection.style.display = 'none';
+          if (welcomeEl) welcomeEl.style.display = 'flex';
+          showInstructionsBtn.textContent = '操作説明';
+        } else {
+          operationSection.style.display = 'block';
+          if (welcomeEl) welcomeEl.style.display = 'none';
+          showInstructionsBtn.textContent = '戻る';
+        }
+      }
+    });
+  }
+
+if (introWrapper) {
+  canvas.classList.add('intro-canvas');
+  // 見た目の安定のため、introWrapper の実サイズに合わせてプレビュー幅を選ぶ
+  const rect = introWrapper.getBoundingClientRect();
+  const previewWidth = Math.min(640, Math.floor(rect.width - 16)); // パディング分を差し引く
+  const previewHeight = Math.floor(previewWidth * 9 / 16);
+  renderer.setSize(previewWidth, previewHeight);
+  try { renderer.setPixelRatio(1); } catch (e) {}
+  // CSS 上の表示サイズも明示的に設定しておく
+  canvas.style.width = previewWidth + 'px';
+  canvas.style.height = previewHeight + 'px';
+  // controller 初期位置更新
+  try { updateCtrlPos(); } catch (e) {}
+} else {
+  canvas.classList.add('full-canvas');
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+}
 
 // ----------------- シャドウを有効化（renderer を作った直後あたりに入れる） -----------------
 renderer.shadowMap.enabled = true;                         // シャドウを有効化
@@ -76,6 +141,11 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;         // ソフトシャド�
 renderer.outputColorSpace = THREE.SRGBColorSpace;         // 既存の行があるなら残す
 
 // --- マップの半自動作成(路線設定) ---
+
+// パフォーマンス制御フラグ（フルスクリーン時などに FPS 制限や低解像度を適用するため）
+let perfThrottled = false;
+let perfTargetFps = 30; // 目標 FPS（負荷が高ければここを下げる）
+let lastRenderTime = 0; // FPS 制御用のタイムスタンプ
 
 // 座標感覚の可視化
 // Map_pin(10,10,20,0.2,0xff0000)
@@ -110,7 +180,7 @@ const loader = new THREE.TextureLoader();
     envMap = texture;
   });
 
-loader.load('textures/shanghai_bund_4k.jpg', (texture_night) => {
+loader.load('textures/moonless_golf.jpg', (texture_night) => {
   texture_night.mapping = THREE.EquirectangularReflectionMapping;
   texture_night.colorSpace = THREE.SRGBColorSpace;
   // scene.background = texture_night;
@@ -162,6 +232,7 @@ console.log('geo : ',geo)
 // world_creat()
 
 const dirLight = scene.getObjectByName('dirLight');
+
 
 import { TrainSystem } from './train_system.js';
 const TSys = new TrainSystem(scene,dirLight);
@@ -261,10 +332,162 @@ toggleBtn.addEventListener("touchstart", () => {
 });
 
 const camera = new THREE.PerspectiveCamera(
-  75, window.innerWidth / window.innerHeight, 0.1, 1000
+  75, window.innerWidth / window.innerHeight, 0.1, 200
 );
 
-document.body.appendChild(renderer.domElement);
+// カメラ初期位置（必要に応じて調整してください）
+camera.position.set(0, 10, 30);
+
+// 使用している canvas は既に DOM にあるため、appendChild は行わない。
+// (document.body.appendChild(renderer.domElement) をするとプレビュー時の親要素配置が崩れるため削除)
+
+// ウィンドウリサイズ時の処理
+function onWindowResize() {
+  if (introWrapper && canvas.classList.contains('intro-canvas')) {
+    // プレビュー表示中は introWrapper のサイズに合わせる
+    const rect = introWrapper.getBoundingClientRect();
+    const previewWidth = Math.min(640, Math.floor(rect.width - 16));
+    const previewHeight = Math.floor(previewWidth * 9 / 16);
+    camera.aspect = previewWidth / previewHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(previewWidth, previewHeight);
+    try { renderer.setPixelRatio(1); } catch (e) {}
+    canvas.style.width = previewWidth + 'px';
+    canvas.style.height = previewHeight + 'px';
+  } else {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+  try { updateCtrlPos(); } catch (e) {}
+  }
+}
+
+window.addEventListener('resize', onWindowResize, false);
+
+// ウェルカム画面のボタン処理: プレビュー -> 全画面へ
+const welcome = document.getElementById('welcome');
+const startBtn = document.getElementById('start-3d');
+const skipBtn = document.getElementById('skip-3d');
+
+// 共通化: フルスクリーン表示へ切替える関数
+function startFullView() {
+  try {
+    if (welcome) welcome.style.display = 'none';
+
+    // プレビュー内の canvas を body に移動してフルスクリーン化
+    try {
+      if (canvas && canvas.parentElement !== document.body) document.body.appendChild(canvas);
+    } catch (e) {}
+    canvas.classList.remove('intro-canvas');
+    canvas.classList.add('full-canvas');
+    onWindowResize();
+    try { updateCtrlPos(); } catch (e) {}
+
+    // show UI overlay on full-screen
+    if (threeUi) {
+      try {
+        if (threeUi.parentElement !== document.body) document.body.appendChild(threeUi);
+        threeUi.style.position = 'fixed';
+        threeUi.style.inset = '0';
+        threeUi.style.zIndex = '2147483647';
+        threeUi.style.display = 'block';
+        threeUi.style.pointerEvents = 'auto';
+      } catch (e) {}
+    }
+
+    // hide preview feature panel
+    if (previewFeature) {
+      try { previewFeature.style.display = 'none'; } catch (e) {}
+    }
+
+    // add class to body so only canvas is visible
+    try { document.body.classList.add('only-canvas'); } catch (e) {}
+  } catch (e) {
+    console.error('startFullView error', e);
+  }
+}
+
+if (startBtn) {
+  startBtn.addEventListener('pointerdown', startFullView);
+}
+if (skipBtn) {
+  skipBtn.addEventListener('pointerdown', () => {
+    if (welcome) welcome.style.display = 'none';
+  });
+}
+
+// preview 用大ボタンからフルスクリーンに遷移するための短絡ハンドラ
+if (previewStartBtn) {
+  previewStartBtn.addEventListener('pointerdown', () => {
+    startFullView();
+  });
+}
+if (previewSkipBtn) {
+  previewSkipBtn.addEventListener('pointerdown', () => {
+    if (welcome) welcome.style.display = 'none';
+  });
+}
+
+// リンクからインナー（プレビュー）に戻す処理
+const showIntroLink = document.getElementById('show-intro-link');
+async function restorePreview() {
+  try {
+    if (welcome) welcome.style.display = 'flex';
+
+    // move canvas back into intro-wrapper if available
+    const introWrapperEl = document.getElementById('intro-wrapper');
+    if (introWrapperEl && canvas && canvas.parentElement !== introWrapperEl) {
+      introWrapperEl.appendChild(canvas);
+    }
+
+    // swap classes
+    canvas.classList.remove('full-canvas');
+    canvas.classList.add('intro-canvas');
+
+    // hide three-ui until user starts again
+    if (threeUi) {
+      try {
+        introWrapperEl.appendChild(threeUi);
+        threeUi.style.position = 'absolute';
+        threeUi.style.inset = '0';
+        threeUi.style.zIndex = '2';
+        threeUi.style.display = 'none';
+        threeUi.style.pointerEvents = 'none';
+      } catch (e) {}
+    }
+
+    // remove only-canvas class to restore page UI
+    try { document.body.classList.remove('only-canvas'); } catch (e) {}
+
+    // プレビュー用パネルを再表示
+    if (previewFeature) {
+      try { previewFeature.style.display = 'block'; } catch (e) {}
+    }
+
+
+    // restore renderer preview size and pixel ratio
+    const previewWidth = Math.min(640, Math.floor(window.innerWidth * 0.6));
+    const previewHeight = Math.floor(previewWidth * 9 / 16);
+    try { renderer.setPixelRatio(1); } catch (e) {}
+    renderer.setSize(previewWidth, previewHeight);
+    try { updateCtrlPos(); } catch (e) {}
+    perfThrottled = false;
+  } catch (e) {
+    console.error('restorePreview error', e);
+  }
+}
+
+if (showIntroLink) {
+  showIntroLink.addEventListener('click', (ev) => {
+    // Ctrl/Meta/Shift を押していれば外部リンクとして開く
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+    ev.preventDefault();
+    restorePreview();
+  });
+}
 
 let run_STOP = false
 let quattro = 0
@@ -566,16 +789,24 @@ startLoop(); // 処理開始
 
 // --- 駅用ユーティリティ ---
 
+const arm_material = new THREE.MeshStandardMaterial({
+  color: 0x444444,         // 白ベース
+  metalness: 1,          // 完全な金属
+  roughness: 0.2,          // 少しザラつき（0.0だと鏡面すぎる）
+  envMapIntensity: 0.3,    // 環境マップの反射強度（あるとリアル）
+  side: THREE.DoubleSide   // 両面描画（必要なら）
+});
+
 // パンタフラフ ¯¯"<"¯¯
 function createPantograph(Arm_rotation_z) {
   const pantograph = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial(metal_material);
+  const mat = new THREE.MeshStandardMaterial(arm_material);
 
   const Arm_len = 0.45
   const Arm_X_len = Math.sin(Arm_rotation_z)*Arm_len*0.5
   const Arm_Y_len = Math.cos(Arm_rotation_z)*Arm_len
   // 下アーム
-  const lowerArm = new THREE.Mesh(new THREE.BoxGeometry(0.02, Arm_len, 0.02), mat);
+  const lowerArm = new THREE.Mesh(new THREE.BoxGeometry(0.01, Arm_len, 0.01), mat);
   lowerArm.rotation.z = Arm_rotation_z;
   lowerArm.position.set(0, Arm_Y_len*0.5, 0);
   pantograph.add(lowerArm);
@@ -586,37 +817,37 @@ function createPantograph(Arm_rotation_z) {
   pantograph.add(lowerArm2);
 
   // 上アーム（斜め）
-  const upperArm = new THREE.Mesh(new THREE.BoxGeometry(0.02, Arm_len, 0.02), mat);
+  const upperArm = new THREE.Mesh(new THREE.BoxGeometry(0.01, Arm_len, 0.01), mat);
   upperArm.rotation.z = -Arm_rotation_z;
   upperArm.position.set(0, Arm_Y_len*1.5, 0);
   pantograph.add(upperArm.clone());
 
   const upperArm2 = new THREE.Mesh(new THREE.BoxGeometry(0.004, Arm_len-0.02, 0.004), mat);
-  upperArm2.rotation.z = -(Arm_rotation_z-0.065);
+  upperArm2.rotation.z = -(Arm_rotation_z-0.0);
   upperArm2.rotation.y = 0.27;
   upperArm2.position.set(+0.03, Arm_Y_len*1.5-0.02, -0.045);
   pantograph.add(upperArm2.clone());
 
-  const upperArm3 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.02), mat);
-  upperArm3.rotation.z = -(Arm_rotation_z-0.35);
-  upperArm3.position.set(-0.19, Arm_Y_len-0.015, 0);
+  const upperArm3 = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.05, 0.01), mat);
+  upperArm3.rotation.z = -(Arm_rotation_z-0.5);
+  upperArm3.position.set(-0.21, Arm_Y_len-0.015, 0);
   pantograph.add(upperArm3.clone());
 
 
   pantograph.rotation.y = Math.PI / 2;
   // 接触板
   const contactGroup = new THREE.Group();
-  const contact = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.01, 0.5), new THREE.MeshStandardMaterial(metal_material));
-  contact.position.set(Arm_X_len-0.02, Arm_Y_len*2,0);
+  const contact = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.5), new THREE.MeshStandardMaterial(arm_material));
+  contact.position.set(Arm_X_len-0.01, Arm_Y_len*2,0);
   contactGroup.add(contact.clone());
-  contact.position.set(Arm_X_len+0.02, Arm_Y_len*2,0);
+  contact.position.set(Arm_X_len+0.01, Arm_Y_len*2,0);
   contactGroup.add(contact.clone());
 
   const contact_rotation_x = Math.PI / 3
   const contact_Y_len = Math.sin(contact_rotation_x)*0.1*0.5
   const contact_X_len = Math.cos(contact_rotation_x)*0.1*0.5
 
-  const contact2 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1), new THREE.MeshStandardMaterial(metal_material));
+  const contact2 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1), new THREE.MeshStandardMaterial(arm_material));
   contact2.rotation.x = contact_rotation_x
   contact2.position.set(Arm_X_len, Arm_Y_len*2-contact_Y_len, 0.25+contact_X_len);
   contactGroup.add(contact2.clone());
@@ -626,12 +857,12 @@ function createPantograph(Arm_rotation_z) {
   contact2.position.z = -(0.25+contact_X_len);
   contactGroup.add(contact2.clone());
 
-  contactGroup.position.x = -0.05
+  contactGroup.position.x = -0.025
   pantograph.add(contactGroup.clone())
-  contactGroup.position.x = 0.05
+  contactGroup.position.x = 0.025
   pantograph.add(contactGroup.clone())
 
-  pantograph.scale.set(1.8,1.3,1.8)
+  pantograph.scale.set(2.5,2.3,2)
 
   return pantograph;
 }
@@ -1077,11 +1308,8 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
 }
 
 // --- リサイズ対応 ---
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+// Use unified handler
+window.addEventListener('resize', onWindowResize, false);
 
 let y = 6
 let Points_0 = []
@@ -1330,6 +1558,23 @@ sinkansen_downbound_point = [
   new THREE.Vector3(406.0943207437069, y+1.4258049149040684, -329.2244867534149 ), 
 ];
 
+const scale = 0.35/0.45; // 好きな倍率
+
+Points_0.forEach(v => v.multiplyScalar(scale)); // その場で全要素をスケール
+Points_1.forEach(v => v.multiplyScalar(scale)); // その場で全要素をスケール
+Points_2.forEach(v => v.multiplyScalar(scale)); // その場で全要素をスケール
+Points_3.forEach(v => v.multiplyScalar(scale)); // その場で全要素をスケール
+
+JK_upbound_point.forEach(v => v.multiplyScalar(scale));
+JY_upbound_point.forEach(v => v.multiplyScalar(scale));
+JY_downbound_point.forEach(v => v.multiplyScalar(scale));
+JK_downbound_point.forEach(v => v.multiplyScalar(scale));
+
+J_UJT_upbound_point.forEach(v => v.multiplyScalar(scale));
+J_UJT_downbound_point.forEach(v => v.multiplyScalar(scale));
+
+sinkansen_upbound_point.forEach(v => v.multiplyScalar(scale));
+sinkansen_downbound_point.forEach(v => v.multiplyScalar(scale));
 
 // 指定したポイントから線(線路の軌道)を生成
 const line_1 = new THREE.CatmullRomCurve3(Points_0);
@@ -1609,12 +1854,12 @@ const pole_line2 = point_data2[0]
 const pole_angle2 = point_data2[1]
 
 // right_height, left_height, beamLength, beam_height
-const Poles2 = TSys.createCatenaryPole(2.8,2.8,3.5,2.3, 40)
-for(let i=0; i<Poles2.children.length; i++){
-  Poles2.children[i].rotation.y += pole_angle2[i]
-  Poles2.children[i].position.set(pole_line2[i].x,pole_line2[i].y,pole_line2[i].z)
-}
-scene.add(Poles2)
+// const Poles2 = TSys.createCatenaryPole(2.8,2.8,3.5,2.3, 40)
+// for(let i=0; i<Poles2.children.length; i++){
+//   Poles2.children[i].rotation.y += pole_angle2[i]
+//   Poles2.children[i].position.set(pole_line2[i].x,pole_line2[i].y,pole_line2[i].z)
+// }
+// scene.add(Poles2)
 
 // 架線柱の配置(上野東京ライン)
 const margin_data = TSys.RailMargin(TSys.getPointsEveryM(J_UJT_downbound, 9.5), 1, true);
@@ -1637,7 +1882,7 @@ TSys.placeGirderBridge(bridge_2,bridge_3,9,2)
 // 電車の運行
 // const max_speed = 0.001 // 制限速度(最高)
 // const add_speed = 0.0000010 // 追加速度(加速/減速)
-const max_speed = 0.08 // 制限速度(最高)
+const max_speed = 0.1 // 制限速度(最高)
 const add_speed = 0.000065 // 追加速度(加速/減速)
 
 const exhibition_tyuou = TrainSettings(
@@ -1884,13 +2129,13 @@ function startFrontView(trainCar) {
     currentTrainCar.getWorldDirection(direction);
 
     // オフセット（少し後ろ＆上から）
-    const offset = new THREE.Vector3(0, 0.2, 3.4);
+    const offset = new THREE.Vector3(0, 0.2, -3.4);
     offset.applyQuaternion(quaternion);
 
     camera.position.copy(position).add(offset);
 
     // === 🔽 Yaw / Pitch で視線方向を調整 ===
-    const yaw = Math.atan2(direction.x, direction.z);   // Y軸回転（左右）
+    const yaw = Math.atan2(-direction.x, -direction.z);   // Y軸回転（左右）
     const pitch = Math.asin(direction.y);               // X軸回転（上下）
 
     // 必要な変数に代入（外部で使いたい場合）
@@ -1986,15 +2231,15 @@ function createLine(p1, p2, color = 0xff0000) {
 // マウスを動かしたときのイベント
 function handleMouseMove(x, y) {
   const element = canvas;
-  // canvas要素上のXY座標
-  const clientX = x - element.offsetLeft;
-  const clientY = y - element.offsetTop;
-  // canvas要素の幅・高さ
-  const w = element.offsetWidth;
-  const h = element.offsetHeight;
-  // -1〜+1の範囲で現在のマウス座標を登録する
-  mouse.x = ( clientX / w ) * 2 - 1;
-  mouse.y = -( clientY / h ) * 2 + 1;
+  // Use bounding rect to correctly account for CSS, padding and page offsets
+  const rect = element.getBoundingClientRect();
+  const clientX = x - rect.left;
+  const clientY = y - rect.top;
+  const w = rect.width;
+  const h = rect.height;
+  // normalize to -1..+1 for raycaster
+  mouse.x = (clientX / w) * 2 - 1;
+  mouse.y = -(clientY / h) * 2 + 1;
 }
 
 // 物体の表示/非表示
@@ -2080,6 +2325,7 @@ function resetMeshListOpacity(list, pointsSource) {
   });
 
 }
+
 // 高架(柱/床版)を生成
 const interval = 1
 const Elevated_start = 0.32
@@ -2306,6 +2552,7 @@ let pick_vertexs = [] // カスタムジオメトリ 頂点指定時の格納用
 // search_point();
 
 function getIntersectObjects(){
+
   // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
   raycaster.setFromCamera(mouse, camera);
 
@@ -2325,6 +2572,7 @@ async function search_point() {
   await sleep(80);
 
   if (intersects.length > 0) {
+    // console.log('hit')
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
@@ -2342,6 +2590,8 @@ async function search_point() {
       choice_object = intersects[0].object
       choice_object.material.color.set(0x00ff00)
 
+      console.log(choice_object)
+
       if (move_direction_y){
         GuideLine.position.copy(choice_object.position)
         GuideLine.visible = true
@@ -2354,12 +2604,14 @@ async function search_point() {
     }
 
   } else {
-    console.log('green_clean')
+    // console.log('not hit')
     if (choice_object !== false){
       if (objectEditMode === 'CONSTRUCT' && !pick_vertexs.includes(choice_object.id)){
         choice_object.material.color.set(0xff0000)
       }
+      choice_object.material.color.set(0xff0000)
     }
+
     choice_object = false;
     // dragging = false;
     GuideLine.visible = false
@@ -2883,12 +3135,8 @@ let editObject = 'Standby'
 // let trackEditSubMode = 'CREATE_NEW'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 let objectEditMode = 'Standby'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 
-// リサイズ変更
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+// Ensure resize uses unified handler
+window.addEventListener('resize', onWindowResize, false);
 
 export function UIevent (uiID, toggle){
   if ( uiID === 'see' ){ if ( toggle === 'active' ){
@@ -2931,9 +3179,6 @@ export function UIevent (uiID, toggle){
     console.log( 'move _active' )
     objectEditMode = 'MOVE_EXISTING'
 
-    search_object = true
-    search_point();
-
   } else {
     console.log( 'move _inactive' )
     search_object = false
@@ -2944,12 +3189,20 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'x_z' ){ if ( toggle === 'active' ){
     console.log( 'x_z _active' )
     move_direction_y = false
+    
+    search_object = true
+    search_point();
+
   } else {
     console.log( 'x_z _inactive' )
     search_object = false
   }} else if ( uiID === 'y' ){ if ( toggle === 'active' ){
     console.log( 'y _active' )
     move_direction_y = true
+    
+    search_object = true
+    search_point();
+  
   } else {
     console.log( 'y _inactive' )
     search_object = false
@@ -3118,11 +3371,32 @@ export function UIevent (uiID, toggle){
 // 視点操作
 // カメラ操作 ----------------------------------------------------------------
 
+const ctrl_area = document.getElementById("controller-area")
 const ctrl_ui = document.getElementById("controller")
 let lastPosition1 = { x: 0, y: 0 };
 
-const ctrlX = 160
-const ctrlY = canvas.height - 60 - 80
+// コントローラ位置（画面または canvas に対して左から 80px、下から 80px）
+let ctrlX = 160;
+let ctrlY = 80;
+
+function updateCtrlPos() {
+  if (!ctrl_ui || !canvas) return;
+  const crect = canvas.getBoundingClientRect();
+  const offsetParent = ctrl_ui.offsetParent || ctrl_ui.parentElement || document.body;
+  const prect = offsetParent.getBoundingClientRect ? offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
+  // left/top relative to offsetParent
+  const relLeft = Math.floor((crect.left - prect.left) + 160);
+  const relTop = Math.floor((crect.top - prect.top) + crect.height - 80);
+  // update global client coordinates for hit testing
+  ctrlX = relLeft
+  ctrlY = relTop
+  // apply styles relative to offsetParent
+  ctrl_ui.style.left = relLeft + 'px';
+  ctrl_ui.style.top = relTop + 'px';
+  
+  ctrl_area.style.left = relLeft + 'px';
+  ctrl_area.style.top = relTop + 'px';
+}
 let camera_num = 1
 let ctrl_num = 0
 
@@ -3144,24 +3418,53 @@ function search_ctrl_num(e){
 // マウス座標管理用のベクトルを作成
 const mouse = new THREE.Vector2();
 
+// ヘルパー: 指定クライアント座標がキャンバス内にあるか
+function pointInCanvas(clientX, clientY){
+  if (!canvas) return false;
+  const rect = canvas.getBoundingClientRect();
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+// プレビュー（intro-canvas）時はキャンバス内での操作のみ許可するユーティリティ
+function isInteractionAllowed(clientX, clientY){
+  // フルスクリーン時は常に許可
+  if (!canvas) return false;
+  if (!canvas.classList.contains('intro-canvas')) return true;
+  // ドラッグ中なら継続して操作を許可
+  if (typeof dragging !== 'undefined' && dragging) return true;
+  return pointInCanvas(clientX, clientY);
+}
+
 // ジョイコン or 視点 判定 : 物体移動開始
-window.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('mousedown', (e) => {
+  if (!isInteractionAllowed(e.clientX, e.clientY)) return; // outside canvas in preview -> ignore (allow page interactions)
+  handleMouseDown(e);
+});
 
 window.addEventListener('touchstart', (e) => {
 
   // UI監視
   const touch = e.touches[0];
+  // 常にマウス座標は更新しておく（UI フィードバックのため）
   handleMouseMove(touch.clientX, touch.clientY);
+  
+  // 視点制御やオブジェクト編集は、プレビュー時にキャンバス内で始まった場合のみ処理する
+  const allow = isInteractionAllowed(touch.clientX, touch.clientY);
   
   // 視点
   search_ctrl_num(e)
   if (e.changedTouches[0].identifier != ctrl_id && e.touches.length <= 2){
-  lastPosition1 = { x: e.touches[e.touches.length-1].clientX, y: e.touches[e.touches.length-1].clientY }
+    lastPosition1 = { x: e.touches[e.touches.length-1].clientX, y: e.touches[e.touches.length-1].clientY }
+  }
+
+  if (!allow) {
+    // キャンバス外でのタッチはページスクロールを優先させる
+    return;
   }
 
   // --- 編集モード
   if (OperationMode === 0){return}
-  e.preventDefault();      // ← スクロールを止める
+  e.preventDefault();      // ← スクロールを止める（キャンバス内の操作として扱う）
   if (objectEditMode === 'MOVE_EXISTING') { 
     dragging = null//'stand_by';
     onerun_search_point();
@@ -3174,20 +3477,23 @@ window.addEventListener('touchstart', (e) => {
 
 // 位置&視点 操作 : 物体移動追尾
 document.addEventListener('mousemove', (e) => {
-  
+  // プレビュー時はキャンバス外のマウス移動は無視（ただしドラッグ中は継続）
+  if (!isInteractionAllowed(e.clientX, e.clientY)) return;
   // UI監視 編集モード
   handleMouseMove(e.clientX, e.clientY);
   handleDrag();
 });
 
 document.addEventListener('touchmove', (e) => {
+  // 判定: キャンバス内での操作かどうか
+  const touch = e.touches[0];
+  const allow = isInteractionAllowed(touch.clientX, touch.clientY);
+  if (!allow) return; // outside canvas in preview -> allow page scrolling
+
   e.preventDefault();
 
   // UI監視
-  const touch = e.touches[0];
   handleMouseMove(touch.clientX, touch.clientY);
-
-  // console.log('see'+ dragging)
 
   // 視点
   if (e.touches.length === 1 && dragging === false) {
@@ -3293,8 +3599,55 @@ const pitchLimit = Math.PI / 2 - 0.1;
 
 // ========== 入力管理 ========== //
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
-document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+// キーボード入力はプレビュー時にキャンバス上にポインタがある場合のみ受け付ける
+let canvasFocused = false;
+if (canvas) {
+  // スクロール無効化用リスナ
+  const _wheelHandler = (e) => { e.preventDefault(); };
+  const _touchMoveHandler = (e) => { e.preventDefault(); };
+  // keep previous states to restore later
+  let _prevBodyOverflow = null;
+  let _prevCanvasTouchAction = null;
+
+  function enableCanvasScrollBlock(){
+    try {
+      // try preventing wheel/touchmove via listeners
+      window.addEventListener('wheel', _wheelHandler, { passive: false });
+      window.addEventListener('touchmove', _touchMoveHandler, { passive: false });
+      // and forcibly disable body scrolling as a fallback
+      _prevBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      // disable touch-action on canvas to prevent browser gesture
+      _prevCanvasTouchAction = canvas.style.touchAction;
+      canvas.style.touchAction = 'none';
+    } catch (e) {}
+  }
+  function disableCanvasScrollBlock(){
+    try {
+      window.removeEventListener('wheel', _wheelHandler, { passive: false });
+      window.removeEventListener('touchmove', _touchMoveHandler, { passive: false });
+      if (_prevBodyOverflow !== null) document.body.style.overflow = _prevBodyOverflow;
+      _prevBodyOverflow = null;
+      if (_prevCanvasTouchAction !== null) canvas.style.touchAction = _prevCanvasTouchAction;
+      _prevCanvasTouchAction = null;
+    } catch (e) {}
+  }
+
+  canvas.addEventListener('pointerenter', () => { canvasFocused = true; enableCanvasScrollBlock(); });
+  canvas.addEventListener('pointerleave', () => { canvasFocused = false; disableCanvasScrollBlock(); });
+  // タッチ開始でもフォーカス状態にする
+  canvas.addEventListener('touchstart', () => { canvasFocused = true; enableCanvasScrollBlock(); });
+  canvas.addEventListener('touchend', () => { canvasFocused = false; disableCanvasScrollBlock(); });
+}
+document.addEventListener('keydown', (e) => {
+  // プレビュー時はキャンバス上にポインタがなければ無視
+  if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
+  keys[e.key.toLowerCase()] = true;
+});
+document.addEventListener('keyup', (e) => {
+  if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
+  keys[e.key.toLowerCase()] = false;
+});
 
 // ========== カメラ制御変数 ========== //
 let cameraAngleY = 0 * Math.PI / 180;  // 水平回転
@@ -3341,7 +3694,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 function animate() {
-  requestAnimationFrame(animate);
 
   // console.log(b6dm.rotation)
 
@@ -3402,6 +3754,8 @@ function animate() {
   if (keys['arrowdown'])  cameraAngleX -= rotateSpeed;
   cameraAngleX = Math.max(-pitchLimit, Math.min(pitchLimit, cameraAngleX));
 
+  // cameraAngleY += rotateSpeed
+
   // カメラ注視点の更新
   // rightStickVector.x → 左右方向（横回転に使う）
   // rightStickVector.y → 上下方向（縦回転に使う）
@@ -3418,23 +3772,33 @@ function animate() {
 
   camera.lookAt(new THREE.Vector3().addVectors(camera.position, direction));
 
-  // メインカメラ：画面全体
-  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
-  renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+  // メインカメラ：プレビュー時は canvas の描画バッファサイズに合わせる
+  const isIntro = canvas.classList.contains('intro-canvas');
+  if (isIntro) {
+    const w = canvas.width;
+    const h = canvas.height;
+    renderer.setViewport(0, 0, w, h);
+    renderer.setScissor(0, 0, w, h);
+  } else {
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+  }
   renderer.setScissorTest(true);
 
-  renderer.render(scene, camera); 
+  renderer.render(scene, camera);
 
   if (dragging === true){
     const pos = choice_object.position
     cameraSub.position.set(pos.x-Math.sin(cameraAngleY)*0.2,pos.y+5,pos.z-Math.cos(cameraAngleY)*0.2)
 
     cameraSub.lookAt(pos.x,pos.y,pos.z)
-    // サブカメラ：画面右下に小さく表示
-    const insetWidth = window.innerWidth / 4;  // 画面幅の1/4サイズ
-    const insetHeight = window.innerHeight / 4; // 画面高の1/4サイズ
-    const insetX = 110; // 右下から10pxマージン
-    const insetY = window.innerHeight - insetHeight - 100; // 下から10pxマージン
+    // サブカメラ：画面右下に小さく表示（プレビュー時は canvas 内に収める）
+    const mainW = isIntro ? canvas.width : window.innerWidth;
+    const mainH = isIntro ? canvas.height : window.innerHeight;
+    const insetWidth = Math.floor(mainW / 4);
+    const insetHeight = Math.floor(mainH / 4);
+    const insetX = isIntro ? (mainW - insetWidth - 10) : 110;
+    const insetY = isIntro ? (mainH - insetHeight - 10) : (window.innerHeight - insetHeight - 100);
 
     renderer.setViewport(insetX, insetY, insetWidth, insetHeight);
     renderer.setScissor(insetX, insetY, insetWidth, insetHeight);
@@ -3452,6 +3816,7 @@ function animate() {
       GuideGrid_Center_z.visible = false
     }
   }
+    requestAnimationFrame(animate);
 }
 
 animate();
