@@ -144,7 +144,15 @@ const uiTree = {
     'see':'',
 
     'edit': {
-        'rail':update,
+        'rail':{
+            'new':'', 
+            'move':{
+                'x_z':'', 
+                'y':''},
+            'structure':{
+                'bridge':''}
+            
+        },
         'poll':update,
 
         'creat':{
