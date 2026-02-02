@@ -92,6 +92,38 @@ export class TrainSystem {
     return curvePoints[Math.min(index, totalLength - 1)];
   }
 
+  getPointAtDistance(curve, distance) {
+    const length = curve.getLength();
+    if (length <= 0) { return curve.getPointAt(0); }
+    const t = Math.min(Math.max(distance / length, 0), 1);
+    return curve.getPointAt(t);
+  }
+
+  getDirectionAtDistance(curve, distance) {
+    const length = curve.getLength();
+    if (length <= 0) { return new THREE.Vector3(1, 0, 0); }
+    const t = Math.min(Math.max(distance / length, 0), 1);
+    const tangent = curve.getTangentAt(t).clone();
+    tangent.y = 0;
+    if (tangent.lengthSq() === 0) {
+      tangent.set(1, 0, 0);
+    } else {
+      tangent.normalize();
+    }
+    return tangent;
+  }
+
+  getCurveSideByDirection(curveA, curveB, distance = 0.5) {
+    const pointA = this.getPointAtDistance(curveA, distance);
+    const direction = this.getDirectionAtDistance(curveA, distance);
+    const pointB = this.getPointAtDistance(curveB, distance);
+    const toB = pointB.clone().sub(pointA);
+    toB.y = 0;
+    const cross = (direction.x * toB.z) - (direction.z * toB.x);
+    if (Math.abs(cross) < 1e-6) { return 'center'; }
+    return cross > 0 ? 'left' : 'right';
+  }
+
   findCurveRange(curve, targetA, targetB, { axis = 'z', resolution = 1000 } = {}) {
     const sampledPoints = curve.getPoints(resolution);
     const lastIndex = sampledPoints.length - 1;

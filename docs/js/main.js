@@ -1868,6 +1868,146 @@ function pickStructurePinnedPin() {
   return hits[0].object;
 }
 
+function getSelectedTrackCurvesForConstruction() {
+  const pinGroups = new Map();
+  constructionSelectedPins.forEach((pin) => {
+    const trackName = pin.userData?.trackName;
+    if (typeof trackName !== 'string' || trackName.length === 0) { return; }
+    if (!pinGroups.has(trackName)) {
+      pinGroups.set(trackName, []);
+    }
+    pinGroups.get(trackName).push(pin.position.clone());
+  });
+
+  const getNearestTOnCurve = (curve, point, resolution = 500) => {
+    let bestT = 0;
+    let bestDist = Infinity;
+    const sample = new THREE.Vector3();
+    for (let i = 0; i <= resolution; i++) {
+      const t = i / resolution;
+      sample.copy(curve.getPointAt(t));
+      const dist = sample.distanceToSquared(point);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestT = t;
+      }
+    }
+    return bestT;
+  };
+
+  const result = [];
+  pinGroups.forEach((pins, trackName) => {
+    const baseCurve = railTrackCurveMap[trackName];
+    if (!baseCurve) { return; }
+    if (pins.length < 2) {
+      result.push({ trackName, curve: baseCurve.clone() });
+      return;
+    }
+    const sortedByT = pins
+      .map((point) => ({ point, t: getNearestTOnCurve(baseCurve, point) }))
+      .sort((a, b) => a.t - b.t);
+    const start = sortedByT[0].point;
+    const end = sortedByT[sortedByT.length - 1].point;
+    const segmentCurve = findCurveRange(baseCurve, start, end);
+    result.push({ trackName, curve: segmentCurve });
+  });
+
+  return result;
+}
+
+function logPillarSideJudgement() {
+  const trackCurves = getSelectedTrackCurvesForConstruction();
+  if (trackCurves.length < 2) {
+    console.warn('pillar judgement requires at least 2 selected tracks.');
+    return;
+  }
+  const rows = [];
+  console.log('pillar judgement start');
+  for (let i = 0; i < trackCurves.length; i++) {
+    for (let j = i + 1; j < trackCurves.length; j++) {
+      const a = trackCurves[i];
+      const b = trackCurves[j];
+      const side = TSys.getCurveSideByDirection(a.curve, b.curve, 0.5);
+      rows.push({
+        leftTrack: a.trackName,
+        rightTrack: b.trackName,
+        side,
+      });
+    }
+  }
+  const order = { right: 0, center: 1, left: 2 };
+  rows.sort((r1, r2) => {
+    const v1 = order[r1.side] ?? 99;
+    const v2 = order[r2.side] ?? 99;
+    if (v1 !== v2) { return v1 - v2; }
+    return `${r1.leftTrack}->${r1.rightTrack}`.localeCompare(`${r2.leftTrack}->${r2.rightTrack}`);
+  });
+  rows.forEach((row) => {
+    console.log(`[pillar] ${row.leftTrack} -> ${row.rightTrack} : ${row.side}`);
+  });
+
+  const ref = trackCurves[0];
+  const refStart = ref.curve.getPointAt(0).clone();
+  const refLength = ref.curve.getLength();
+  const refSampleT = refLength > 0 ? Math.min(0.5 / refLength, 1) : 0;
+  const refEnd = ref.curve.getPointAt(refSampleT).clone();
+  const refDir = refEnd.sub(refStart).setY(0);
+  if (refDir.lengthSq() === 0) {
+    refDir.set(0, 0, 1);
+  } else {
+    refDir.normalize();
+  }
+  const refAngle = Math.atan2(refDir.x, refDir.z);
+  const normalizeRadSigned = (rad) => {
+    let value = rad;
+    while (value > Math.PI) { value -= Math.PI * 2; }
+    while (value < -Math.PI) { value += Math.PI * 2; }
+    return value;
+  };
+
+  const scored = trackCurves.map((entry) => {
+    let workingCurve = entry.curve.clone();
+    const rawStart = workingCurve.getPointAt(0).clone();
+    const rawEnd = workingCurve.getPointAt(1).clone();
+    const dirB = rawEnd.clone().sub(rawStart).setY(0);
+    if (dirB.lengthSq() === 0) {
+      dirB.copy(refDir);
+    } else {
+      dirB.normalize();
+    }
+    const dot = Math.min(1, Math.max(-1, refDir.dot(dirB)));
+    const angleBetween = Math.acos(dot);
+    let reversed = false;
+    if (angleBetween >= Math.PI * 0.5 && entry.trackName !== ref.trackName) {
+      reversed = true;
+      const reversedPoints = workingCurve.getPoints(300).map((point) => point.clone()).reverse();
+      workingCurve = new THREE.CatmullRomCurve3(reversedPoints);
+    }
+    const point = workingCurve.getPointAt(0).clone();
+    const vec = point.sub(refStart).setY(0);
+    const distance = vec.length();
+    const vecNorm = distance > 0 ? vec.clone().multiplyScalar(1 / distance) : new THREE.Vector3(0, 0, 1);
+    const angle = Math.atan2(vecNorm.x, vecNorm.z);
+    const delta = normalizeRadSigned(angle - refAngle);
+    const xLocal = Math.sin(delta) * distance;
+    return { trackName: entry.trackName, xLocal, delta, distance, reversed };
+  }).sort((a, b) => b.xLocal - a.xLocal);
+  const reversedTracks = scored.filter((row) => row.reversed).map((row) => row.trackName);
+  if (reversedTracks.length > 0) {
+    console.log('[pillar-reversed]', reversedTracks.join(', '));
+  } else {
+    console.log('[pillar-reversed] none');
+  }
+  if (scored.length > 0) {
+    const rightmost = scored[0].trackName;
+    const leftmost = scored[scored.length - 1].trackName;
+    console.log(`[pillar-edge] rightmost: ${rightmost}, leftmost: ${leftmost} (ref: ${ref.trackName})`);
+    console.log('[pillar-order x-axis]', scored.map((row) => `${row.trackName}:${row.xLocal.toFixed(3)}${row.reversed ? '(reversed)' : ''}`).join(', '));
+  }
+
+  console.log('pillar judgement end');
+}
+
 async function loadStructureData(url) {
   try {
     const response = await fetch(url, { cache: 'no-store' });
@@ -3715,6 +3855,9 @@ export function UIevent (uiID, toggle){
     }));
     TSys.buildStructureFromPins('floor', pins, railTrackCurveMap);
   }
+  }} else if ( uiID === 'pillar' ){ if ( toggle === 'active' ){
+  console.log( 'pillar _active' )
+  logPillarSideJudgement();
   }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){
   console.log( 'poll _active' )
   } else {
@@ -4156,13 +4299,13 @@ document.addEventListener('keyup', (e) => {
 });
 
 // ========== カメラ制御変数 ========== //
-let cameraAngleY = 0 * Math.PI / 180;  // 水平回転
+let cameraAngleY = 180 * Math.PI / 180;  // 水平回転
 let cameraAngleX = -10 * Math.PI / 180;  // 垂直回転
 let moveVectorX = 0
 let moveVectorZ = 0
 
-camera.position.y += 15
-camera.position.z = -10//-13
+camera.position.y += 5
+camera.position.z = -20//-13
 // ========== ボタン UI ========== //
 // 状態フラグ
 let speedUp = false;
