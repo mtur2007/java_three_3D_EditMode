@@ -6,6 +6,60 @@ export class TrainSystem {
   constructor(scene, light) {
     this.scene = scene;
     this.light = light
+    this.pillarDebugGroup = null;
+  }
+
+  ensurePillarDebugGroup() {
+    if (this.pillarDebugGroup) { return this.pillarDebugGroup; }
+    this.pillarDebugGroup = new THREE.Group();
+    this.pillarDebugGroup.name = 'PillarDebugArrows';
+    this.scene.add(this.pillarDebugGroup);
+    return this.pillarDebugGroup;
+  }
+
+  clearPillarDebugArrows() {
+    if (!this.pillarDebugGroup) { return; }
+    while (this.pillarDebugGroup.children.length > 0) {
+      const child = this.pillarDebugGroup.children.pop();
+      if (child) {
+        this.pillarDebugGroup.remove(child);
+      }
+    }
+  }
+
+  addPillarDebugArrows(origin, tangent, rightVec, length = 1) {
+    const group = this.ensurePillarDebugGroup();
+    const tangentDir = tangent.clone().setY(0);
+    if (tangentDir.lengthSq() === 0) {
+      tangentDir.set(0, 0, 1);
+    } else {
+      tangentDir.normalize();
+    }
+    const offsetDir = rightVec.clone().setY(0);
+    if (offsetDir.lengthSq() === 0) {
+      offsetDir.set(1, 0, 0);
+    } else {
+      offsetDir.normalize();
+    }
+    const up = new THREE.Vector3(0, 0.05, 0);
+    const tangentArrow = new THREE.ArrowHelper(
+      tangentDir,
+      origin.clone().add(up),
+      length,
+      0x00ff00,
+      0.2,
+      0.1
+    );
+    const offsetArrow = new THREE.ArrowHelper(
+      offsetDir,
+      origin.clone().add(up),
+      length,
+      0x00aaff,
+      0.2,
+      0.1
+    );
+    group.add(tangentArrow);
+    group.add(offsetArrow);
   }
   
   fitDirectionalLightShadowForObject(rootObj, light) {
@@ -592,7 +646,168 @@ export class TrainSystem {
     return mesh;
   }
 
-  buildStructureFromPins(type, pins, trackLookup = null) {
+  reverseCurveCopy(curve, steps = 300) {
+    const reversedPoints = curve.getPoints(steps).map((point) => point.clone()).reverse();
+    return new THREE.CatmullRomCurve3(reversedPoints);
+  }
+
+  getCurveDirectionAtDistance(curve, distance = 0.5) {
+    const length = curve.getLength();
+    const t = length > 0 ? Math.min(Math.max(distance / length, 0), 1) : 0;
+    const start = curve.getPointAt(0);
+    const end = curve.getPointAt(t);
+    const dir = end.clone().sub(start).setY(0);
+    if (dir.lengthSq() === 0) {
+      dir.set(0, 0, 1);
+    } else {
+      dir.normalize();
+    }
+    return dir;
+  }
+
+  alignCurveDirection(curve, refDir) {
+    const dir = this.getCurveDirectionAtDistance(curve, 0.5);
+    if (dir.dot(refDir) < 0) {
+      return { curve: this.reverseCurveCopy(curve), reversed: true };
+    }
+    return { curve: curve.clone(), reversed: false };
+  }
+
+  getRouteOrderRightToLeft(trackGroups) {
+    if (trackGroups.length === 0) { return []; }
+    const ref = trackGroups[0];
+    const refStart = ref.curve.getPointAt(0).clone();
+    const refDir = this.getCurveDirectionAtDistance(ref.curve, 0.5);
+    const rightVec = new THREE.Vector3(refDir.z, 0, -refDir.x).normalize();
+    return trackGroups.map((group) => {
+      const start = group.curve.getPointAt(0).clone();
+      const score = start.sub(refStart).setY(0).dot(rightVec);
+      return { ...group, sideScore: score };
+    }).sort((a, b) => b.sideScore - a.sideScore);
+  }
+
+  sampleOtherTracksNearby(trackGroups, selfTrackName, centerPoint, {
+    searchRadius = 3,
+    samplePrecision = 0.2,
+    belowOffset = 0.1,
+  } = {}) {
+    const nearby = [];
+    const radiusSq = searchRadius * searchRadius;
+    const centerXZ = centerPoint.clone().setY(0);
+    const maxTargetY = centerPoint.y - belowOffset;
+    trackGroups.forEach((group) => {
+      if (group.trackName === selfTrackName) { return; }
+      const samples = this.getPointsEveryM(group.curve, samplePrecision);
+      samples.forEach((point) => {
+        if (point.y > maxTargetY) { return; }
+        const pointXZ = point.clone().setY(0);
+        if (pointXZ.distanceToSquared(centerXZ) <= radiusSq) {
+          nearby.push({ point, trackName: group.trackName });
+        }
+      });
+    });
+    return nearby;
+  }
+
+  hasCollisionWithNearbyTracks(candidatePoint, nearbyPoints, avoidRadius = 0.7) {
+    const avoidSq = avoidRadius * avoidRadius;
+    const candidateXZ = candidatePoint.clone().setY(0);
+    for (let i = 0; i < nearbyPoints.length; i++) {
+      const targetPoint = nearbyPoints[i]?.point ?? nearbyPoints[i];
+      if (!targetPoint) { continue; }
+      const targetXZ = targetPoint.clone().setY(0);
+      if (candidateXZ.distanceToSquared(targetXZ) <= avoidSq) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getCollidingNearbyPoint(candidatePoint, nearbyPoints, avoidRadius = 0.7) {
+    const avoidSq = avoidRadius * avoidRadius;
+    const candidateXZ = candidatePoint.clone().setY(0);
+    for (let i = 0; i < nearbyPoints.length; i++) {
+      const targetPoint = nearbyPoints[i]?.point ?? nearbyPoints[i];
+      if (!targetPoint) { continue; }
+      const targetXZ = targetPoint.clone().setY(0);
+      if (candidateXZ.distanceToSquared(targetXZ) <= avoidSq) {
+        return targetPoint.clone();
+      }
+    }
+    return null;
+  }
+
+  placePillarWithAvoidance(basePoint, tangent, nearbyPoints, {
+    preferredSide = 'right',
+    avoidRadius = 0.7,
+    baseOffset = 0.4,
+    maxOffset = 1.0,
+    offsetStep = 0.2,
+    fallbackPlace = true,
+    collisionDebugPin = false,
+    collisionDebugPinHeight = 3,
+    collisionDebugPinColor = 0xffff00,
+    directionDebugArrow = false,
+    directionDebugArrowLength = 0.8,
+  } = {}) {
+    const dir = tangent.clone().setY(0);
+    if (dir.lengthSq() === 0) {
+      dir.set(0, 0, 1);
+    } else {
+      dir.normalize();
+    }
+    const rightVec = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
+    if (directionDebugArrow) {
+      this.addPillarDebugArrows(basePoint, dir, rightVec, directionDebugArrowLength);
+    }
+    const sideOrder = preferredSide === 'left' ? ['left', 'right'] : ['right', 'left'];
+    const offsets = [];
+    for (let d = baseOffset; d <= maxOffset + 1e-6; d += offsetStep) {
+      offsets.push(d);
+    }
+    if (offsets.length === 0) {
+      offsets.push(baseOffset);
+    }
+    const nearbyTrackCount = new Set(
+      nearbyPoints
+        .map((entry) => entry?.trackName)
+        .filter((trackName) => typeof trackName === 'string' && trackName.length > 0)
+    ).size;
+    console.log(`[pillar-nearby] tracks=${nearbyTrackCount} samples=${nearbyPoints.length}`);
+
+    for (let s = 0; s < sideOrder.length; s++) {
+      const side = sideOrder[s];
+      const sign = side === 'right' ? 1 : -1;
+      for (let i = 0; i < offsets.length; i++) {
+        const distance = offsets[i];
+        const candidate = basePoint.clone().add(rightVec.clone().multiplyScalar(sign * distance));
+        const collidedPoint = this.getCollidingNearbyPoint(candidate, nearbyPoints, avoidRadius);
+        if (collidedPoint) {
+          console.log(`[pillar-collision] side=${side} offset=${distance.toFixed(2)} point=(${candidate.x.toFixed(2)}, ${candidate.y.toFixed(2)}, ${candidate.z.toFixed(2)})`);
+          if (collisionDebugPin) {
+            this.Map_pin(
+              collidedPoint.x,
+              collidedPoint.z,
+              collidedPoint.y + collisionDebugPinHeight,
+              0.12,
+              collisionDebugPinColor
+            );
+          }
+          continue;
+        }
+        this.createBridgePillar(candidate.x, candidate.z, candidate.y);
+        return { placed: true, side, offset: distance, point: candidate };
+      }
+    }
+
+    if (fallbackPlace) {
+      this.createBridgePillar(basePoint.x, basePoint.z, basePoint.y);
+      return { placed: true, side: 'center', offset: 0, point: basePoint.clone(), fallback: true };
+    }
+    return { placed: false };
+  }
+
+  buildStructureFromPins(type, pins, trackLookup = null, options = {}) {
     if (!Array.isArray(pins)) {
       console.warn('buildStructureFromPins expects an array of pins.');
       return false;
@@ -777,6 +992,142 @@ export class TrainSystem {
     if (type === 'floor') {
       trackGroups.forEach((group) => {
         this.createFloorAlongCurve(group.curve, { width: 1.5, thickness: 0.2 });
+      });
+      return true;
+    }
+
+    if (type === 'pillar') {
+      const pillarOptions = {
+        baseInterval: options.baseInterval ?? 8,
+        avoidRadius: options.avoidRadius ?? 0.7,
+        searchRadius: options.searchRadius ?? 3,
+        samplePrecision: options.samplePrecision ?? 0.2,
+        belowOffset: options.belowOffset ?? 0.1,
+        maxOffset: options.maxOffset ?? 1.0,
+        baseOffset: options.baseOffset ?? 0.4,
+        offsetStep: options.offsetStep ?? 0.2,
+        directionDebugArrow: options.directionDebugArrow ?? true,
+        directionDebugArrowLength: options.directionDebugArrowLength ?? 0.8,
+      };
+      if (pillarOptions.directionDebugArrow) {
+        this.clearPillarDebugArrows();
+      }
+      const validTracks = trackGroups.filter((group) => group.curve && group.curve.getLength() > 0);
+      if (validTracks.length === 0) {
+        console.warn('pillar requires valid track curves.');
+        return false;
+      }
+
+      const lengths = validTracks.map((group) => ({ trackName: group.trackName, len: group.curve.getLength() }));
+      const sortedLengths = lengths.map((item) => item.len).slice().sort((a, b) => a - b);
+      const mid = sortedLengths.length / 2;
+      const median = sortedLengths.length % 2 === 0
+        ? (sortedLengths[mid - 1] + sortedLengths[mid]) * 0.5
+        : sortedLengths[Math.floor(mid)];
+      let baseTrack = validTracks[0];
+      let minDiff = Infinity;
+      validTracks.forEach((group) => {
+        const diff = Math.abs(group.curve.getLength() - median);
+        if (diff < minDiff) {
+          minDiff = diff;
+          baseTrack = group;
+        }
+      });
+
+      const refDir = this.getCurveDirectionAtDistance(baseTrack.curve, 0.5);
+      const alignedTracks = validTracks.map((group) => {
+        const aligned = this.alignCurveDirection(group.curve, refDir);
+        return {
+          ...group,
+          curve: aligned.curve,
+          reversed: aligned.reversed,
+          length: aligned.curve.getLength(),
+        };
+      });
+
+      const orderedTracks = this.getRouteOrderRightToLeft(alignedTracks);
+      const lookupTracks = [];
+      if (trackLookup instanceof Map) {
+        trackLookup.forEach((curve, trackName) => {
+          if (curve) {
+            lookupTracks.push({ trackName, curve });
+          }
+        });
+      } else if (trackLookup && typeof trackLookup === 'object') {
+        Object.keys(trackLookup).forEach((trackName) => {
+          const curve = trackLookup[trackName];
+          if (curve) {
+            lookupTracks.push({ trackName, curve });
+          }
+        });
+      }
+      const nearbyTrackSource = lookupTracks.length > 0 ? lookupTracks : orderedTracks;
+
+      const baseLength = baseTrack.curve.getLength();
+      const baseCountFloat = baseLength / pillarOptions.baseInterval;
+
+      orderedTracks.forEach((group, index) => {
+        const countFloat = baseLength > 0 ? (group.length / baseLength) * baseCountFloat : 0;
+        const segmentCount = Math.max(1, Math.round(countFloat));
+
+        for (let i = 0; i <= segmentCount; i++) {
+          const t = segmentCount > 0 ? i / segmentCount : 0;
+          const point = group.curve.getPointAt(t).clone();
+          const tangent = group.curve.getTangentAt(t).clone();
+          const nearby = this.sampleOtherTracksNearby(nearbyTrackSource, group.trackName, point, {
+            searchRadius: pillarOptions.searchRadius,
+            samplePrecision: pillarOptions.samplePrecision,
+            belowOffset: pillarOptions.belowOffset,
+          });
+
+          if (orderedTracks.length === 1) {
+            this.placePillarWithAvoidance(point, tangent, nearby, {
+              preferredSide: 'right',
+              avoidRadius: pillarOptions.avoidRadius,
+              baseOffset: pillarOptions.baseOffset,
+              maxOffset: pillarOptions.maxOffset,
+              offsetStep: pillarOptions.offsetStep,
+              collisionDebugPin: options.collisionDebugPin ?? true,
+              collisionDebugPinHeight: options.collisionDebugPinHeight ?? 3,
+              collisionDebugPinColor: options.collisionDebugPinColor ?? 0xffff00,
+              directionDebugArrow: pillarOptions.directionDebugArrow,
+              directionDebugArrowLength: pillarOptions.directionDebugArrowLength,
+            });
+            this.placePillarWithAvoidance(point, tangent, nearby, {
+              preferredSide: 'left',
+              avoidRadius: pillarOptions.avoidRadius,
+              baseOffset: pillarOptions.baseOffset,
+              maxOffset: pillarOptions.maxOffset,
+              offsetStep: pillarOptions.offsetStep,
+              collisionDebugPin: options.collisionDebugPin ?? true,
+              collisionDebugPinHeight: options.collisionDebugPinHeight ?? 3,
+              collisionDebugPinColor: options.collisionDebugPinColor ?? 0xffff00,
+              directionDebugArrow: pillarOptions.directionDebugArrow,
+              directionDebugArrowLength: pillarOptions.directionDebugArrowLength,
+            });
+          } else {
+            let preferredSide = 'right';
+            if (index === 0) {
+              preferredSide = 'right';
+            } else if (index === orderedTracks.length - 1) {
+              preferredSide = 'left';
+            } else {
+              preferredSide = 'right';
+            }
+            this.placePillarWithAvoidance(point, tangent, nearby, {
+              preferredSide,
+              avoidRadius: pillarOptions.avoidRadius,
+              baseOffset: pillarOptions.baseOffset,
+              maxOffset: pillarOptions.maxOffset,
+              offsetStep: pillarOptions.offsetStep,
+              collisionDebugPin: options.collisionDebugPin ?? true,
+              collisionDebugPinHeight: options.collisionDebugPinHeight ?? 3,
+              collisionDebugPinColor: options.collisionDebugPinColor ?? 0xffff00,
+              directionDebugArrow: pillarOptions.directionDebugArrow,
+              directionDebugArrowLength: pillarOptions.directionDebugArrowLength,
+            });
+          }
+        }
       });
       return true;
     }

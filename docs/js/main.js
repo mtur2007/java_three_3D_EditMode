@@ -1915,6 +1915,66 @@ function getSelectedTrackCurvesForConstruction() {
   return result;
 }
 
+function getOrderedTracksByLateralPosition(trackCurves, sampleDistance = 0.5) {
+  if (!Array.isArray(trackCurves) || trackCurves.length === 0) {
+    return [];
+  }
+  const ref = trackCurves[0];
+  const refStart = ref.curve.getPointAt(0).clone();
+  const refLength = ref.curve.getLength();
+  const refSampleT = refLength > 0 ? Math.min(sampleDistance / refLength, 1) : 0;
+  const refEnd = ref.curve.getPointAt(refSampleT).clone();
+  const refDir = refEnd.sub(refStart).setY(0);
+  if (refDir.lengthSq() === 0) {
+    refDir.set(0, 0, 1);
+  } else {
+    refDir.normalize();
+  }
+  const refAngle = Math.atan2(refDir.x, refDir.z);
+  const normalizeRadSigned = (rad) => {
+    let value = rad;
+    while (value > Math.PI) { value -= Math.PI * 2; }
+    while (value < -Math.PI) { value += Math.PI * 2; }
+    return value;
+  };
+
+  return trackCurves.map((entry) => {
+    let workingCurve = entry.curve.clone();
+    const rawStart = workingCurve.getPointAt(0).clone();
+    const rawEnd = workingCurve.getPointAt(1).clone();
+    const dirB = rawEnd.clone().sub(rawStart).setY(0);
+    if (dirB.lengthSq() === 0) {
+      dirB.copy(refDir);
+    } else {
+      dirB.normalize();
+    }
+    const dot = Math.min(1, Math.max(-1, refDir.dot(dirB)));
+    const angleBetween = Math.acos(dot);
+    let reversed = false;
+    if (angleBetween >= Math.PI * 0.5 && entry.trackName !== ref.trackName) {
+      reversed = true;
+      const reversedPoints = workingCurve.getPoints(300).map((point) => point.clone()).reverse();
+      workingCurve = new THREE.CatmullRomCurve3(reversedPoints);
+    }
+    const point = workingCurve.getPointAt(0).clone();
+    const vec = point.sub(refStart).setY(0);
+    const distance = vec.length();
+    const vecNorm = distance > 0 ? vec.clone().multiplyScalar(1 / distance) : new THREE.Vector3(0, 0, 1);
+    const angle = Math.atan2(vecNorm.x, vecNorm.z);
+    const delta = normalizeRadSigned(angle - refAngle);
+    const xLocal = Math.sin(delta) * distance;
+    return {
+      trackName: entry.trackName,
+      xLocal,
+      delta,
+      distance,
+      reversed,
+      curve: workingCurve,
+      refTrackName: ref.trackName,
+    };
+  }).sort((a, b) => b.xLocal - a.xLocal);
+}
+
 function logPillarSideJudgement() {
   const trackCurves = getSelectedTrackCurvesForConstruction();
   if (trackCurves.length < 2) {
@@ -1946,52 +2006,7 @@ function logPillarSideJudgement() {
     console.log(`[pillar] ${row.leftTrack} -> ${row.rightTrack} : ${row.side}`);
   });
 
-  const ref = trackCurves[0];
-  const refStart = ref.curve.getPointAt(0).clone();
-  const refLength = ref.curve.getLength();
-  const refSampleT = refLength > 0 ? Math.min(0.5 / refLength, 1) : 0;
-  const refEnd = ref.curve.getPointAt(refSampleT).clone();
-  const refDir = refEnd.sub(refStart).setY(0);
-  if (refDir.lengthSq() === 0) {
-    refDir.set(0, 0, 1);
-  } else {
-    refDir.normalize();
-  }
-  const refAngle = Math.atan2(refDir.x, refDir.z);
-  const normalizeRadSigned = (rad) => {
-    let value = rad;
-    while (value > Math.PI) { value -= Math.PI * 2; }
-    while (value < -Math.PI) { value += Math.PI * 2; }
-    return value;
-  };
-
-  const scored = trackCurves.map((entry) => {
-    let workingCurve = entry.curve.clone();
-    const rawStart = workingCurve.getPointAt(0).clone();
-    const rawEnd = workingCurve.getPointAt(1).clone();
-    const dirB = rawEnd.clone().sub(rawStart).setY(0);
-    if (dirB.lengthSq() === 0) {
-      dirB.copy(refDir);
-    } else {
-      dirB.normalize();
-    }
-    const dot = Math.min(1, Math.max(-1, refDir.dot(dirB)));
-    const angleBetween = Math.acos(dot);
-    let reversed = false;
-    if (angleBetween >= Math.PI * 0.5 && entry.trackName !== ref.trackName) {
-      reversed = true;
-      const reversedPoints = workingCurve.getPoints(300).map((point) => point.clone()).reverse();
-      workingCurve = new THREE.CatmullRomCurve3(reversedPoints);
-    }
-    const point = workingCurve.getPointAt(0).clone();
-    const vec = point.sub(refStart).setY(0);
-    const distance = vec.length();
-    const vecNorm = distance > 0 ? vec.clone().multiplyScalar(1 / distance) : new THREE.Vector3(0, 0, 1);
-    const angle = Math.atan2(vecNorm.x, vecNorm.z);
-    const delta = normalizeRadSigned(angle - refAngle);
-    const xLocal = Math.sin(delta) * distance;
-    return { trackName: entry.trackName, xLocal, delta, distance, reversed };
-  }).sort((a, b) => b.xLocal - a.xLocal);
+  const scored = getOrderedTracksByLateralPosition(trackCurves, 0.5);
   const reversedTracks = scored.filter((row) => row.reversed).map((row) => row.trackName);
   if (reversedTracks.length > 0) {
     console.log('[pillar-reversed]', reversedTracks.join(', '));
@@ -2001,7 +2016,7 @@ function logPillarSideJudgement() {
   if (scored.length > 0) {
     const rightmost = scored[0].trackName;
     const leftmost = scored[scored.length - 1].trackName;
-    console.log(`[pillar-edge] rightmost: ${rightmost}, leftmost: ${leftmost} (ref: ${ref.trackName})`);
+    console.log(`[pillar-edge] rightmost: ${rightmost}, leftmost: ${leftmost} (ref: ${scored[0].refTrackName})`);
     console.log('[pillar-order x-axis]', scored.map((row) => `${row.trackName}:${row.xLocal.toFixed(3)}${row.reversed ? '(reversed)' : ''}`).join(', '));
   }
 
@@ -3858,6 +3873,25 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'pillar' ){ if ( toggle === 'active' ){
   console.log( 'pillar _active' )
   logPillarSideJudgement();
+  if (constructionSelectedPins.length < 1) {
+    console.warn('pillar requires selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('pillar', pins, railTrackCurveMap, {
+      baseInterval: 8,
+      avoidRadius: 0.7,
+      searchRadius: 3,
+      samplePrecision: 0.1,
+      maxOffset: 3,
+      baseOffset: 0,
+      offsetStep: 0.2,
+    });
+  }
   }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){
   console.log( 'poll _active' )
   } else {
