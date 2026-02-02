@@ -1502,6 +1502,10 @@ const railTrackDefs = [
   { name: 'sinkansen_upbound_point', curve: sinkansen_upbound, points: sinkansen_upbound_point },
   { name: 'sinkansen_downbound_point', curve: sinkansen_downbound, points: sinkansen_downbound_point },
 ];
+const railTrackCurveMap = railTrackDefs.reduce((acc, track) => {
+  acc[track.name] = track.curve;
+  return acc;
+}, {});
 
 let railTubeMesh = null;
 let railTubeDirty = false;
@@ -1527,15 +1531,21 @@ const railSelectionLineColor = 0x00ff00;
 const railSelectionLineName = 'RailSelected';
 let selectedRailPoint = null;
 
-const structureSampleInterval = 2;
+const structureSampleInterval = 0.5;
 const structureHoverColor = 0xffff33;
 const structurePinnedColor = 0xff33aa;
+const structureSelectedColor = 0x33ffaa;
+const structureDataUrl = 'map_data/structure.json';
 let structureModeActive = false;
+let structureViewActive = false;
+let constructionModeActive = false;
 let structureSamplesDirty = true;
 let structureSamplePoints = [];
 let structureHoverPoint = null;
+let structureHoverTrackName = null;
 let structureHoverPin = null;
 const structurePinnedPins = [];
+const constructionSelectedPins = [];
 let lastPointerScreen = null;
 
 function buildSquareTubeMesh(curves, {
@@ -1676,6 +1686,24 @@ function buildStructureSamplePoints() {
   structureSamplesDirty = false;
 }
 
+function getNearestStructureTrackName(position) {
+  if (!position) { return null; }
+  if (structureSamplesDirty || structureSamplePoints.length === 0) {
+    buildStructureSamplePoints();
+  }
+  let bestName = null;
+  let bestDist = Infinity;
+  for (let i = 0; i < structureSamplePoints.length; i++) {
+    const sample = structureSamplePoints[i];
+    const dist = sample.point.distanceToSquared(position);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestName = sample.trackName ?? null;
+    }
+  }
+  return bestName;
+}
+
 function ensureStructureHoverPin() {
   if (structureHoverPin) { return; }
   structureHoverPin = TSys.Map_pin(0, 0, 0, 0.15, structureHoverColor);
@@ -1688,6 +1716,7 @@ function updateStructureHover() {
       structureHoverPin.visible = false;
     }
     structureHoverPoint = null;
+    structureHoverTrackName = null;
     return;
   }
 
@@ -1726,10 +1755,12 @@ function updateStructureHover() {
       structureHoverPin.visible = false;
     }
     structureHoverPoint = null;
+    structureHoverTrackName = null;
     return;
   }
 
   structureHoverPoint = best.point.clone();
+  structureHoverTrackName = best.trackName ?? null;
   ensureStructureHoverPin();
   structureHoverPin.position.copy(best.point);
   structureHoverPin.visible = true;
@@ -1737,16 +1768,163 @@ function updateStructureHover() {
 
 function placeStructurePinnedPin() {
   if (!structureHoverPoint) { return; }
+  placeStructurePinnedPinAt(structureHoverPoint, structureHoverTrackName);
+}
+
+function placeStructurePinnedPinAt(position, trackName = null) {
+  if (!position) { return; }
+  const pos = position instanceof THREE.Vector3
+    ? position
+    : new THREE.Vector3(position.x, position.y, position.z);
+  const resolvedTrackName = trackName ?? getNearestStructureTrackName(pos);
   const pin = TSys.Map_pin(
-    structureHoverPoint.x,
-    structureHoverPoint.z,
-    structureHoverPoint.y,
+    pos.x,
+    pos.z,
+    pos.y,
     0.2,
     structurePinnedColor
   );
   pin.name = 'StructurePinnedPin';
+  pin.userData = { ...pin.userData, constructionSelected: false, trackName: resolvedTrackName };
+  pin.visible = structureViewActive || structureModeActive || constructionModeActive;
   structurePinnedPins.push(pin);
 }
+
+function clearStructurePinnedPins() {
+  clearConstructionSelection();
+  for (let i = structurePinnedPins.length - 1; i >= 0; i--) {
+    const pin = structurePinnedPins[i];
+    if (pin && pin.parent) {
+      pin.parent.remove(pin);
+    }
+    if (pin && pin.geometry && typeof pin.geometry.dispose === 'function') {
+      pin.geometry.dispose();
+    }
+    if (pin && pin.material && typeof pin.material.dispose === 'function') {
+      pin.material.dispose();
+    }
+    structurePinnedPins.splice(i, 1);
+  }
+}
+
+function setStructurePinnedVisibility(visible) {
+  structurePinnedPins.forEach((pin) => {
+    if (pin) {
+      pin.visible = visible;
+    }
+  });
+}
+
+function updateStructurePinnedVisibility() {
+  setStructurePinnedVisibility(structureViewActive || structureModeActive || constructionModeActive);
+}
+
+function setPinColor(pin, color) {
+  if (!pin || !pin.material) { return; }
+  if (Array.isArray(pin.material)) {
+    pin.material.forEach((material) => material?.color?.set?.(color));
+    return;
+  }
+  pin.material.color?.set?.(color);
+}
+
+function isConstructionPinSelected(pin) {
+  return Boolean(pin?.userData?.constructionSelected);
+}
+
+function setConstructionPinSelected(pin, selected) {
+  if (!pin) { return; }
+  pin.userData = pin.userData || {};
+  pin.userData.constructionSelected = selected;
+  setPinColor(pin, selected ? structureSelectedColor : structurePinnedColor);
+}
+
+function clearConstructionSelection() {
+  constructionSelectedPins.forEach((pin) => {
+    setConstructionPinSelected(pin, false);
+  });
+  constructionSelectedPins.length = 0;
+}
+
+function toggleConstructionPinSelection(pin) {
+  if (!pin) { return; }
+  if (isConstructionPinSelected(pin)) {
+    setConstructionPinSelected(pin, false);
+    const index = constructionSelectedPins.indexOf(pin);
+    if (index !== -1) {
+      constructionSelectedPins.splice(index, 1);
+    }
+    return;
+  }
+  setConstructionPinSelected(pin, true);
+  constructionSelectedPins.push(pin);
+}
+
+function pickStructurePinnedPin() {
+  if (structurePinnedPins.length === 0) { return null; }
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(structurePinnedPins, false);
+  if (hits.length === 0) { return null; }
+  return hits[0].object;
+}
+
+async function loadStructureData(url) {
+  try {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) {
+      return;
+    }
+    const data = await response.json();
+    if (!data || typeof data !== 'object' || !Array.isArray(data.pins)) {
+      return;
+    }
+    clearStructurePinnedPins();
+    data.pins.forEach((pin) => {
+      if (!pin || !Number.isFinite(pin.x) || !Number.isFinite(pin.y) || !Number.isFinite(pin.z)) {
+        return;
+      }
+      placeStructurePinnedPinAt(pin, pin.trackName ?? null);
+    });
+    updateStructurePinnedVisibility();
+  } catch (err) {
+    console.warn('structure.json load failed', err);
+  }
+}
+function buildStructurePayload() {
+  return {
+    meta: {
+      version: 1,
+      savedAt: new Date().toISOString(),
+    },
+    pins: structurePinnedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    })),
+  };
+}
+
+function downloadStructureData() {
+  const payload = buildStructurePayload();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'structure.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  alert('structure.json を保存しました。');
+}
+
+const saveStructureButton = document.getElementById('save-structure-data');
+if (saveStructureButton) {
+  saveStructureButton.addEventListener('click', downloadStructureData);
+}
+
+await loadStructureData(structureDataUrl);
 
 function sliceCurvePoints(curve, startRatio, endRatio, resolution = 1000) {
   const points = curve.getPoints(resolution);
@@ -1928,8 +2106,8 @@ const track3_doors = TSys.placePlatformDoors(track3, 0.7, door_interval, 'left')
 const track4_doors = TSys.placePlatformDoors(track4, 0.7, door_interval, 'right');  // 左側に設置
 
 // 壁の生成
-TSys.createWall(wall_track1,wall_track2,40,0.85,-0.85, 0.1, 0.1)
-TSys.createWall(wall_track3,wall_track4,40,0.85,-0.85, 0.1, 0.1)
+// TSys.createWall(wall_track1,wall_track2,40,0.85,-0.85, 0.1, 0.1)
+// TSys.createWall(wall_track3,wall_track4,40,0.85,-0.85, 0.1, 0.1)
 
 const quantity = 3
 
@@ -3157,6 +3335,14 @@ async function handleMouseDown() {
 
   console.log('run')
 
+  if (constructionModeActive) {
+    const pin = pickStructurePinnedPin();
+    if (pin) {
+      toggleConstructionPinSelection(pin);
+    }
+    return;
+  }
+
   if (structureModeActive) {
     placeStructurePinnedPin();
     return;
@@ -3448,24 +3634,91 @@ export function UIevent (uiID, toggle){
     search_object = false
   }} else if ( uiID === 'structure' ){ if ( toggle === 'active' ){
     console.log( 'structure _active' )
+    structureViewActive = true;
+    updateStructurePinnedVisibility();
+  } else {
+    structureViewActive = false;
+    updateStructurePinnedVisibility();
+  }} else if ( uiID === 'new/2' ){ if ( toggle === 'active' ){
+    console.log( 'new/2 _active' )
     structureModeActive = true;
     structureSamplesDirty = true;
     updateStructureHover();
+    updateStructurePinnedVisibility();
   } else {
-    console.log( 'structure _inactive' )
+    console.log( 'new/2 _inactive' )
     structureModeActive = false;
     structureHoverPoint = null;
+    structureHoverTrackName = null;
     if (structureHoverPin) {
       structureHoverPin.visible = false;
     }
+    updateStructurePinnedVisibility();
+  }} else if ( uiID === 'construction' ){ if ( toggle === 'active' ){
+  console.log( 'construction _active' )
+  constructionModeActive = true;
+  updateStructurePinnedVisibility();
+  } else {
+  console.log( 'construction _inactive' )
+  constructionModeActive = false;
+  clearConstructionSelection();
+  updateStructurePinnedVisibility();
+  }} else if ( uiID === 'bridge' ){ if ( toggle === 'active' ){
+  console.log( 'bridge _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('bridge requires at least 2 selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('bridge', pins, railTrackCurveMap);
+  }
+  }} else if ( uiID === 'elevated' ){ if ( toggle === 'active' ){
+  console.log( 'elevated _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('elevated requires at least 2 selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('elevated', pins, railTrackCurveMap);
+  }
+  }} else if ( uiID === 'wall' ){ if ( toggle === 'active' ){
+  console.log( 'wall _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('wall requires at least 2 selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('wall', pins, railTrackCurveMap);
+  }
+  }} else if ( uiID === 'floor' ){ if ( toggle === 'active' ){
+  console.log( 'floor _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('floor requires at least 2 selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('floor', pins, railTrackCurveMap);
+  }
   }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){
   console.log( 'poll _active' )
   } else {
   console.log( 'poll _inactive' )
-  }} else if ( uiID === 'new/2' ){ if ( toggle === 'active' ){
-  console.log( 'new/2 _active' )
-  } else {
-  console.log( 'new/2 _inactive' )
   }} else if ( uiID === 'move/2' ){ if ( toggle === 'active' ){
   console.log( 'move/2 _active' )
   } else {

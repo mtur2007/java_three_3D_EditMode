@@ -529,6 +529,230 @@ export class TrainSystem {
     girder.castShadow = true;
   }
 
+  createFloorAlongCurve(curve, {
+    width = 0.5,
+    thickness = 0.2,
+    color = 0x888888,
+    steps = 600,
+  } = {}) {
+    const halfWidth = width * 0.5;
+    const halfThickness = thickness * 0.5;
+    const shape = new THREE.Shape([
+      new THREE.Vector2(-halfThickness, -halfWidth),
+      new THREE.Vector2(halfThickness, -halfWidth),
+      new THREE.Vector2(halfThickness, halfWidth),
+      new THREE.Vector2(-halfThickness, halfWidth),
+      new THREE.Vector2(-halfThickness, -halfWidth),
+    ]);
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      steps,
+      bevelEnabled: false,
+      extrudePath: curve,
+    });
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      side: THREE.FrontSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  buildStructureFromPins(type, pins, trackLookup = null) {
+    if (!Array.isArray(pins)) {
+      console.warn('buildStructureFromPins expects an array of pins.');
+      return false;
+    }
+
+    const resolveTrackCurve = (trackName) => {
+      if (!trackLookup || !trackName) { return null; }
+      if (typeof trackLookup === 'function') {
+        return trackLookup(trackName) || null;
+      }
+      if (trackLookup instanceof Map) {
+        return trackLookup.get(trackName) || null;
+      }
+      if (typeof trackLookup === 'object') {
+        return trackLookup[trackName] || null;
+      }
+      return null;
+    };
+
+    const entries = pins.map((pin, index) => {
+      if (pin instanceof THREE.Vector3) {
+        return { point: pin.clone(), trackName: null, index };
+      }
+      if (pin && Number.isFinite(pin.x) && Number.isFinite(pin.y) && Number.isFinite(pin.z)) {
+        return {
+          point: new THREE.Vector3(pin.x, pin.y, pin.z),
+          trackName: typeof pin.trackName === 'string' ? pin.trackName : null,
+          index,
+        };
+      }
+      return null;
+    }).filter(Boolean);
+
+    if (entries.length < 2) {
+      console.warn('buildStructureFromPins requires at least 2 valid pins.');
+      return false;
+    }
+
+    const maxAngleDiff = this.degToRad(20);
+    const maxPairDistance = 10;
+    const groups = new Map();
+
+    const getDirectionInfo = (points) => {
+      let bestStart = points[0];
+      let bestEnd = points[points.length - 1];
+      let bestDist = -1;
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          const dx = points[j].x - points[i].x;
+          const dz = points[j].z - points[i].z;
+          const dist = dx * dx + dz * dz;
+          if (dist > bestDist) {
+            bestDist = dist;
+            bestStart = points[i];
+            bestEnd = points[j];
+          }
+        }
+      }
+      const dir = new THREE.Vector3(
+        bestEnd.x - bestStart.x,
+        0,
+        bestEnd.z - bestStart.z
+      );
+      if (dir.lengthSq() === 0) {
+        dir.set(1, 0, 0);
+      }
+      dir.normalize();
+      return { start: bestStart, end: bestEnd, dir };
+    };
+
+    entries.forEach((entry) => {
+      if (!entry.trackName) { return; }
+      if (!groups.has(entry.trackName)) {
+        groups.set(entry.trackName, []);
+      }
+      groups.get(entry.trackName).push(entry.point);
+    });
+
+    const trackGroups = [];
+    groups.forEach((points, trackName) => {
+      if (points.length < 2) { return; }
+      const { start, dir } = getDirectionInfo(points);
+      const ordered = points.slice().sort((a, b) => {
+        const da = new THREE.Vector3().subVectors(a, start).dot(dir);
+        const db = new THREE.Vector3().subVectors(b, start).dot(dir);
+        return da - db;
+      });
+      const baseCurve = resolveTrackCurve(trackName);
+      const curve = baseCurve
+        ? this.findCurveRange(baseCurve, ordered[0], ordered[ordered.length - 1])
+        : new THREE.CatmullRomCurve3(ordered);
+      const center = ordered.reduce((acc, p) => {
+        acc.x += p.x;
+        acc.y += p.y;
+        acc.z += p.z;
+        return acc;
+      }, new THREE.Vector3()).multiplyScalar(1 / ordered.length);
+      const direction = ordered[ordered.length - 1].clone().sub(ordered[0]).setY(0);
+      if (direction.lengthSq() === 0) {
+        direction.set(1, 0, 0);
+      } else {
+        direction.normalize();
+      }
+      trackGroups.push({
+        trackName,
+        points: ordered,
+        curve,
+        center,
+        direction,
+      });
+    });
+
+    const pairCandidates = [];
+    for (let i = 0; i < trackGroups.length; i++) {
+      for (let j = i + 1; j < trackGroups.length; j++) {
+        const a = trackGroups[i];
+        const b = trackGroups[j];
+        const dot = a.direction.dot(b.direction);
+        if (dot <= 0) { continue; }
+        const angle = Math.acos(Math.min(1, Math.max(-1, dot)));
+        if (angle > maxAngleDiff) { continue; }
+        const dx = a.center.x - b.center.x;
+        const dz = a.center.z - b.center.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > maxPairDistance) { continue; }
+        pairCandidates.push({ i, j, dist });
+      }
+    }
+
+    pairCandidates.sort((a, b) => a.dist - b.dist);
+    const paired = new Set();
+    const pairs = [];
+    pairCandidates.forEach((candidate) => {
+      if (paired.has(candidate.i) || paired.has(candidate.j)) { return; }
+      paired.add(candidate.i);
+      paired.add(candidate.j);
+      pairs.push(candidate);
+    });
+
+    if (type === 'bridge') {
+      pairs.forEach(({ i, j }) => {
+        const a = trackGroups[i];
+        const b = trackGroups[j];
+        const y = (a.center.y + b.center.y) * 0.5;
+        const quantity = Math.max(2, Math.min(a.points.length, b.points.length));
+        this.placeGirderBridge(a.curve, b.curve, y, quantity);
+      });
+      return true;
+    }
+
+    if (type === 'elevated') {
+      const pillarInterval = 10;
+      const interval = 25;
+      pairs.forEach(({ i, j }) => {
+        const a = trackGroups[i];
+        const b = trackGroups[j];
+        this.generateElevated(a.curve, pillarInterval, interval, false, b.curve);
+      });
+      trackGroups.forEach((group, index) => {
+        if (paired.has(index)) { return; }
+        this.generateElevated(group.curve, pillarInterval, interval);
+      });
+      return true;
+    }
+
+    if (type === 'wall') {
+      pairs.forEach(({ i, j }) => {
+        const a = trackGroups[i];
+        const b = trackGroups[j];
+        const toB = b.center.clone().sub(a.center).setY(0);
+        const cross = (a.direction.x * toB.z) - (a.direction.z * toB.x);
+        const quantity = Math.max(2, Math.min(a.points.length, b.points.length));
+        if (cross < 0) {
+          this.createWall(a.curve, b.curve, quantity, 0.8, -0.8);
+        } else {
+          this.createWall(a.curve, b.curve, quantity, 0.8, -0.8);
+        }
+      });
+      return true;
+    }
+
+    if (type === 'floor') {
+      trackGroups.forEach((group) => {
+        this.createFloorAlongCurve(group.curve, { width: 1.5, thickness: 0.2 });
+      });
+      return true;
+    }
+
+    console.warn(`Unknown structure type: ${type}`);
+    return false;
+  }
+
   // 高架線路生成(線型に沿う)
   generateElevated(curve, pillarInterval = 10, interval = 25, obstacle = false, curve2 = false) {
     const points = this.getPointsEveryM(curve, interval);

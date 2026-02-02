@@ -103,28 +103,28 @@ function getAllkeys(uiTree, now_index=[], Allkeys={}, Duplication={}, rename_uiT
     return [Allkeys, Duplication, rename_uiTree]
 }
 
-function GenerateDefinitionCode(uiTree){
-    console.log(getAllkeys(uiTree)[0])
+function buildUiGroup(uiTree, uiGroup){
     const ReturnValue = getAllkeys(uiTree)
-    const Allkeys = Object.keys(ReturnValue[0])
-    const deepth = ReturnValue[0]
+    const allKeysMap = ReturnValue[0]
+    const orderedKeys = Object.keys(allKeysMap)
+    const deepth = allKeysMap
 
-    let html_code = '<div id="UiGroup" role="group" aria-label="actions">\n'
-    let js_def_code = ''
-    let js_code = 'function UIevent (uiID, toggle){\n'
-    for(let i=0; i < Allkeys.length; i++){
-        
-        html_code += "  <button id = '"+Allkeys[i]+"' style = 'top: "+((30*i)+10)+"px; left: "+(deepth[Allkeys[i]].length-1)*10+"px;' > </button>\n"
-        
-        if (i===0){
-            js_code += "  if ( uiID === '"+Allkeys[i]+"' ){ if ( toggle === 'active' ){\n  console.log( '"+Allkeys[i]+" _active' )\n  } else {\n  console.log( '"+Allkeys[i]+" _inactive' )\n  }}"
-        }else{
-            js_code += " else if ( uiID === '"+Allkeys[i]+"' ){ if ( toggle === 'active' ){\n  console.log( '"+Allkeys[i]+" _active' )\n  } else {\n  console.log( '"+Allkeys[i]+" _inactive' )\n  }}"        
-        }
+    if (!uiGroup) {
+        return { allKeysMap, orderedKeys, renameTree: ReturnValue[2] }
     }
-    html_code += '</div>'
-    js_code += '\n}'
-    return [html_code, js_code]
+
+    uiGroup.textContent = ''
+    for (let i = 0; i < orderedKeys.length; i++){
+        const key = orderedKeys[i]
+        const btn = document.createElement('button')
+        btn.id = key
+        btn.style.top = ((30 * i) + 10) + 'px'
+        btn.style.left = ((deepth[key].length - 1) * 10) + 'px'
+        btn.textContent = key
+        uiGroup.appendChild(btn)
+    }
+
+    return { allKeysMap, orderedKeys, renameTree: ReturnValue[2] }
 }
 
 function connectionUI(uiTree){
@@ -150,7 +150,13 @@ const uiTree = {
                 'x_z':'', 
                 'y':''},
             'structure':{
-                'bridge':''}
+                'new':'',
+                'construction':{
+                    'bridge':'',
+                    'elevated':'',
+                    'wall':'',
+                    'floor':'',
+                }}
             
         },
         'poll':update,
@@ -246,26 +252,24 @@ const uiTree = {
 //     }}
 //   }
 
-console.log(GenerateDefinitionCode(uiTree)[0])
-
-const ReturnValue = getAllkeys(uiTree);
-const Allkeys = ReturnValue[0]
+const UiGroup = document.getElementById('UiGroup');
+const buildResult = buildUiGroup(uiTree, UiGroup)
+const Allkeys = buildResult.allKeysMap
+const rename_uiTree = buildResult.renameTree
 const UisToggle = {...Allkeys};
 Object.keys(UisToggle).forEach(key => {
     UisToggle[key] = 'inactive';
   });
 UisToggle[Object.keys(UisToggle)[0]]='active'
-const rename_uiTree = ReturnValue[2]
 
 console.log(uiTree)
 console.log(rename_uiTree)
 // getValueByIndex(rename_uiTree,0,[1,1])
 
-const UiGroup = document.getElementById('UiGroup');
-
+const rootKeys = Object.keys(rename_uiTree)
 UiGroup.querySelectorAll('button').forEach(b => {
-    if (b.id === 'see' | b.id === 'edit') {
-      b.hidden = false; // 押されたボタンは表示
+    if (rootKeys.includes(b.id)) {
+      b.hidden = false; // ルートは表示
     } else {
       b.hidden = true;
     }
@@ -286,8 +290,8 @@ UiGroup.addEventListener('click', (event) => {
   // もし data-id を使いたければ:
   // console.log('data-id:', btn.dataset.id);
   UiGroup.querySelectorAll('button').forEach(b => {
-    if (b.id === 'see' | b.id === 'edit') {
-      b.hidden = false; // 押されたボタンは表示
+    if (rootKeys.includes(b.id)) {
+      b.hidden = false; // ルートは常時表示
     }
   })
 });
@@ -307,8 +311,8 @@ UiGroup.addEventListener('touchstart', (event) => {
     // もし data-id を使いたければ:
     // console.log('data-id:', btn.dataset.id);
     UiGroup.querySelectorAll('button').forEach(b => {
-      if (b.id === 'see' | b.id === 'edit') {
-        b.hidden = false; // 押されたボタンは表示
+      if (rootKeys.includes(b.id)) {
+        b.hidden = false; // ルートは常時表示
       }
     })
   });
