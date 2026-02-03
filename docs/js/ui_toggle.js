@@ -157,6 +157,7 @@ const uiTree = {
                     'wall':'',
                     'floor':'',
                     'pillar':'',
+                    'rib_bridge':'',
                 }}
             
         },

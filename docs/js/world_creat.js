@@ -591,7 +591,7 @@ function createDoubleArcPoints(params1, params2) {
   );
   Bridge.add(box);
 
-  const Bridge_depth = 4
+  const Bridge_depth = 3
 
   for (let i = 1; i < Math.max(segments1, segments2) - 1; i++) {
     let x1 = xStart1 + i * stepX1;
@@ -719,7 +719,9 @@ function createDoubleArcPoints(params1, params2) {
   return ArchBridge
 }
 const ArchBridge = createDoubleArcPoints(arcA, arcB)
-ArchBridge.position.set(-4.5,-16,-145)
+const scale = 0.325
+const position_scale = scale/0.45
+ArchBridge.position.set(-4.25,-17.8,-117)
 ArchBridge.rotation.y = 1.750662913747207//79.66 * Math.PI / 180
 console.log(ArchBridge)
 for (let i = 0; i < ArchBridge.children.length; i++){

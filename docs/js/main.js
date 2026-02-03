@@ -1325,6 +1325,7 @@ let JK_downbound_point = []
 
 let sinkansen_upbound_point = []
 let sinkansen_downbound_point = []
+let marunouchi_point = []
 
 let J_UJT_upbound_point = []
 let J_UJT_downbound_point = []
@@ -1344,6 +1345,7 @@ const REQUIRED_TRACK_KEYS = [
   'J_UJT_downbound_point',
   'sinkansen_upbound_point',
   'sinkansen_downbound_point',
+  'marunouchi_point',
 ];
 
 function isPlainPoint(value) {
@@ -1427,6 +1429,7 @@ J_UJT_downbound_point = trackMap.J_UJT_downbound_point;
 
 sinkansen_upbound_point = trackMap.sinkansen_upbound_point;
 sinkansen_downbound_point = trackMap.sinkansen_downbound_point;
+marunouchi_point = trackMap.marunouchi_point;
 
 function buildTrackDataPayload() {
   return {
@@ -1448,6 +1451,7 @@ function buildTrackDataPayload() {
       J_UJT_downbound_point: pointsToPlain(J_UJT_downbound_point),
       sinkansen_upbound_point: pointsToPlain(sinkansen_upbound_point),
       sinkansen_downbound_point: pointsToPlain(sinkansen_downbound_point),
+      marunouchi_point: pointsToPlain(marunouchi_point),
     },
   };
 }
@@ -1487,6 +1491,7 @@ const J_UJT_downbound = new THREE.CatmullRomCurve3(J_UJT_downbound_point);
 
 const sinkansen_upbound = new THREE.CatmullRomCurve3(sinkansen_upbound_point);
 const sinkansen_downbound = new THREE.CatmullRomCurve3(sinkansen_downbound_point);
+const marunouchi = new THREE.CatmullRomCurve3(marunouchi_point);
 
 const railTrackDefs = [
   { name: 'Points_0', curve: line_1, points: Points_0 },
@@ -1501,6 +1506,7 @@ const railTrackDefs = [
   { name: 'J_UJT_downbound_point', curve: J_UJT_downbound, points: J_UJT_downbound_point },
   { name: 'sinkansen_upbound_point', curve: sinkansen_upbound, points: sinkansen_upbound_point },
   { name: 'sinkansen_downbound_point', curve: sinkansen_downbound, points: sinkansen_downbound_point },
+  { name: 'marunouchi_point', curve: marunouchi, points: marunouchi_point },
 ];
 const railTrackCurveMap = railTrackDefs.reduce((acc, track) => {
   acc[track.name] = track.curve;
@@ -1525,7 +1531,7 @@ const railTubeColors = [
   0x34495e,
   0xe67e22,
 ];
-const railSelectionRadius = 30;
+const railSelectionRadius = 100;
 const railSelectionRange = 3;
 const railSelectionLineColor = 0x00ff00;
 const railSelectionLineName = 'RailSelected';
@@ -1975,6 +1981,19 @@ function getOrderedTracksByLateralPosition(trackCurves, sampleDistance = 0.5) {
   }).sort((a, b) => b.xLocal - a.xLocal);
 }
 
+function getEdgeTrackNamesForConstruction(sampleDistance = 0.5) {
+  const trackCurves = getSelectedTrackCurvesForConstruction();
+  const ordered = getOrderedTracksByLateralPosition(trackCurves, sampleDistance);
+  if (ordered.length === 0) {
+    return { right: null, left: null, ordered: [] };
+  }
+  return {
+    right: ordered[0].trackName,
+    left: ordered[ordered.length - 1].trackName,
+    ordered,
+  };
+}
+
 function logPillarSideJudgement() {
   const trackCurves = getSelectedTrackCurvesForConstruction();
   if (trackCurves.length < 2) {
@@ -2365,7 +2384,7 @@ for(let i=0; i<margin.length; i++){
 
 
 // 桁橋 実装中
-TSys.placeGirderBridge(bridge_2,bridge_3,9,2)
+// TSys.placeGirderBridge(bridge_2,bridge_3,9,2)
 
 // 電車の運行
 // const max_speed = 0.001 // 制限速度(最高)
@@ -2852,6 +2871,7 @@ TSys.createWall(J_UJT_downbound, J_UJT_downbound, 40,-0.9,-0.9,0.8,0, 0xbbbbbb)
 
 TSys.createRail(sinkansen_upbound)
 TSys.createRail(sinkansen_downbound)
+TSys.createRail(marunouchi)
 
 TSys.generateElevated(sinkansen_upbound, 10, interval);
 TSys.generateElevated(sinkansen_downbound, 10, interval);
@@ -3890,6 +3910,23 @@ export function UIevent (uiID, toggle){
       maxOffset: 3,
       baseOffset: 0,
       offsetStep: 0.2,
+    });
+  }
+  }} else if ( uiID === 'rib_bridge' ){ if ( toggle === 'active' ){
+  console.log( 'rib_bridge _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('rib_bridge requires at least 2 selected pins.');
+  } else {
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    const edges = getEdgeTrackNamesForConstruction(0.5);
+    console.log(`[rib_bridge-edge] right=${edges.right} left=${edges.left}`);
+    TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
+      edgeTrackNames: { right: edges.right, left: edges.left },
     });
   }
   }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){

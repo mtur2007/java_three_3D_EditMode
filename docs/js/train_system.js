@@ -646,6 +646,79 @@ export class TrainSystem {
     return mesh;
   }
 
+  createRibbedSideBridge(curve, {
+    side = 'right',
+    sideOffset = 0.7,
+    topWidth = 0.6,
+    topThickness = 0.05,
+    webHeight = 0.8,
+    webThickness = 0.05,
+    ribSpacing = 1.0,
+    ribThickness = 0.2,
+    ribDepth = 0.1,
+    yOffset = 0,
+    color = 0x94aa86,
+  } = {}) {
+    const sign = side === 'left' ? -1 : 1;
+    const samples = this.getPointsEveryM(curve, 0.8);
+    if (samples.length < 2) { return; }
+    const material = new THREE.MeshStandardMaterial({ 
+      color,    
+      metalness: 0.8,       // 金属光沢最大
+      roughness: 0.5,
+      envMapIntensity: 1.0,
+      side: THREE.FrontSide 
+    });
+    
+
+    const topPoints = [];
+    const webPoints = [];
+    for (let i = 0; i < samples.length; i++) {
+      const point = samples[i].clone();
+      const t = samples.length > 1 ? i / (samples.length - 1) : 0;
+      const tangent = curve.getTangentAt(t).clone().setY(0);
+      if (tangent.lengthSq() === 0) {
+        tangent.set(0, 0, 1);
+      } else {
+        tangent.normalize();
+      }
+      const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+      const edge = point.add(right.multiplyScalar(sign * sideOffset));
+      const topCenter = edge.clone();
+      topCenter.y += yOffset;
+      const webCenter = edge.clone();
+      webCenter.y += yOffset - (webHeight * 0.5) - (topThickness * 0.5);
+      topPoints.push(topCenter);
+      webPoints.push(webCenter);
+    }
+
+    for (let i = 0; i < topPoints.length - 1; i++) {
+      this.scene.add(this.createBoxBetweenPoints3D(topPoints[i], topPoints[i + 1], topThickness, topWidth, material));
+      this.scene.add(this.createBoxBetweenPoints3D(webPoints[i], webPoints[i + 1], webHeight, webThickness, material));
+    }
+
+    const ribPoints = this.getPointsEveryM(curve, ribSpacing);
+    ribPoints.forEach((point, index) => {
+      const t = ribPoints.length > 1 ? index / (ribPoints.length - 1) : 0;
+      const tangent = curve.getTangentAt(t).clone().setY(0);
+      if (tangent.lengthSq() === 0) {
+        tangent.set(0, 0, 1);
+      } else {
+        tangent.normalize();
+      }
+      const yaw = Math.atan2(tangent.x, tangent.z);
+      const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+      const edge = point.clone().add(right.multiplyScalar(sign * sideOffset));
+      const rib = new THREE.Mesh(
+        new THREE.BoxGeometry(ribThickness, webHeight, ribDepth),
+        material
+      );
+      rib.position.set(edge.x, edge.y + yOffset - (webHeight * 0.5), edge.z);
+      rib.rotation.y = yaw;
+      this.scene.add(rib);
+    });
+  }
+
   reverseCurveCopy(curve, steps = 300) {
     const reversedPoints = curve.getPoints(steps).map((point) => point.clone()).reverse();
     return new THREE.CatmullRomCurve3(reversedPoints);
@@ -974,18 +1047,14 @@ export class TrainSystem {
     }
 
     if (type === 'wall') {
-      pairs.forEach(({ i, j }) => {
-        const a = trackGroups[i];
-        const b = trackGroups[j];
-        const toB = b.center.clone().sub(a.center).setY(0);
-        const cross = (a.direction.x * toB.z) - (a.direction.z * toB.x);
-        const quantity = Math.max(2, Math.min(a.points.length, b.points.length));
-        if (cross < 0) {
-          this.createWall(a.curve, b.curve, quantity, 0.8, -0.8);
-        } else {
-          this.createWall(a.curve, b.curve, quantity, 0.8, -0.8);
-        }
-      });
+      const orderedTracks = this.getRouteOrderRightToLeft(trackGroups);
+      for (let i = 0; i < orderedTracks.length - 1; i++) {
+        const rightTrack = orderedTracks[i];
+        const leftTrack = orderedTracks[i + 1];
+        const quantity = Math.max(2, Math.min(rightTrack.points.length, leftTrack.points.length));
+        // 右 -> 左の順で隣接路線ごとに壁を生成
+        this.createWall(rightTrack.curve, leftTrack.curve, quantity, 0.8, -0.8);
+      }
       return true;
     }
 
@@ -993,6 +1062,27 @@ export class TrainSystem {
       trackGroups.forEach((group) => {
         this.createFloorAlongCurve(group.curve, { width: 1.5, thickness: 0.2 });
       });
+      return true;
+    }
+
+    if (type === 'rib_bridge') {
+      const orderedTracks = this.getRouteOrderRightToLeft(trackGroups);
+      if (orderedTracks.length === 0) { return false; }
+      let rightEdge = orderedTracks[0];
+      let leftEdge = orderedTracks[orderedTracks.length - 1];
+      const edgeNames = options.edgeTrackNames || {};
+      if (edgeNames.right) {
+        rightEdge = orderedTracks.find((track) => track.trackName === edgeNames.right) || rightEdge;
+      }
+      if (edgeNames.left) {
+        leftEdge = orderedTracks.find((track) => track.trackName === edgeNames.left) || leftEdge;
+      }
+      this.createRibbedSideBridge(rightEdge.curve, { side: 'right' });
+      if (leftEdge.trackName !== rightEdge.trackName) {
+        this.createRibbedSideBridge(leftEdge.curve, { side: 'left' });
+      } else {
+        this.createRibbedSideBridge(leftEdge.curve, { side: 'left' });
+      }
       return true;
     }
 
@@ -1412,10 +1502,10 @@ export class TrainSystem {
     geometry.computeVertexNormals(); // 光の当たり具合を正しくする
     
     const material = new THREE.MeshStandardMaterial({
-      color: 0x603513,
+      color: 0x503513,
       metalness: 1,   // 金属っぽさ（0〜1）
-      roughness: 0.3,   // 表面の粗さ（0：つるつる、1：ザラザラ）
-      envMapIntensity: 3,    // 環境マップの反射強度（envMapを使うなら）
+      roughness: 0.2,   // 表面の粗さ（0：つるつる、1：ザラザラ）
+      envMapIntensity: 1,    // 環境マップの反射強度（envMapを使うなら）
       side: THREE.FrontSide
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -1429,22 +1519,22 @@ export class TrainSystem {
   createRail(curve, name = false){
     const points_right = this.RailMargin(curve.getPoints(70), 0.24,true);
     const points_lift = this.RailMargin(curve.getPoints(70), -0.24,true);
-    const points_center = this.RailMargin(this.getPointsEveryM(curve, 0.3), 0,true);
+    const points_center = this.RailMargin(this.getPointsEveryM(curve, 0.25), 0,true);
     const points = points_center[0]
     const angles = points_center[1]
   
-    const geometry = new THREE.BoxGeometry(0.12, 0.05, 0.95);
+    const geometry = new THREE.BoxGeometry(0.1, 0.02, 0.9);
     const stoneMaterial = new THREE.MeshStandardMaterial({
-      color: 0x544433,     // 石っぽいグレー（DimGray）
+      color: 0x666666,     // 石っぽいグレー（DimGray）
       roughness: 0.9,      // 表面ザラザラ（石っぽさを出す）
       metalness: 0.0,      // 金属感なし
       side: THREE.FrontSide
     });
-    const loc_geometry = new THREE.BoxGeometry(0.05, 0.02, 0.1);
+    const loc_geometry = new THREE.BoxGeometry(0.05, 0.01, 0.1);
     const loc_material = new THREE.MeshStandardMaterial({
-      color: 0x774513,
+      color: 0x664513,
       metalness: 1,   // 金属っぽさ（0〜1）
-      roughness: 0.5,   // 表面の粗さ（0：つるつる、1：ザラザラ）
+      roughness: 0.8,   // 表面の粗さ（0：つるつる、1：ザラザラ）
       side: THREE.FrontSide
     });
   
