@@ -719,6 +719,49 @@ export class TrainSystem {
     });
   }
 
+  createRectTunnelAlongCurve(curve, {
+    innerWidth = 1,
+    innerHeight = 1.2,
+    wallThickness = 0.1,
+    segmentSpacing = 1.2,
+    yOffset = -0.1,
+    color = 0x8b8f94,
+  } = {}) {
+    const points = this.getPointsEveryM(curve, segmentSpacing);
+    if (!Array.isArray(points) || points.length < 2) { return; }
+    const material = new THREE.MeshStandardMaterial({ color, side: THREE.FrontSide });
+
+    const topCenter = [];
+    const leftCenter = [];
+    const rightCenter = [];
+
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i].clone();
+      const t = points.length > 1 ? i / (points.length - 1) : 0;
+      const tangent = curve.getTangentAt(t).clone().setY(0);
+      if (tangent.lengthSq() === 0) {
+        tangent.set(0, 0, 1);
+      } else {
+        tangent.normalize();
+      }
+      const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+      const center = point.clone();
+      center.y += yOffset;
+
+      const halfW = (innerWidth * 0.5) + (wallThickness * 0.5);
+      topCenter.push(center.clone().setY(center.y + innerHeight + (wallThickness * 0.5)));
+      leftCenter.push(center.clone().add(right.clone().multiplyScalar(-halfW)).setY(center.y + (innerHeight * 0.5)));
+      rightCenter.push(center.clone().add(right.clone().multiplyScalar(halfW)).setY(center.y + (innerHeight * 0.5)));
+    }
+
+    const topWidth = innerWidth + (wallThickness * 2);
+    for (let i = 0; i < points.length - 1; i++) {
+      this.scene.add(this.createBoxBetweenPoints3D(topCenter[i], topCenter[i + 1], wallThickness, topWidth, material));
+      this.scene.add(this.createBoxBetweenPoints3D(leftCenter[i], leftCenter[i + 1], innerHeight, wallThickness, material));
+      this.scene.add(this.createBoxBetweenPoints3D(rightCenter[i], rightCenter[i + 1], innerHeight, wallThickness, material));
+    }
+  }
+
   reverseCurveCopy(curve, steps = 300) {
     const reversedPoints = curve.getPoints(steps).map((point) => point.clone()).reverse();
     return new THREE.CatmullRomCurve3(reversedPoints);
@@ -1083,6 +1126,21 @@ export class TrainSystem {
       } else {
         this.createRibbedSideBridge(leftEdge.curve, { side: 'left' });
       }
+      return true;
+    }
+
+    if (type === 'tunnel_rect') {
+      const tunnelOptions = {
+        innerWidth: options.innerWidth ?? 2.2,
+        innerHeight: options.innerHeight ?? 2.6,
+        wallThickness: options.wallThickness ?? 0.25,
+        segmentSpacing: options.segmentSpacing ?? 1.2,
+        yOffset: options.yOffset ?? -0.1,
+        color: options.color ?? 0x8b8f94,
+      };
+      trackGroups.forEach((group) => {
+        this.createRectTunnelAlongCurve(group.curve, tunnelOptions);
+      });
       return true;
     }
 

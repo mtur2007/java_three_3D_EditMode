@@ -181,7 +181,7 @@ const loader = new THREE.TextureLoader();
     envMap = texture;
   });
 
-loader.load('textures/moonless_golf.jpg', (texture_night) => {
+loader.load('textures/shanghai_bund_4k.jpg', (texture_night) => {
   texture_night.mapping = THREE.EquirectangularReflectionMapping;
   texture_night.colorSpace = THREE.SRGBColorSpace;
   // scene.background = texture_night;
@@ -493,6 +493,7 @@ if (showIntroLink) {
 let run_STOP = false
 let quattro = 0
 let run_num = 0
+let suspendRunTrainAnimations = false
 
 // --- エスカレーター ---
 let path_x = 2.8
@@ -868,6 +869,14 @@ function createPantograph(Arm_rotation_z) {
   return pantograph;
 }
 
+function disableShadowRecursive(object3d) {
+  if (!object3d) { return; }
+  object3d.traverse((node) => {
+    if (!node || !node.isMesh) { return; }
+    node.castShadow = false;
+  });
+}
+
 const Trains = []
 
 // 車両設定（テクスチャ対応版）
@@ -1003,6 +1012,7 @@ function TrainSettings(
     // trainCars.push(Opposition);
     // trainGroup.add(Opposition); // グループに追加
     
+    disableShadowRecursive(car);
     trainCars.push(car);
     trainGroup.add(car); // グループに追加
   }
@@ -1083,6 +1093,7 @@ function Sin_TrainSettings(
     // trainCars.push(Opposition);
     // trainGroup.add(Opposition); // グループに追加
     
+    disableShadowRecursive(car);
     trainCars.push(car);
     trainGroup.add(car); // グループに追加
   }
@@ -1108,9 +1119,24 @@ function moveDoorsFromGroup(group, mode, distance = 0.32, duration = 2000) {
     const children = group.children;
     const startPositions = children.map(child => child.position.clone());
     const startTime = performance.now();
+    let pausedAt = null;
+    let pausedDuration = 0;
 
     function animate(time) {
-      const t = Math.min((time - startTime) / duration, 1);
+      if (suspendRunTrainAnimations) {
+        if (pausedAt === null) {
+          pausedAt = time;
+        }
+        requestAnimationFrame(animate);
+        return;
+      }
+
+      if (pausedAt !== null) {
+        pausedDuration += (time - pausedAt);
+        pausedAt = null;
+      }
+
+      const t = Math.min((time - startTime - pausedDuration) / duration, 1);
 
       children.forEach((child, index) => {
         let angle = child.rotation.y;
@@ -1200,6 +1226,11 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
   trainCars.visible = true;   // 再表示する
 
   async function runCar() {
+    if (suspendRunTrainAnimations) {
+      requestAnimationFrame(runCar);
+      return;
+    }
+
     if (t >= 1 + maxOffsetT) {
       
       if (quattro > 0){
@@ -1553,6 +1584,7 @@ let structureHoverPin = null;
 const structurePinnedPins = [];
 const constructionSelectedPins = [];
 let lastPointerScreen = null;
+let structurePointerBlockedByUI = false;
 
 function buildSquareTubeMesh(curves, {
   size = 0.35,
@@ -1717,7 +1749,7 @@ function ensureStructureHoverPin() {
 }
 
 function updateStructureHover() {
-  if (!structureModeActive || !lastPointerScreen) {
+  if (!structureModeActive || !lastPointerScreen || structurePointerBlockedByUI) {
     if (structureHoverPin) {
       structureHoverPin.visible = false;
     }
@@ -2285,8 +2317,8 @@ const track4_doors = TSys.placePlatformDoors(track4, 0.7, door_interval, 'right'
 
 const quantity = 3
 
-TSys.createWall(tunnel_1,tunnel_1,40,-0.9,-0.9,0,2.2)
-TSys.createWall(tunnel_1,tunnel_1,40,0.9,0.9,0,2.2)
+// TSys.createWall(tunnel_1,tunnel_1,40,-0.9,-0.9,0,2.2)
+// TSys.createWall(tunnel_1,tunnel_1,40,0.9,0.9,0,2.2)
 
 const river = findCurveRange(line_4, Points_3[Points_3.length-1], {x:38.79449255756082, y:y+0.40000000000000036, z:-189.92134871967772 })
 console.log(river)
@@ -2304,43 +2336,43 @@ const water_material = new THREE.MeshStandardMaterial({
 });
 TSys.createWall(river,river,40,2,10,-4,-4,0x003355,water_material)
 
-const board_length_1 = tunnel_1.getLength(line_4)/quantity;
-const board_length_2 = tunnel_2.getLength(line_4)/quantity;
-const points_1 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_1, board_length_1), 1);
-const points_2 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_2, board_length_2), -1);
+// const board_length_1 = tunnel_1.getLength(line_4)/quantity;
+// const board_length_2 = tunnel_2.getLength(line_4)/quantity;
+// const points_1 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_1, board_length_1), 1);
+// const points_2 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_2, board_length_2), -1);
 
-for(let i=0; i < points_1.length-1; i++){
-  const coordinate1 = points_1[i]
-  const coordinate2 = points_2[i]
+// for(let i=0; i < points_1.length-1; i++){
+//   const coordinate1 = points_1[i]
+//   const coordinate2 = points_2[i]
   
-  const coordinate4 = points_1[i+1]
-  const coordinate3 = points_2[i+1]
+//   const coordinate4 = points_1[i+1]
+//   const coordinate3 = points_2[i+1]
 
-  const shape = new THREE.Shape();
-  shape.moveTo(coordinate1.x, coordinate1.z);
-  shape.lineTo( coordinate2.x, coordinate2.z);
-  shape.lineTo(coordinate3.x, coordinate3.z);
-  shape.lineTo(coordinate4.x, coordinate4.z);
+//   const shape = new THREE.Shape();
+//   shape.moveTo(coordinate1.x, coordinate1.z);
+//   shape.lineTo( coordinate2.x, coordinate2.z);
+//   shape.lineTo(coordinate3.x, coordinate3.z);
+//   shape.lineTo(coordinate4.x, coordinate4.z);
 
-  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x333333,
-    metalness: 0.5,
-    roughness: 0.9,
-    envMap: scene.environment,  // もし読み込んでるなら
-    envMapIntensity: 3,
-    side: THREE.FrontSide
-  });
+//   const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
+//   const material = new THREE.MeshStandardMaterial({
+//     color: 0x333333,
+//     metalness: 0.5,
+//     roughness: 0.9,
+//     envMap: scene.environment,  // もし読み込んでるなら
+//     envMapIntensity: 3,
+//     side: THREE.FrontSide
+//   });
   
   
-  const mesh = new THREE.Mesh(geometry, material);
+//   const mesh = new THREE.Mesh(geometry, material);
 
-  mesh.rotation.x = 91 * Math.PI / 180;
-  mesh.position.y = 7.25; // 高さ1.5に移動
+//   mesh.rotation.x = 91 * Math.PI / 180;
+//   mesh.position.y = 7.25; // 高さ1.5に移動
 
-  scene.add(mesh);
+//   scene.add(mesh);
 
-}
+// }
 
 // 架線柱の生成
 const point_data = TSys.RailMargin(TSys.getPointsEveryM(wall_track4, 8), 1, true);
@@ -2738,6 +2770,8 @@ function createLine(p1, p2, color = 0xff0000) {
 // マウスを動かしたときのイベント
 function handleMouseMove(x, y) {
   const element = canvas;
+  const hovered = document.elementFromPoint(x, y);
+  structurePointerBlockedByUI = Boolean(hovered?.closest?.('button'));
   // Use bounding rect to correctly account for CSS, padding and page offsets
   const rect = element.getBoundingClientRect();
   const clientX = x - rect.left;
@@ -2838,10 +2872,10 @@ function resetMeshListOpacity(list, pointsSource) {
 const interval = 1
 const Elevated_start = 0.32
 const Elevated_end = 1
-TSys.generateElevated(line_1, 10, interval);
-TSys.generateElevated(sliceCurvePoints(line_2, Elevated_start, Elevated_end), 10, interval);
-TSys.generateElevated(sliceCurvePoints(line_3, Elevated_start+0.02, Elevated_end), 10, interval);
-TSys.generateElevated(line_4, 10, interval);
+// TSys.generateElevated(line_1, 10, interval);
+// TSys.generateElevated(sliceCurvePoints(line_2, Elevated_start, Elevated_end), 10, interval);
+// TSys.generateElevated(sliceCurvePoints(line_3, Elevated_start+0.02, Elevated_end), 10, interval);
+// TSys.generateElevated(line_4, 10, interval);
 
 TSys.generateElevated(JB_d_elevated, 10, interval);
 TSys.generateElevated(JB_u_elevated, 10, interval);
@@ -3060,6 +3094,8 @@ console.log(new THREE.Vector3(5.5, y, -50))
 let group_object = []
 let group_targetObjects = []
 let group_EditNow = 'None'
+let createModeWorldFocused = false
+const createModeHiddenObjects = new Map()
 
 let choice_object = false
 let search_object = false
@@ -3068,6 +3104,51 @@ let move_direction_y = false
 let tiles = []
 let pick_vertexs = [] // カスタムジオメトリ 頂点指定時の格納用
 // search_point();
+
+function setCreateModeWorldFocus(enable) {
+  if (enable) {
+    if (createModeWorldFocused) { return; }
+
+    const keep = new Set([GuideLine, GuideGrid, GuideGrid_Center_x, GuideGrid_Center_z]);
+    targetObjects.forEach((obj) => keep.add(obj));
+    group_object.forEach((obj) => keep.add(obj));
+
+    scene.children.forEach((root) => {
+      if (!root) { return; }
+      if (root.isLight) { return; }
+
+      let keepRoot = false;
+      for (const obj of keep) {
+        let node = obj;
+        while (node) {
+          if (node === root) {
+            keepRoot = true;
+            break;
+          }
+          node = node.parent;
+        }
+        if (keepRoot) { break; }
+      }
+
+      if (keepRoot) { return; }
+      createModeHiddenObjects.set(root, root.visible);
+      root.visible = false;
+    });
+
+    suspendRunTrainAnimations = true;
+    createModeWorldFocused = true;
+    return;
+  }
+
+  if (!createModeWorldFocused) { return; }
+  for (const [obj, wasVisible] of createModeHiddenObjects.entries()) {
+    if (!obj) { continue; }
+    obj.visible = wasVisible;
+  }
+  createModeHiddenObjects.clear();
+  suspendRunTrainAnimations = false;
+  createModeWorldFocused = false;
+}
 
 function getIntersectObjects(){
 
@@ -3519,6 +3600,9 @@ async function handleMouseDown() {
   }
 
   if (structureModeActive) {
+    if (structurePointerBlockedByUI) {
+      return;
+    }
     placeStructurePinnedPin();
     return;
   }
@@ -3929,10 +4013,26 @@ export function UIevent (uiID, toggle){
       edgeTrackNames: { right: edges.right, left: edges.left },
     });
   }
-  }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){
-  console.log( 'poll _active' )
+  }} else if ( uiID === 'tunnel_rect' ){ if ( toggle === 'active' ){
+  console.log( 'tunnel_rect _active' )
+  if (constructionSelectedPins.length < 2) {
+    console.warn('tunnel_rect requires at least 2 selected pins.');
   } else {
-  console.log( 'poll _inactive' )
+    const pins = constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+    TSys.buildStructureFromPins('tunnel_rect', pins, railTrackCurveMap, {
+      innerWidth: 1.7,
+      innerHeight: 2,
+      wallThickness: 0.15,
+      segmentSpacing: 1.2,
+      yOffset: -0.1,
+      color: 0x8b8f94,
+    });
+  }
   }} else if ( uiID === 'move/2' ){ if ( toggle === 'active' ){
   console.log( 'move/2 _active' )
   } else {
@@ -3960,12 +4060,14 @@ export function UIevent (uiID, toggle){
     editObject = 'ORIGINAL'
     targetObjects = group_object
     setMeshListOpacity(targetObjects, 1);
+    setCreateModeWorldFocus(true);
 
   } else {
     console.log( 'creat _inactive' )
     // targetObjects = []
     setMeshListOpacity(targetObjects, 0);
     editObject = 'Standby'
+    setCreateModeWorldFocus(false);
 
   }} else if ( uiID === 'sphere' ){ if ( toggle === 'active' ){
   console.log( 'sphere _active' )

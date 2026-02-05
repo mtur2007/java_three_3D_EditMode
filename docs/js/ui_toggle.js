@@ -108,6 +108,12 @@ function buildUiGroup(uiTree, uiGroup){
     const allKeysMap = ReturnValue[0]
     const orderedKeys = Object.keys(allKeysMap)
     const deepth = allKeysMap
+    const creatPath = allKeysMap['creat'] || null
+    const railPath = allKeysMap['rail'] || null
+    const railRowIndex = orderedKeys.indexOf('rail')
+    const creatRowIndex = orderedKeys.indexOf('creat')
+    const railBaseLeft = Array.isArray(railPath) ? (railPath.length - 1) * 10 : 10
+    const creatBranchOffset = 80
 
     if (!uiGroup) {
         return { allKeysMap, orderedKeys, renameTree: ReturnValue[2] }
@@ -117,9 +123,22 @@ function buildUiGroup(uiTree, uiGroup){
     for (let i = 0; i < orderedKeys.length; i++){
         const key = orderedKeys[i]
         const btn = document.createElement('button')
+        const path = deepth[key]
+        const inCreatBranch = Array.isArray(creatPath)
+          && Array.isArray(path)
+          && creatPath.every((v, idx) => path[idx] === v)
         btn.id = key
-        btn.style.top = ((30 * i) + 10) + 'px'
-        btn.style.left = ((deepth[key].length - 1) * 10) + 'px'
+        const topRow = inCreatBranch && railRowIndex >= 0 && creatRowIndex >= 0
+            ? railRowIndex + (i - creatRowIndex)
+            : i
+        btn.style.top = ((30 * topRow) + 10) + 'px'
+        if (inCreatBranch) {
+            btn.style.left = (railBaseLeft + creatBranchOffset + (path.length - creatPath.length) * 10) + 'px'
+            btn.style.right = 'auto'
+        } else {
+            btn.style.left = ((path.length - 1) * 10) + 'px'
+            btn.style.right = 'auto'
+        }
         btn.textContent = key
         uiGroup.appendChild(btn)
     }
@@ -136,10 +155,6 @@ function connectionUI(uiTree){
     return UIs.Allkeys
 }
 
-
-
-const update = {'new':'', 'move':{'x_z':'', 'y':''}}
-// update = 'id_update'
 const uiTree = {
     'see':'',
 
@@ -158,11 +173,10 @@ const uiTree = {
                     'floor':'',
                     'pillar':'',
                     'rib_bridge':'',
+                    'tunnel_rect':'',
                 }}
             
         },
-        'poll':update,
-
         'creat':{
             'sphere':'',
             'cube':'',
@@ -207,10 +221,6 @@ const uiTree = {
 //     console.log( 'y _active' )
 //     } else {
 //     console.log( 'y _inactive' )
-//     }} else if ( uiID === 'poll' ){ if ( toggle === 'active' ){
-//     console.log( 'poll _active' )
-//     } else {
-//     console.log( 'poll _inactive' )
 //     }} else if ( uiID === 'new/2' ){ if ( toggle === 'active' ){
 //     console.log( 'new/2 _active' )
 //     } else {
