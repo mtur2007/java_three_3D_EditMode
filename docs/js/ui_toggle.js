@@ -178,6 +178,22 @@ const uiTree = {
             
         },
         'creat':{
+            'add_point':{
+                'y_add':''
+            },
+            'move_point':{
+                'x_z_sf':'',
+                'y_sf':''
+            },
+            'construction':{
+                'pillar':{
+                    'Round_bar':'',
+                    'H_beam':'',
+                },
+                'rite':{
+                    'tubular':'',
+                }
+            },
             'sphere':'',
             'cube':'',
             'pick':'',

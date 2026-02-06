@@ -236,6 +236,7 @@ const dirLight = scene.getObjectByName('dirLight');
 
 
 import { TrainSystem } from './train_system.js';
+import { createSteelFrameMode } from './steel_frame_mode.js';
 const TSys = new TrainSystem(scene,dirLight);
 
 // --- ライト追加（初回のみ） ---
@@ -1585,6 +1586,7 @@ const structurePinnedPins = [];
 const constructionSelectedPins = [];
 let lastPointerScreen = null;
 let structurePointerBlockedByUI = false;
+let pointerBlockedByUI = false;
 
 function buildSquareTubeMesh(curves, {
   size = 0.35,
@@ -2752,6 +2754,7 @@ cameraSub.lookAt(0, 0, 0);
 // 物体描画
 const cube_geometry = new THREE.BoxGeometry();
 const cube_material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const steelFrameMode = createSteelFrameMode(scene, cube_geometry, cube_material);
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
@@ -2771,7 +2774,8 @@ function createLine(p1, p2, color = 0xff0000) {
 function handleMouseMove(x, y) {
   const element = canvas;
   const hovered = document.elementFromPoint(x, y);
-  structurePointerBlockedByUI = Boolean(hovered?.closest?.('button'));
+  pointerBlockedByUI = Boolean(hovered?.closest?.('button'));
+  structurePointerBlockedByUI = pointerBlockedByUI;
   // Use bounding rect to correctly account for CSS, padding and page offsets
   const rect = element.getBoundingClientRect();
   const clientX = x - rect.left;
@@ -3035,6 +3039,11 @@ function drawingObject(){
     return;
   }
 
+  if (editObject === 'STEEL_FRAME') {
+    steelFrameMode.setPointsFromTargets(targetObjects);
+    return;
+  }
+
   clean_object(['DeckSlab','Pillar','Rail','OBJECT' + group_EditNow])
   if (targetObjects.length < 2){return}
 
@@ -3074,6 +3083,11 @@ GuideGrid.name = "GuideGrid";
 GuideGrid.position.set(0,0,0);
 scene.add(GuideGrid);
 
+const AddPointGuideGrid = new THREE.GridHelper(5, 10, 0x88aa88, 0x88aa88);
+AddPointGuideGrid.name = 'AddPointGuideGrid';
+AddPointGuideGrid.position.set(0,0,0);
+scene.add(AddPointGuideGrid);
+
 const GuideGrid_Center_x = createLine({x:2,y:0.1,z:0}, {x:-2,y:0.1,z:0}, 0xff0000)
 GuideGrid_Center_x.name = 'GuideLine'
 GuideGrid_Center_x.position.set(0,0,0);
@@ -3085,9 +3099,17 @@ GuideGrid_Center_z.position.set(0,0,0);
 scene.add(GuideGrid_Center_z)
 
 GuideLine.visible = false
-GuideGrid.visible = false
+GuideGrid.visible = true
+AddPointGuideGrid.visible = false
 GuideGrid_Center_x.visible = false
 GuideGrid_Center_z.visible = false
+
+const addPointGridHandle = new THREE.Mesh(
+  new THREE.SphereGeometry(0.25, 8, 8),
+  new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
+);
+addPointGridHandle.name = 'AddPointGridHandle';
+scene.add(addPointGridHandle);
 
 console.log(new THREE.Vector3(5.5, y, -50))
 
@@ -3096,6 +3118,9 @@ let group_targetObjects = []
 let group_EditNow = 'None'
 let createModeWorldFocused = false
 const createModeHiddenObjects = new Map()
+let sinjyukuCity = null
+let addPointGridActive = false
+let addPointGridY = 0
 
 let choice_object = false
 let search_object = false
@@ -3112,6 +3137,13 @@ function setCreateModeWorldFocus(enable) {
     const keep = new Set([GuideLine, GuideGrid, GuideGrid_Center_x, GuideGrid_Center_z]);
     targetObjects.forEach((obj) => keep.add(obj));
     group_object.forEach((obj) => keep.add(obj));
+    if (!sinjyukuCity) {
+      sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+    }
+    if (sinjyukuCity) {
+      keep.add(sinjyukuCity);
+      sinjyukuCity.visible = true;
+    }
 
     scene.children.forEach((root) => {
       if (!root) { return; }
@@ -3146,6 +3178,12 @@ function setCreateModeWorldFocus(enable) {
     obj.visible = wasVisible;
   }
   createModeHiddenObjects.clear();
+  if (!sinjyukuCity) {
+    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+  }
+  if (sinjyukuCity) {
+    sinjyukuCity.visible = false;
+  }
   suspendRunTrainAnimations = false;
   createModeWorldFocused = false;
 }
@@ -3160,6 +3198,61 @@ function getIntersectObjects(){
 };
 
 let TargetDiff = [0,0]
+
+function coord_DisplayTo3DAtCenter(axis) {
+  const prev = { x: mouse.x, y: mouse.y };
+  mouse.x = 0;
+  mouse.y = 0;
+  const point = coord_DisplayTo3D(axis);
+  mouse.x = prev.x;
+  mouse.y = prev.y;
+  return point;
+}
+
+function setGuideGridColor(color) {
+  if (!GuideGrid || !GuideGrid.material) { return; }
+  if (Array.isArray(GuideGrid.material)) {
+    GuideGrid.material.forEach((mat) => mat?.color?.set?.(color));
+  } else if (GuideGrid.material.color) {
+    GuideGrid.material.color.set(color);
+  }
+}
+
+function setAddPointGuideGridColor(color) {
+  if (!AddPointGuideGrid || !AddPointGuideGrid.material) { return; }
+  if (Array.isArray(AddPointGuideGrid.material)) {
+    AddPointGuideGrid.material.forEach((mat) => mat?.color?.set?.(color));
+  } else if (AddPointGuideGrid.material.color) {
+    AddPointGuideGrid.material.color.set(color);
+  }
+}
+
+function setGuideGridVisibleFromUI(visible) {
+  GuideGrid.visible = Boolean(visible);
+}
+
+function setAddPointGuideGridVisibleFromUI(visible) {
+  AddPointGuideGrid.visible = Boolean(visible);
+}
+
+function resetChoiceObjectColor(mesh) {
+  if (!mesh) { return; }
+  if (editObject === 'STEEL_FRAME' && objectEditMode === 'CONSTRUCT') {
+    steelFrameMode.restorePointColor(mesh);
+    return;
+  }
+  if (mesh === addPointGridHandle) {
+    mesh.material.color.set(0xff0000);
+    setAddPointGuideGridColor(0xff0000);
+    return;
+  }
+  if (objectEditMode === 'CONSTRUCT' && !pick_vertexs.includes(mesh.id)) {
+    mesh.material.color.set(0xff0000);
+    return;
+  }
+  mesh.material.color.set(0xff0000);
+}
+
 // 毎フレーム時に実行されるループイベントです
 async function search_point() {
   
@@ -3168,26 +3261,26 @@ async function search_point() {
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
   
-  await sleep(80);
+  await sleep(40);
 
   if (intersects.length > 0) {
     // console.log('hit')
+    console.log(intersects.length)
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
         console.log('green')
-
-        if (objectEditMode === 'CONSTRUCT' && !pick_vertexs.includes(choice_object.id)){
-          choice_object.material.color.set(0xff0000)
-        }
+        resetChoiceObjectColor(choice_object);
 
         GuideLine.visible = false
-        GuideGrid.visible = false
       }
 
       // 物体の取得
       choice_object = intersects[0].object
       choice_object.material.color.set(0x00ff00)
+      if (choice_object === addPointGridHandle) {
+        setAddPointGuideGridColor(0x00ff00);
+      }
 
       console.log(choice_object)
 
@@ -3196,19 +3289,22 @@ async function search_point() {
         GuideLine.visible = true
 
       } else {
-        GuideGrid.position.copy(choice_object.position)
-        GuideGrid.material.color.set(0x88aa88)
         GuideGrid.visible = true
+        if (targetObjects.includes(addPointGridHandle)) {
+          AddPointGuideGrid.position.copy(choice_object.position)
+          setAddPointGuideGridColor(0x88aa88)
+        } else {
+          GuideGrid.position.copy(choice_object.position)
+          GuideGrid.material.color.set(0x88aa88)
+        }
+        // visibility controlled by UIevent
       }
     }
 
   } else {
     // console.log('not hit')
     if (choice_object !== false){
-      if (objectEditMode === 'CONSTRUCT' && !pick_vertexs.includes(choice_object.id)){
-        choice_object.material.color.set(0xff0000)
-      }
-      choice_object.material.color.set(0xff0000)
+      resetChoiceObjectColor(choice_object);
     }
 
     choice_object = false;
@@ -3252,29 +3348,36 @@ async function onerun_search_point() {
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
-        choice_object.material.color.set(0xff0000)
+        resetChoiceObjectColor(choice_object);
         GuideLine.visible = false
-        GuideGrid.visible = false
       }
 
       // 物体の取得
       choice_object = intersects[0].object
       choice_object.material.color.set(0x00ff00)
+      if (choice_object === addPointGridHandle) {
+        setAddPointGuideGridColor(0x00ff00);
+      }
 
       if (move_direction_y){
         GuideLine.position.copy(choice_object.position)
         GuideLine.visible = true
 
       } else {
-        GuideGrid.position.copy(choice_object.position)
-        GuideGrid.material.color.set(0x88aa88)
-        GuideGrid.visible = true
+        if (targetObjects.includes(addPointGridHandle)) {
+          AddPointGuideGrid.position.copy(choice_object.position)
+          setAddPointGuideGridColor(0x88aa88)
+        } else {
+          GuideGrid.position.copy(choice_object.position)
+          GuideGrid.material.color.set(0x88aa88)
+        }
+        // visibility controlled by UIevent
       }
     }
   
 
   } else {
-    if (choice_object !== false){choice_object.material.color.set(0xff0000)}
+    if (choice_object !== false){resetChoiceObjectColor(choice_object)}
     choice_object = false;
 
     dragging = false;
@@ -3295,6 +3398,8 @@ function coord_DisplayTo3D(Axis_num=false){
   let point = []
   if (move_direction_y === false | Axis_num === false){
 
+    console.log('平面' , move_direction_y, Axis_num)
+
     let set_y = 1
     if (Axis_num!=false){ set_y = Axis_num.y}
 
@@ -3302,6 +3407,8 @@ function coord_DisplayTo3D(Axis_num=false){
     const dir = raycaster.ray.direction
 
     const t = Math.abs((pos.y - set_y)/dir.y)
+
+    console.log(pos.x,'t : '+t)
     
     // 交点を計算
     point = new THREE.Vector3(
@@ -3318,8 +3425,15 @@ function coord_DisplayTo3D(Axis_num=false){
     //   point.x = pos_0.x + Math.sin(phi) * phi_rangth
     //   point.z = pos_0.z + Math.cos(phi) * phi_rangth
     // }
-    point.x += TargetDiff[0]
-    point.z += TargetDiff[1]
+
+    console.log('point : '+point.x+', '+point.y+', '+point.z)
+
+    if (objectEditMode != 'CREATE_NEW') {
+      point.x += TargetDiff[0]
+      point.z += TargetDiff[1]
+    }
+
+    console.log('point : '+point.x+', '+point.y+', '+point.z)
 
   } else {
     raycaster.setFromCamera(mouse, camera);
@@ -3511,6 +3625,10 @@ function handleDrag() {
 
   choice_object.position.set(point.x,point.y,point.z)
 
+  if (choice_object === addPointGridHandle) {
+    addPointGridY = choice_object.position.y;
+  }
+
   GuideLine.position.set(point.x,point.y,point.z)
   // GuideLine.visible = true
 
@@ -3559,7 +3677,7 @@ async function handleMouseUp(mobile = false) {
       }
 
       GuideLine.visible = false;
-      GuideGrid.visible = false;
+      // visibility controlled by UIevent
 
       if (editObject === 'RAIL') {
         updateRailPointFromMesh(choice_object);
@@ -3588,6 +3706,7 @@ async function handleMouseUp(mobile = false) {
   
 async function handleMouseDown() {
   if (pause || OperationMode != 1) { return; }
+  if (pointerBlockedByUI) { return; }
 
   console.log('run')
 
@@ -3619,7 +3738,11 @@ async function handleMouseDown() {
   // 新規作成モード
   if (objectEditMode === 'CREATE_NEW') {
 
-    const point = coord_DisplayTo3D();
+    console.log('adding point...')
+
+    const point = (editObject === 'STEEL_FRAME')
+      ? coord_DisplayTo3D({ y: addPointGridY })
+      : coord_DisplayTo3D();
     const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone());
     if (editObject === 'RAIL' || editObject === 'CUSTOM'){
 
@@ -3627,6 +3750,9 @@ async function handleMouseDown() {
       // cube_clone.position.set(5.1567957781852725, 5.786358250355474, 37.50032584968354);
       scene.add(cube_clone);
       targetObjects.push(cube_clone);
+    } else if (editObject === 'STEEL_FRAME') {
+      steelFrameMode.addPoint(point);
+      targetObjects = steelFrameMode.getCurrentPointMeshes();
 
     } else if (editObject === 'ORIGINAL'){
       
@@ -3733,7 +3859,7 @@ async function handleMouseDown() {
 
       GuideLine.visible = true
       if (!move_direction_y){
-        GuideGrid.visible = true
+        // visibility controlled by UIevent
       }
     };
 
@@ -3747,6 +3873,11 @@ async function handleMouseDown() {
       beginDragFromChoice();
     
     } else if (objectEditMode === 'CONSTRUCT'){
+      if (editObject === 'STEEL_FRAME') {
+        steelFrameMode.toggleSelectedPoint(choice_object);
+        console.log('[steel_frame] selected order:', steelFrameMode.getSelectedPointOrder());
+        return;
+      }
       if (pick_vertexs.includes(choice_object.id)){
         setColorsByIds(scene, pick_vertexs, '#ff0000');
         pick_vertexs = []
@@ -4045,6 +4176,11 @@ export function UIevent (uiID, toggle){
   console.log( 'y/2 _active' )
   } else {
   console.log( 'y/2 _inactive' )
+  
+
+
+
+
   }} else if ( uiID === 'creat' ){ if ( toggle === 'active' ){
   console.log( 'creat _active' )
     // const tilt = [
@@ -4056,7 +4192,7 @@ export function UIevent (uiID, toggle){
     // setMeshListOpacity(targetObjects, 1);
 
     // TSys.createTrack(pos,0,0xff0000)
-
+    console.log(search_object)
     editObject = 'ORIGINAL'
     targetObjects = group_object
     setMeshListOpacity(targetObjects, 1);
@@ -4066,8 +4202,146 @@ export function UIevent (uiID, toggle){
     console.log( 'creat _inactive' )
     // targetObjects = []
     setMeshListOpacity(targetObjects, 0);
+    steelFrameMode.clearSelection();
+    steelFrameMode.setActive(false);
     editObject = 'Standby'
     setCreateModeWorldFocus(false);
+
+  }} else if ( uiID === 'add_point' ){ if ( toggle === 'active' ){
+  console.log( 'add_point _active' )
+    editObject = 'STEEL_FRAME'
+    steelFrameMode.clearSelection()
+    objectEditMode = 'CREATE_NEW'
+    search_object = false
+    targetObjects = steelFrameMode.getCurrentPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    addPointGridActive = true
+    addPointGridY = addPointGridY || 0
+    const gridPos = coord_DisplayTo3DAtCenter({ y: addPointGridY });
+    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
+    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    setAddPointGuideGridVisibleFromUI(true);
+  } else {
+  console.log( 'add_point _inactive' )
+    if (editObject === 'STEEL_FRAME') {
+      objectEditMode = 'Standby'
+    }
+    addPointGridActive = false
+    // setGuideGridVisibleFromUI(false)
+  }} else if ( uiID === 'y_add' ){ if ( toggle === 'active' ){
+  console.log( 'y_add _active' )
+    editObject = 'STEEL_FRAME'
+    objectEditMode = 'MOVE_EXISTING'
+    move_direction_y = true
+    search_object = true
+    addPointGridActive = true
+    const gridPos = coord_DisplayTo3DAtCenter({
+      y: addPointGridY,
+      x: addPointGridHandle.position.x || camera.position.x,
+      z: addPointGridHandle.position.z || camera.position.z,
+    });
+    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
+    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    setAddPointGuideGridVisibleFromUI(true);
+    targetObjects = [addPointGridHandle]
+    setMeshListOpacity(targetObjects, 1)
+    search_point()
+  } else {
+  console.log( 'y_add _inactive' )
+    search_object = false
+    move_direction_y = false
+    if (editObject === 'STEEL_FRAME') {
+      objectEditMode = 'CREATE_NEW'
+    }
+  }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
+  console.log( 'move_point _active' )
+    editObject = 'STEEL_FRAME'
+    steelFrameMode.clearSelection()
+    objectEditMode = 'MOVE_EXISTING'
+    targetObjects = steelFrameMode.getCurrentPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+
+  } else {
+  console.log( 'move_point _inactive' )
+    search_object = false
+    move_direction_y = false
+    if (editObject === 'STEEL_FRAME') {
+      objectEditMode = 'Standby'
+    }
+  }} else if ( uiID === 'x_z_sf' ){ if ( toggle === 'active' ){
+  console.log( 'x_z_sf _active' )
+    editObject = 'STEEL_FRAME'
+    move_direction_y = false
+    targetObjects = steelFrameMode.getCurrentPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    search_object = true
+    search_point()
+
+  } else {
+  console.log( 'x_z_sf _inactive' )
+    search_object = false
+  }} else if ( uiID === 'y_sf' ){ if ( toggle === 'active' ){
+  console.log( 'y_sf _active' )
+    editObject = 'STEEL_FRAME'
+    move_direction_y = true
+    targetObjects = steelFrameMode.getCurrentPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    search_object = true
+    search_point()
+
+  } else {
+  console.log( 'y_sf _inactive' )
+    search_object = false
+  }} else if ( uiID === 'construction/2' ){ if ( toggle === 'active' ){
+  console.log( 'construction/2 _active' )
+    editObject = 'STEEL_FRAME'
+    objectEditMode = 'CONSTRUCT'
+    search_object = false
+    targetObjects = steelFrameMode.getAllPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+  } else {
+  console.log( 'construction/2 _inactive' )
+    steelFrameMode.clearSelection()
+    search_object = false
+    move_direction_y = false
+    if (editObject === 'STEEL_FRAME') {
+      objectEditMode = 'Standby'
+    }
+  }} else if ( uiID === 'pillar/2' || uiID === 'pillar' ){ if ( toggle === 'active' ){
+  console.log( uiID + ' _active' )
+  } else {
+  console.log( uiID + ' _inactive' )
+  }} else if ( uiID === 'rite' ){ if ( toggle === 'active' ){
+  console.log( 'rite _active' )
+  } else {
+  console.log( 'rite _inactive' )
+  }} else if ( uiID === 'Round_bar' ){ if ( toggle === 'active' ){
+  console.log( 'Round_bar _active' )
+    steelFrameMode.setSegmentProfile('round')
+    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
+    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
+  } else {
+  console.log( 'Round_bar _inactive' )
+  }} else if ( uiID === 'H_beam' ){ if ( toggle === 'active' ){
+  console.log( 'H_beam _active' )
+    steelFrameMode.setSegmentProfile('h_beam')
+    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
+    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
+  } else {
+  console.log( 'H_beam _inactive' )
+  }} else if ( uiID === 'tubular' ){ if ( toggle === 'active' ){
+  console.log( 'tubular _active' )
+    steelFrameMode.setSegmentProfile('tubular')
+    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
+    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
+  } else {
+  console.log( 'tubular _inactive' )
+
+
+
 
   }} else if ( uiID === 'sphere' ){ if ( toggle === 'active' ){
   console.log( 'sphere _active' )
@@ -4594,6 +4868,9 @@ function animate() {
 
   camera.lookAt(new THREE.Vector3().addVectors(camera.position, direction));
   updateStructureHover();
+  if (addPointGridActive) {
+    // visibility controlled by UIevent
+  }
 
   // メインカメラ：プレビュー時は canvas の描画バッファサイズに合わせる
   const isIntro = canvas.classList.contains('intro-canvas');

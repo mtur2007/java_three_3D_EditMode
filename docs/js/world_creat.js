@@ -270,6 +270,19 @@ loadModelToScene('map.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarg
     alert('モデル読み込みに失敗しました。コンソールを確認してください。');
   });
 
+// creat モード用の都市マップ（map.glb と同じ読み込み方法）
+loadModelToScene('sinjyuku.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
+  .then((root) => {
+    root.name = 'sinjyuku_city';
+    root.position.y = 0;
+    root.visible = false;
+    console.log('GLB loaded and added to scene:', root);
+  })
+  .catch((err) => {
+    console.error('モデルの読み込みで失敗:', err);
+    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+  });
+
 // --- 駅舎作成 ---
 
 const ceiling_Spacing = (train_width+car_Spacing) +2
