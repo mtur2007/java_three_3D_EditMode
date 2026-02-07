@@ -183,6 +183,7 @@ const uiTree = {
                 'y_add':'',
                 'guide':''
             },
+            'rotation':'',
             'move_point':{
                 'x_z_sf':'',
                 'y_sf':'',

@@ -156,6 +156,30 @@
     /* canvas 内に移動した UI 要素はこれを付与して操作可能にする */
     .canvas-ui { pointer-events: auto; }
   </style>
+  <style>
+    /* UiGroup tooltip */
+    #UiGroup { position: fixed; }
+    .ui-tooltip {
+      position: absolute;
+      z-index: 2147483647;
+      padding: 6px 8px;
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.3;
+      border-radius: 6px;
+      white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(2px);
+      transition: opacity 120ms ease, transform 120ms ease;
+    }
+    .ui-tooltip.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
 
   <style>
     /* 拡大表示時に canvas のみ表示するクラス */
@@ -381,6 +405,26 @@
     height: 28px;
   }
 
+  .edit-guide {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .edit-guide .guide-block {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .edit-guide .guide-block h3 {
+    margin: 0 0 8px 0;
+    font-size: 15px;
+  }
+  .edit-guide .guide-block ul {
+    margin: 0 0 0 18px;
+    line-height: 1.7;
+  }
+
   #guide-window {
     position: fixed;
     right: 20px;
@@ -521,11 +565,27 @@
                 <h3 style="margin-top:0;">操作説明</h3>
                 <ul>
                   [視点] 画面上をスライド/ドラッグで視点を回転・移動します。<br>
-                  [移動] 左下のコントローラで前後左右に移動できます。<br>
+                  [移動] 左下のコントローラ 又は A.S.D.W キーで 前後左右に移動できます。<br>
                   [表示切替] 右上のボタンで列車ビュー等を切替えます。<br>
                   [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
                 </ul>
                 <p style="margin-bottom:0;">※ モバイルでは画面を長押しするとズームします。</p>
+              </div>
+
+              <div id="rotation-panel" role="region" aria-label="回転パネル" style="position: fixed; right: 20px; top: 120px; width: 220px; padding: 12px; background: rgba(255,255,255,0.92); border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.25); z-index: 10002; display: none; pointer-events: auto;">
+                <div style="font-size: 12px; font-weight: 700; margin-bottom: 8px;">Rotation</div>
+                <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
+                  <label style="font-size: 11px; color: #b23b3b;">X (deg)
+                    <input id="rotation-input-x" type="number" step="1" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
+                  </label>
+                  <label style="font-size: 11px; color: #2f8f57;">Y (deg)
+                    <input id="rotation-input-y" type="number" step="1" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
+                  </label>
+                  <label style="font-size: 11px; color: #2f6fb8;">Z (deg)
+                    <input id="rotation-input-z" type="number" step="1" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
+                  </label>
+                </div>
+                <button id="rotation-apply" style="margin-top: 8px; width: 100%; padding: 6px 8px;">適用</button>
               </div>
 
               <div id="guide-window" role="region" aria-label="配置ガイド">
@@ -559,7 +619,7 @@
             <h2 style="margin:0 0 8px 0; font-size:18px;">操作説明</h2>
             <ul>
                   [視点] 画面上をスライド/ドラッグで視点を回転・移動します。<br>
-                  [移動] 左下のコントローラで前後左右に移動できます。<br>
+                  [移動] 左下のコントローラ 又は A.S.D.W キーで 前後左右に移動できます。<br>
                   [表示切替] 右上のボタンで列車ビュー等を切替えます。<br>
                   [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
             </ul>
@@ -585,14 +645,38 @@
     <div style="width: 80%; max-width: 960px; background: rgba(255,255,255,0.06); padding: 24px; border-radius: 12px; backdrop-filter: blur(6px); color: white;"> 
       <h1 style="margin-top: 0;">編集モードの説明</h1>
       
-      <p>このモードでは、路線編集・構造物生成・ピン配置ができます。</p>
-      <ul style="margin: 8px 0 16px 18px; line-height: 1.7;">
-        <li><strong>🛠️ edit</strong>: 編集モードの開始。</li>
-        <li><strong>🛤️ rail</strong>: 軌道表示・制御点編集（move / x_z / y）。</li>
-        <li><strong>🌉 structure → new</strong>: 軌道上にピンを追加。</li>
-        <li><strong>🏗️ construction</strong>: 追加したピンを選択し、bridge / elevated / wall / floor / pillar / rib_bridge を生成。</li>
-        <li><strong>ピン保存</strong>: 現在のピン配置を `structure.json` として保存。</li>
-      </ul>
+      <p>このモードでは、線路の形状の編集、構造物の配置から作成まで行えます。<br>以下は <strong>edit</strong> と <strong>creat</strong> で分けた説明です。</p>
+
+      <div class="edit-guide">
+        <div class="guide-block">
+          <h3>edit（編集）/ 軌道の編集や、橋・トンネルといった構造物の生成を簡単に行えるモード</h3>
+          <ul>
+            <li><strong>🛠️ edit</strong>: 編集モードの開始。以降のタップ/クリックは編集動作になります。</li>
+            <li><strong>🛤️ rail</strong>: 軌道編集モード。`new` で制御点追加、`move` で点移動、`x_z`/`y` で移動平面を切替。</li>
+            <li><strong>🌉 structure → new</strong>: 軌道上にピンを追加。</li>
+            <li><strong>🏗️ construction</strong>: 追加したピンを選択して bridge / elevated / wall / floor / pillar / rib_bridge を生成。</li>
+            <li><strong>軌道保存 / ピン保存</strong>: 現在の軌道・ピン配置を保存します。</li>
+          </ul>
+        </div>
+
+        <div class="guide-block">
+          <h3>creat（作成）/ 鉄骨や板材、電光掲示板などを自由に配置し、駅や構築物をモデリングするモード</h3>
+          <ul>
+            <li><strong>creat → view</strong>: クリエイト系の表示切替。</li>
+            <li><strong>creat → add_point</strong>: 点の追加モード。タップで点を生成し、軌道として結びます。</li>
+            <li><strong>add_point → y_add</strong>: 高さ方向（Y）だけを移動する補助モード。</li>
+            <li><strong>add_point → guide</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
+            <li><strong>guide のホバー</strong>: ガイド軌道にホバー中はガイド色が変化し、ピンが表示されます。</li>
+            <li><strong>add_point のガイド配置</strong>: ガイド軌道に当たっている間は、その軌道上に点を打てます。</li>
+            <li><strong>creat → construction</strong>: 追加した点を選択して `pillar` / `rite` などの部材を選択して生成。</li>
+            <li><strong>move_point</strong>: 既存の点を移動。`x_z_sf`/`y_sf` で移動平面切替。</li>
+            <li><strong>rotation</strong>: 複数点を選択すると中心にギズモ表示。リングドラッグで点の位置だけ回転。</li>
+            <li><strong>rotation panel</strong>: X/Y/Z の角度を入力して絶対角度で回転。表示は現在角度を薄く表示。</li>
+          </ul>
+        </div>
+      </div>
+
+      <p style="margin: 0 0 12px 0; opacity:0.85;">ポイント: `add_point` を有効にするとガイド判定やガイドチューブが有効になります。`move` 中はガイドホバーは停止します。</p>
       
       <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
         <div id="intro-wrapper" style="flex: 1 1 480px; max-width: 640px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 8px; display:flex; align-items:center; justify-content:center; position: relative;">
@@ -637,7 +721,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     ],
     [
       { text: '</whiteようこそ — 三次元模型デモ', mode: 'static' },
-      { text: '</orangeまずは縮小プレビューで操作感をお試しください。', mode: 'scroll' },
+      { text: '</orange模型の表示はもちろん、編集も可能です。', mode: 'scroll' },
+      { text: '', mode: 'static' },
+    ],
+    [
+      { text: '</whiteようこそ — 三次元模型デモ', mode: 'static' },
+      { text: '</orange編集については下部をご覧ください。', mode: 'scroll' },
       { text: '', mode: 'static' },
     ],
     [
@@ -689,6 +778,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let queue = [];
   let currentIndex = -1;
+  const INTRO_COUNT = 3; // 最初に順番で流すセット数
+  let introIndex = 0;
 
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -707,6 +798,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   function pickNextIndex() {
     if (messageSets.length === 0) return -1;
     if (messageSets.length === 1) return 0;
+
+    // 最初の3セットは順番固定
+    if (introIndex < Math.min(INTRO_COUNT, messageSets.length)) {
+      return introIndex++;
+    }
+
     if (queue.length === 0) refillQueue();
     return queue.shift();
   }
@@ -868,6 +965,174 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   playNext();
+});
+</script>
+
+<script>
+window.addEventListener('load', () => {
+  const group = document.getElementById('UiGroup');
+  if (!group) return;
+
+  let tooltip = document.getElementById('ui-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'ui-tooltip';
+    tooltip.className = 'ui-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    const uiRoot = document.getElementById('three-ui') || document.body;
+    uiRoot.appendChild(tooltip);
+  }
+
+  const labelsById = {
+    'see': '鑑賞モード',
+    'edit': '編集モード',
+    'rail': 'レール編集',
+    'creat': 'クリエイトモード',
+    'custom': 'カスタム編集',
+
+    'view': 'プレビュー表示',
+    'add_point': 'ポイント追加',
+    'y_add': '生成時の高さの変更',
+    'guide': '生成サポーターの追加',
+    'rotation': '回転',
+    'move_point': 'ポイント移動',
+    'x_z': '平面(XZ軸) 移動',
+    'y': '垂直(Y軸) 移動',
+    'x_z_sf': '平面(XZ軸) 微調整',
+    'y_sf': '垂直(Y軸) 微調整',
+    'construction/2': '構造物生成',
+
+    'structure': '構造物メニュー',
+    'construction': '構造物生成',
+    'bridge': '橋梁',
+    'elevated': '高架',
+    'wall': '壁',
+    'floor': '床',
+    'pillar': '柱',
+    'rib_bridge': 'リブ橋',
+    'tunnel_rect': '矩形トンネル',
+
+    'Round_bar': '丸鋼',
+    'H_beam': 'H形鋼',
+    'rite': 'ライト',
+    'tubular': '管',
+
+    'new': '新規',
+    'move': '移動',
+    'construct': '構築',
+    'new/2': '新規 (構造物)',
+    'move/2': '移動 (カスタム)',
+    'x_z/2': '平面(XZ軸) 移動 (カスタム)',
+    'y/2': '垂直(Y軸) 移動 (カスタム)',
+  };
+
+  let pressTimer = null;
+  let activeBtn = null;
+
+  function showTooltip(btn) {
+    const label = labelsById[btn.id] || btn.getAttribute('aria-label') || '説明未設定';
+    tooltip.textContent = label;
+
+    const btnRect = btn.getBoundingClientRect();
+    const left = btnRect.right + 6;
+    const top = btnRect.bottom + 6;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+    tooltip.style.position = 'fixed';
+    tooltip.style.opacity = '1';
+    tooltip.style.transform = 'translateY(0)';
+
+    tooltip.classList.add('is-visible');
+  }
+
+  function hideTooltip() {
+    tooltip.style.opacity = '';
+    tooltip.style.transform = '';
+    tooltip.classList.remove('is-visible');
+  }
+
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+
+  function getBtnFromEvent(e) {
+    const btn = e.target.closest?.('button');
+    if (!btn || !group.contains(btn)) return null;
+    return btn;
+  }
+
+  group.addEventListener('pointerover', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = btn;
+    showTooltip(btn);
+  });
+
+  group.addEventListener('pointerout', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = null;
+    hideTooltip();
+  });
+
+  group.addEventListener('pointerdown', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = btn;
+    clearPressTimer();
+    pressTimer = setTimeout(() => {
+      showTooltip(btn);
+    }, 450);
+  });
+
+  group.addEventListener('pointerup', () => {
+    clearPressTimer();
+    if (!activeBtn) return;
+    hideTooltip();
+  });
+
+  group.addEventListener('pointercancel', () => {
+    clearPressTimer();
+    if (!activeBtn) return;
+    hideTooltip();
+  });
+
+  // Fallback for environments where pointer events are not reliable
+  group.addEventListener('mouseover', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = btn;
+    showTooltip(btn);
+  });
+  group.addEventListener('mouseout', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = null;
+    hideTooltip();
+  });
+  group.addEventListener('touchstart', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    activeBtn = btn;
+    clearPressTimer();
+    pressTimer = setTimeout(() => {
+      showTooltip(btn);
+    }, 450);
+  }, { passive: true });
+
+  // Click fallback (debug / desktop)
+  group.addEventListener('click', (e) => {
+    const btn = getBtnFromEvent(e);
+    if (!btn) return;
+    showTooltip(btn);
+    setTimeout(() => {
+      if (activeBtn === btn) return;
+      hideTooltip();
+    }, 1200);
+  });
 });
 </script>
 

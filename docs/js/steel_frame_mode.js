@@ -282,6 +282,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return out;
   }
 
+  function getSelectedPointMeshes() {
+    return selectedPoints.slice();
+  }
+
   function getSelectedPointOrder() {
     return selectedPoints.map((mesh, idx) => ({
       order: idx + 1,
@@ -352,6 +356,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     addPoint,
     clearSelection,
     getAllPointMeshes,
+    getSelectedPointMeshes,
     getCurrentPointMeshes,
     getGeneratedRecords,
     getPointMeshes: getCurrentPointMeshes,

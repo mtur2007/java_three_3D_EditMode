@@ -79,6 +79,11 @@ const threeUi = document.getElementById('three-ui');
   const showInstructionsBtn = document.getElementById('show-instructions-btn');
   const instructionsPanel = document.getElementById('instructions-panel');
   const guideWindow = document.getElementById('guide-window');
+  const rotationPanel = document.getElementById('rotation-panel');
+  const rotationInputX = document.getElementById('rotation-input-x');
+  const rotationInputY = document.getElementById('rotation-input-y');
+  const rotationInputZ = document.getElementById('rotation-input-z');
+  const rotationApplyBtn = document.getElementById('rotation-apply');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
@@ -116,6 +121,57 @@ const threeUi = document.getElementById('three-ui');
         }
       }
     });
+  }
+
+  function applyRotationFromPanel() {
+    const meshes = getRotateSelectionMeshes();
+    if (meshes.length < 1) { return; }
+    const degToRad = Math.PI / 180;
+    const xRaw = rotationInputX?.value?.trim?.() ?? '';
+    const yRaw = rotationInputY?.value?.trim?.() ?? '';
+    const zRaw = rotationInputZ?.value?.trim?.() ?? '';
+    const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : rotatePanelState.angles.x;
+    const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : rotatePanelState.angles.y;
+    const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : rotatePanelState.angles.z;
+    const dx = axDeg - rotatePanelState.angles.x;
+    const dy = ayDeg - rotatePanelState.angles.y;
+    const dz = azDeg - rotatePanelState.angles.z;
+    rotatePanelState.angles = { x: axDeg, y: ayDeg, z: azDeg };
+
+    const center = new THREE.Vector3();
+    meshes.forEach((m) => center.add(m.position));
+    center.multiplyScalar(1 / meshes.length);
+
+    const rotateByAxis = (axis, rad) => {
+      if (Math.abs(rad) < 1e-6) return;
+      meshes.forEach((m) => {
+        const offset = m.position.clone().sub(center);
+        offset.applyAxisAngle(axis, rad);
+        m.position.copy(center.clone().add(offset));
+      });
+    };
+
+    rotateByAxis(new THREE.Vector3(1, 0, 0), dx * degToRad);
+    rotateByAxis(new THREE.Vector3(0, 1, 0), dy * degToRad);
+    rotateByAxis(new THREE.Vector3(0, 0, 1), dz * degToRad);
+
+    if (rotationInputX) {
+      rotationInputX.value = '';
+      rotationInputX.placeholder = String(axDeg);
+    }
+    if (rotationInputY) {
+      rotationInputY.value = '';
+      rotationInputY.placeholder = String(ayDeg);
+    }
+    if (rotationInputZ) {
+      rotationInputZ.value = '';
+      rotationInputZ.placeholder = String(azDeg);
+    }
+    updateRotateGizmo();
+  }
+
+  if (rotationApplyBtn) {
+    rotationApplyBtn.addEventListener('click', applyRotationFromPanel);
   }
 
   let guidePlacementTemplate = null;
@@ -3215,6 +3271,7 @@ async function onerun_search_point() {
     setGuideHoverPin(null);
 
     dragging = false;
+    invalid = false;
     GuideLine.visible = false
     GuideGrid.visible = false
   }  
@@ -3446,7 +3503,13 @@ function getPositionById(scene, id, space = 'world') {
 }
 
 let dragging = false;
+let efficacy = true;
+
 function handleDrag() {
+  if (rotateDragging) {
+    updateRotateDrag();
+    return;
+  }
   if (dragging != true) { return }
 
   let point = 0
@@ -3483,12 +3546,19 @@ function handleDrag() {
 async function handleMouseUp(mobile = false) {
 
   if (pause){return};
+  if (rotateDragging) {
+    rotateDragging = false;
+    updateRotateGizmo();
+    efficacy = true;
+    return;
+  }
 
   if (OperationMode === 1 && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === 'CONSTRUCT')){
   
     if (dragging != false){
       
       dragging = false;
+      efficacy = true;
 
       // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
       let point= 0
@@ -3531,6 +3601,7 @@ async function handleMouseUp(mobile = false) {
       choice_object = false; // Deselect the object
 
       dragging = false
+      efficacy = true
 
       if (!mobile){
         search_point();
@@ -3558,6 +3629,22 @@ async function handleMouseDown() {
       return;
     }
     placeStructurePinnedPin();
+    return;
+  }
+
+  if (objectEditMode === ROTATE_MODE) {
+    raycaster.setFromCamera(mouse, camera);
+    const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
+    if (gizmoHit) {
+      beginRotateDrag(gizmoHit.object);
+      return;
+    }
+    const hits = getIntersectObjects();
+    const hit = hits.find((h) => h?.object?.userData?.steelFramePoint);
+    if (hit?.object) {
+      steelFrameMode.toggleSelectedPoint(hit.object);
+      updateRotateGizmo();
+    }
     return;
   }
   
@@ -3718,6 +3805,7 @@ async function handleMouseDown() {
       choice_object.material.color.set(0x0000ff)
 
       dragging = true;
+      efficacy = false;
       console.log('dragging started');
 
       GuideLine.visible = true
@@ -3782,6 +3870,123 @@ let editObject = 'Standby'
 // let trackEditSubMode = 'CREATE_NEW'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 let objectEditMode = 'Standby'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 const EDIT_RAIL = 'EDIT_RAIL';
+const ROTATE_MODE = 'ROTATE';
+
+let rotateGizmoGroup = null;
+const rotateGizmoMeshes = [];
+let rotateDragging = false;
+let rotateAxis = new THREE.Vector3(0, 1, 0);
+let rotateCenter = new THREE.Vector3();
+let rotateStartVector = new THREE.Vector3();
+let rotateStartPositions = [];
+const rotatePlane = new THREE.Plane();
+let rotatePanelState = {
+  idsKey: '',
+  angles: { x: 0, y: 0, z: 0 },
+};
+
+function ensureRotateGizmo() {
+  if (rotateGizmoGroup) { return; }
+  rotateGizmoGroup = new THREE.Group();
+  rotateGizmoGroup.name = 'RotateGizmo';
+
+  const ringRadius = 1;
+  const ringTube = 0.03;
+  const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
+
+  const makeRing = (color, axis) => {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.userData = { ...(mesh.userData || {}), isRotateGizmo: true, axis };
+    rotateGizmoGroup.add(mesh);
+    rotateGizmoMeshes.push(mesh);
+    return mesh;
+  };
+
+  const ringX = makeRing(0xff5c5c, new THREE.Vector3(1, 0, 0));
+  ringX.rotation.y = Math.PI / 2;
+  const ringY = makeRing(0x5cff88, new THREE.Vector3(0, 1, 0));
+  ringY.rotation.x = Math.PI / 2;
+  const ringZ = makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1));
+
+  rotateGizmoGroup.visible = false;
+  scene.add(rotateGizmoGroup);
+}
+
+function getRotateSelectionMeshes() {
+  if (!steelFrameMode?.getSelectedPointMeshes) { return []; }
+  return steelFrameMode.getSelectedPointMeshes();
+}
+
+function updateRotateGizmo() {
+  ensureRotateGizmo();
+  const meshes = getRotateSelectionMeshes();
+  if (objectEditMode !== ROTATE_MODE || meshes.length < 2) {
+    rotateGizmoGroup.visible = false;
+    return;
+  }
+  const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',');
+  if (rotatePanelState.idsKey !== idsKey) {
+    rotatePanelState.idsKey = idsKey;
+    const baseCenter = new THREE.Vector3();
+    meshes.forEach((m) => baseCenter.add(m.position));
+    baseCenter.multiplyScalar(1 / meshes.length);
+    rotatePanelState.angles = { x: 0, y: 0, z: 0 };
+    if (rotationInputX) rotationInputX.value = '';
+    if (rotationInputY) rotationInputY.value = '';
+    if (rotationInputZ) rotationInputZ.value = '';
+    if (rotationInputX) rotationInputX.placeholder = '0';
+    if (rotationInputY) rotationInputY.placeholder = '0';
+    if (rotationInputZ) rotationInputZ.placeholder = '0';
+  }
+  const center = new THREE.Vector3();
+  meshes.forEach((m) => center.add(m.position));
+  center.multiplyScalar(1 / meshes.length);
+  rotateCenter.copy(center);
+
+  let maxDist = 1.2;
+  meshes.forEach((m) => {
+    const d = m.position.distanceTo(center);
+    if (d > maxDist) maxDist = d;
+  });
+  rotateGizmoGroup.position.copy(center);
+  const scale = Math.max(1.2, maxDist * 1.2);
+  rotateGizmoGroup.scale.setScalar(scale);
+  rotateGizmoGroup.visible = true;
+}
+
+function beginRotateDrag(axisMesh) {
+  const meshes = getRotateSelectionMeshes();
+  if (meshes.length < 2) { return; }
+  rotateAxis = axisMesh.userData.axis.clone();
+  rotateCenter = rotateGizmoGroup.position.clone();
+  rotatePlane.setFromNormalAndCoplanarPoint(rotateAxis, rotateCenter);
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(rotatePlane, hit);
+  if (!ok) { return; }
+  rotateStartVector.copy(hit).sub(rotateCenter).normalize();
+  rotateStartPositions = meshes.map((m) => ({ mesh: m, pos: m.position.clone() }));
+  rotateDragging = true;
+  efficacy = false;
+}
+
+function updateRotateDrag() {
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(rotatePlane, hit);
+  if (!ok) { return; }
+  const current = hit.clone().sub(rotateCenter).normalize();
+  const cross = new THREE.Vector3().crossVectors(rotateStartVector, current);
+  const dot = rotateStartVector.dot(current);
+  const angle = Math.atan2(cross.dot(rotateAxis), dot);
+
+  rotateStartPositions.forEach(({ mesh, pos }) => {
+    const offset = pos.clone().sub(rotateCenter);
+    offset.applyAxisAngle(rotateAxis, angle);
+    mesh.position.copy(rotateCenter.clone().add(offset));
+  });
+}
 
 // Ensure resize uses unified handler
 window.addEventListener('resize', onWindowResize, false);
@@ -3793,6 +3998,7 @@ export function UIevent (uiID, toggle){
     search_object = false
     choice_object = false
     dragging = false
+    efficacy = true
     setMeshListOpacity(targetObjects, 0.0);
 
   } else {
@@ -4096,8 +4302,10 @@ export function UIevent (uiID, toggle){
     AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
     setAddPointGuideGridVisibleFromUI(true);
     search_point();
+    guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
   } else {
   console.log( 'add_point _inactive' )
+    search_object = false
     steelFrameMode.setAllowPointAppend(false)
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
@@ -4106,6 +4314,7 @@ export function UIevent (uiID, toggle){
     guideRailHover = null
     // setGuideGridVisibleFromUI(false)
     setAddPointGuideGridVisibleFromUI(false);
+    guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = false; });
 
   }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
   console.log( 'guide _active' )
@@ -4161,6 +4370,33 @@ export function UIevent (uiID, toggle){
       setAddPointGuideGridVisibleFromUI(true);
     }
     // setAddPointGuideGridVisibleFromUI(false);
+
+  }} else if ( uiID === 'rotation' ){ if ( toggle === 'active' ){
+  console.log( 'rotation _active' )
+    editObject = 'STEEL_FRAME'
+    objectEditMode = ROTATE_MODE
+    search_object = true
+    steelFrameMode.setAllowPointAppend(false)
+    targetObjects = steelFrameMode.getAllPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    updateRotateGizmo()
+    if (rotationPanel) {
+      rotationPanel.style.display = 'block';
+    }
+    search_point()
+  } else {
+  console.log( 'rotation _inactive' )
+    rotateDragging = false
+    if (rotateGizmoGroup) {
+      rotateGizmoGroup.visible = false;
+    }
+    if (rotationPanel) {
+      rotationPanel.style.display = 'none';
+    }
+    if (editObject === 'STEEL_FRAME') {
+      objectEditMode = 'Standby'
+    }
 
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
@@ -4506,7 +4742,7 @@ document.addEventListener('touchmove', (e) => {
   handleMouseMove(touch.clientX, touch.clientY);
 
   // 視点
-  if (e.touches.length === 1 && dragging === false) {
+  if (e.touches.length === 1 && efficacy) {
     if (ctrl_id === null){
       const dx = lastPosition1.x - e.touches[0].clientX;
       const dy = lastPosition1.y - e.touches[0].clientY;
@@ -4533,7 +4769,7 @@ document.addEventListener('touchmove', (e) => {
       ctrl_ui.style.top = ctrlY - Math.cos(ctrl_angle) * Math.min(40, range) + 'px';
 
     }
-  } else if (e.touches.length >= 2 && dragging === false) {
+  } else if (e.touches.length >= 2 && efficacy) {
 
     if (ctrl_id===null){return}
     // if (e.changedTouches[1].identifier === ctrl_id){alert('ctrl1')}
