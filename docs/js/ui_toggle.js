@@ -178,6 +178,7 @@ const uiTree = {
             
         },
         'creat':{
+            'view':'',
             'add_point':{
                 'y_add':''
             },
