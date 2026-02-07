@@ -120,6 +120,8 @@ const threeUi = document.getElementById('three-ui');
 
   let guidePlacementTemplate = null;
   let guidePlacementActive = false;
+  let guideRailHover = null;
+  let guideHoverPin = null;
 
   function buildGuideCurve(template, basePoint) {
     const y = basePoint.y;
@@ -141,6 +143,56 @@ const threeUi = document.getElementById('three-ui');
     }
     const points = offsets.map((o) => new THREE.Vector3(basePoint.x + o[0], y + o[1], basePoint.z + o[2]));
     return new THREE.CatmullRomCurve3(points);
+  }
+
+  const guideRailPickMeshes = [];
+
+  function createGuideRailPickMesh(curve) {
+    const tube = new THREE.TubeGeometry(curve, 60, 0.45, 10, false);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x6d86ff,
+      transparent: true,
+      opacity: 0.35,
+    });
+    const mesh = new THREE.Mesh(tube, mat);
+    mesh.name = 'GuideRailPick';
+    mesh.userData.isGuideRail = true;
+    mesh.userData.guideCurve = curve;
+    scene.add(mesh);
+    guideRailPickMeshes.push(mesh);
+    return mesh;
+  }
+
+  function setGuideHoverPin(position) {
+    if (!position) {
+      if (guideHoverPin && guideHoverPin.parent) {
+        guideHoverPin.parent.remove(guideHoverPin);
+      }
+      guideHoverPin = null;
+      return;
+    }
+    if (!guideHoverPin) {
+      guideHoverPin = TSys.Map_pin(position.x, position.z, position.y, 0.12, 0x2ecc71);
+      guideHoverPin.name = 'GuideHoverPin';
+      guideHoverPin.userData = { ...guideHoverPin.userData, guideHoverPin: true };
+      scene.add(guideHoverPin);
+    } else {
+      guideHoverPin.position.set(position.x, position.y, position.z);
+    }
+  }
+
+  function getNearestPointOnCurve(curve, point, samples = 120) {
+    let nearest = null;
+    let minDist = Infinity;
+    for (let i = 0; i <= samples; i += 1) {
+      const p = curve.getPointAt(i / samples);
+      const d = p.distanceToSquared(point);
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
+      }
+    }
+    return nearest;
   }
 
   function activateGuidePlacement(template) {
@@ -2928,6 +2980,10 @@ function getIntersectObjects(){
   raycaster.setFromCamera(mouse, camera);
 
   // その光線とぶつかったオブジェクトを得る
+  if (editObject === 'STEEL_FRAME' || guidePlacementActive) {
+    const list = targetObjects.concat(guideRailPickMeshes);
+    return raycaster.intersectObjects(list, true);
+  }
   return raycaster.intersectObjects(targetObjects, true);
 };
 
@@ -2998,6 +3054,24 @@ async function search_point() {
   await sleep(40);
 
   if (intersects.length > 0) {
+    const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
+    if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
+      guideRailHover = null;
+      setGuideHoverPin(null);
+    } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
+      const curve = guideHit.object.userData.guideCurve;
+      const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
+      guideRailHover = nearest ? { curve, point: nearest } : null;
+      if (guideRailHover) {
+        GuideGrid.visible = true;
+        GuideGrid.position.copy(guideRailHover.point);
+        GuideGrid.material.color.set(0x88aa88);
+        setGuideHoverPin(guideRailHover.point);
+      }
+    } else {
+      guideRailHover = null;
+      setGuideHoverPin(null);
+    }
     // console.log('hit')
     console.log(intersects.length)
     if (choice_object != intersects[0].object){
@@ -3016,6 +3090,7 @@ async function search_point() {
         setAddPointGuideGridColor(0x00ff00);
       }
 
+      console.log('color set')
       console.log(choice_object)
 
       if (move_direction_y){
@@ -3044,6 +3119,8 @@ async function search_point() {
     }
 
     choice_object = false;
+    guideRailHover = null;
+    setGuideHoverPin(null);
     // dragging = false;
     GuideLine.visible = false
     GuideGrid.visible = false
@@ -3081,6 +3158,24 @@ async function onerun_search_point() {
   }
 
   if (intersects.length > 0) {
+    const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
+    if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
+      guideRailHover = null;
+      setGuideHoverPin(null);
+    } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
+      const curve = guideHit.object.userData.guideCurve;
+      const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
+      guideRailHover = nearest ? { curve, point: nearest } : null;
+      if (guideRailHover) {
+        GuideGrid.visible = true;
+        GuideGrid.position.copy(guideRailHover.point);
+        GuideGrid.material.color.set(0x88aa88);
+        setGuideHoverPin(guideRailHover.point);
+      }
+    } else {
+      guideRailHover = null;
+      setGuideHoverPin(null);
+    }
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
@@ -3116,6 +3211,8 @@ async function onerun_search_point() {
   } else {
     if (choice_object !== false){resetChoiceObjectColor(choice_object)}
     choice_object = false;
+    guideRailHover = null;
+    setGuideHoverPin(null);
 
     dragging = false;
     GuideLine.visible = false
@@ -3483,12 +3580,32 @@ async function handleMouseDown() {
       const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
       const name = `GuideRail_${Date.now()}`;
       TSys.createTrack(curve, 0, 0x00ff00, name);
+      createGuideRailPickMesh(curve);
+      if (editObject === 'STEEL_FRAME') {
+        targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
+        setMeshListOpacity(targetObjects, 1);
+      }
       return;
     }
 
-    const point = (editObject === 'STEEL_FRAME')
+    let guideSnapPoint = null;
+    if (editObject === 'STEEL_FRAME') {
+      const intersects = getIntersectObjects();
+      const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
+      if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
+        const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
+        if (nearest) {
+          guideSnapPoint = nearest.clone();
+        }
+      }
+    }
+
+    let point = (editObject === 'STEEL_FRAME')
       ? coord_DisplayTo3D({ y: addPointGridY })
       : coord_DisplayTo3D({ y: addPointGridY });
+    if (guideSnapPoint) {
+      point = guideSnapPoint;
+    }
     const cube_clone = new THREE.Mesh(cube_geometry, cube_material.clone());
     if (editObject === 'RAIL' || editObject === 'CUSTOM'){
 
@@ -3498,7 +3615,7 @@ async function handleMouseDown() {
       targetObjects.push(cube_clone);
     } else if (editObject === 'STEEL_FRAME') {
       steelFrameMode.addPoint(point);
-      targetObjects = steelFrameMode.getCurrentPointMeshes();
+      targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
 
     } else if (editObject === 'ORIGINAL'){
       
@@ -3968,8 +4085,8 @@ export function UIevent (uiID, toggle){
     editObject = 'STEEL_FRAME'
     steelFrameMode.setAllowPointAppend(true)
     objectEditMode = 'CREATE_NEW'
-    search_object = false
-    targetObjects = steelFrameMode.getCurrentPointMeshes()
+    search_object = true
+    targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes)
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     addPointGridActive = true
@@ -3978,6 +4095,7 @@ export function UIevent (uiID, toggle){
     addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
     AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
     setAddPointGuideGridVisibleFromUI(true);
+    search_point();
   } else {
   console.log( 'add_point _inactive' )
     steelFrameMode.setAllowPointAppend(false)
@@ -3985,6 +4103,7 @@ export function UIevent (uiID, toggle){
       objectEditMode = 'Standby'
     }
     addPointGridActive = false
+    guideRailHover = null
     // setGuideGridVisibleFromUI(false)
     setAddPointGuideGridVisibleFromUI(false);
 
@@ -3998,6 +4117,12 @@ export function UIevent (uiID, toggle){
     if (guideWindow) {
       guideWindow.style.display = 'none';
     }
+    guidePlacementTemplate = null;
+    guidePlacementActive = false;
+    guideRailHover = null;
+    setGuideHoverPin(null);
+    // guide を閉じたら add_point の状態を再適用する
+    UIevent('add_point', 'active');
 
   }} else if ( uiID === 'y_add' ){ if ( toggle === 'active' ){
   console.log( 'y_add _active' )
