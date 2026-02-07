@@ -194,10 +194,6 @@ const uiTree = {
                     'tubular':'',
                 }
             },
-            'sphere':'',
-            'cube':'',
-            'pick':'',
-            'move':{'x_z':'', 'y':''}
         },
 
         'custom':{

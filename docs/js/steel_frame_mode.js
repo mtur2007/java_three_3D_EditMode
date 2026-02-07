@@ -12,6 +12,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   let generatedRecordId = 1;
   let active = false;
   let generated = false;
+  let allowPointAppend = false;
   let forcedCreatEnvMap = null;
 
   const envLoader = new THREE.TextureLoader();
@@ -217,17 +218,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
 
   function setPointsFromTargets(targets) {
-    const currentPoints = lines[currentLineIndex];
-    if (targets === currentPoints) {
-      return;
-    }
-
-    const source = Array.isArray(targets) ? [...targets] : [];
-    currentPoints.length = 0;
-    source.forEach((mesh) => {
-      if (!mesh || !mesh.isMesh) { return; }
-      currentPoints.push(mesh);
-    });
+    return;
   }
 
   function startNewLine() {
@@ -238,6 +229,9 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
 
   function addPoint(point) {
+    if (!allowPointAppend) {
+      return null;
+    }
     const currentPoints = lines[currentLineIndex];
     const mesh = new THREE.Mesh(cubeGeometry, cubeMaterial.clone());
     mesh.position.copy(point);
@@ -303,8 +297,6 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     let targetPoints = lines[currentLineIndex];
     if (selectedPoints.length >= 2) {
       const selectedLine = [...selectedPoints];
-      lines.push(selectedLine);
-      currentLineIndex = lines.length - 1;
       targetPoints = selectedLine;
     }
     const createdMeshes = createSegmentsFromPoints(targetPoints);
@@ -338,6 +330,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return lines[currentLineIndex];
   }
 
+  function setAllowPointAppend(next) {
+    allowPointAppend = Boolean(next);
+  }
+
   function setSegmentProfile(profile) {
     if (profile === 'h_beam') {
       segmentProfile = 'h_beam';
@@ -366,6 +362,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     setSegmentProfile,
     setPointsFromTargets,
     startNewLine,
+    setAllowPointAppend,
     toggleSelectedPoint,
     generateSteelFrame,
   };
