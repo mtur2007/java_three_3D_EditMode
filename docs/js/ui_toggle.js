@@ -180,11 +180,12 @@ const uiTree = {
         'creat':{
             'view':'',
             'add_point':{
-                'y_add':''
+                'y_add':'',
+                'guide':''
             },
             'move_point':{
                 'x_z_sf':'',
-                'y_sf':''
+                'y_sf':'',
             },
             'construction':{
                 'pillar':{

@@ -381,6 +381,79 @@
     height: 28px;
   }
 
+  #guide-window {
+    position: fixed;
+    right: 20px;
+    bottom: 24px;
+    width: 340px;
+    max-width: calc(100% - 40px);
+    background: rgba(255, 255, 255, 0.92);
+    color: #111;
+    border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.25);
+    padding: 14px;
+    z-index: 10001;
+    display: none;
+    pointer-events: auto;
+    backdrop-filter: blur(6px);
+  }
+  #guide-window .guide-title {
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    margin: 0 0 10px;
+  }
+  #guide-window .guide-sub {
+    font-size: 11px;
+    color: #555;
+    margin: 0 0 12px;
+  }
+  #guide-window .guide-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  #guide-window .guide-card {
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(250, 250, 250, 0.9);
+    min-height: 62px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+  }
+  #guide-window button.guide-card {
+    appearance: none;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(250, 250, 250, 0.95);
+    min-height: 62px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    text-align: left;
+    cursor: pointer;
+  }
+  #guide-window button.guide-card:active {
+    transform: translateY(1px);
+  }
+  #guide-window button.guide-card:focus-visible {
+    outline: 2px solid rgba(0, 0, 0, 0.5);
+    outline-offset: 2px;
+  }
+  #guide-window .guide-card .guide-name {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  #guide-window .guide-card .guide-meta {
+    font-size: 10px;
+    color: #777;
+  }
+
 </style>
   
 
@@ -453,6 +526,29 @@
                   [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
                 </ul>
                 <p style="margin-bottom:0;">※ モバイルでは画面を長押しするとズームします。</p>
+              </div>
+
+              <div id="guide-window" role="region" aria-label="配置ガイド">
+                <div class="guide-title">GUIDE SHELF</div>
+                <div class="guide-sub">配置する物体を並べる棚（仮）</div>
+                <div class="guide-grid">
+                  <button class="guide-card" data-guide-template="curve_s">
+                    <div class="guide-name">オブジェクト A</div>
+                    <div class="guide-meta">S字軌道（仮）</div>
+                  </button>
+                  <button class="guide-card" data-guide-template="curve_l">
+                    <div class="guide-name">オブジェクト B</div>
+                    <div class="guide-meta">L字軌道（仮）</div>
+                  </button>
+                  <button class="guide-card" data-guide-template="curve_u">
+                    <div class="guide-name">オブジェクト C</div>
+                    <div class="guide-meta">U字軌道（仮）</div>
+                  </button>
+                  <button class="guide-card" data-guide-template="curve_straight">
+                    <div class="guide-name">オブジェクト D</div>
+                    <div class="guide-meta">直線軌道（仮）</div>
+                  </button>
+                </div>
               </div>
 
             </div>

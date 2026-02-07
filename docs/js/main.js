@@ -78,6 +78,7 @@ const introWrapper = document.getElementById('intro-wrapper');
 const threeUi = document.getElementById('three-ui');
   const showInstructionsBtn = document.getElementById('show-instructions-btn');
   const instructionsPanel = document.getElementById('instructions-panel');
+  const guideWindow = document.getElementById('guide-window');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
@@ -116,6 +117,54 @@ const threeUi = document.getElementById('three-ui');
       }
     });
   }
+
+  let guidePlacementTemplate = null;
+  let guidePlacementActive = false;
+
+  function buildGuideCurve(template, basePoint) {
+    const y = basePoint.y;
+    let offsets = [];
+    switch (template) {
+      case 'curve_s':
+        offsets = [[-6, 0, -2], [-2, 0, 2], [2, 0, -2], [6, 0, 2]];
+        break;
+      case 'curve_l':
+        offsets = [[-4, 0, 0], [0, 0, 0], [4, 0, 0], [4, 0, 4]];
+        break;
+      case 'curve_u':
+        offsets = [[-4, 0, -2], [-4, 0, 2], [0, 0, 4], [4, 0, 2], [4, 0, -2]];
+        break;
+      case 'curve_straight':
+      default:
+        offsets = [[-6, 0, 0], [0, 0, 0], [6, 0, 0]];
+        break;
+    }
+    const points = offsets.map((o) => new THREE.Vector3(basePoint.x + o[0], y + o[1], basePoint.z + o[2]));
+    return new THREE.CatmullRomCurve3(points);
+  }
+
+  function activateGuidePlacement(template) {
+    guidePlacementTemplate = template;
+    guidePlacementActive = true;
+    OperationMode = 1;
+    objectEditMode = 'CREATE_NEW';
+    editObject = 'ORIGINAL';
+    move_direction_y = false;
+    search_object = false;
+    setGuideGridVisibleFromUI(true);
+  }
+
+  const guideButtons = document.querySelectorAll('[data-guide-template]');
+  guideButtons.forEach((btn) => {
+    const onActivate = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const template = btn.dataset.guideTemplate || 'curve_straight';
+      activateGuidePlacement(template);
+    };
+    btn.addEventListener('click', onActivate);
+    btn.addEventListener('touchstart', onActivate, { passive: false });
+  });
 
 if (introWrapper) {
   canvas.classList.add('intro-canvas');
@@ -3429,6 +3478,14 @@ async function handleMouseDown() {
 
     console.log('adding point...')
 
+    if (guidePlacementActive && guidePlacementTemplate) {
+      const basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
+      const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
+      const name = `GuideRail_${Date.now()}`;
+      TSys.createTrack(curve, 0, 0x00ff00, name);
+      return;
+    }
+
     const point = (editObject === 'STEEL_FRAME')
       ? coord_DisplayTo3D({ y: addPointGridY })
       : coord_DisplayTo3D({ y: addPointGridY });
@@ -3930,6 +3987,17 @@ export function UIevent (uiID, toggle){
     addPointGridActive = false
     // setGuideGridVisibleFromUI(false)
     setAddPointGuideGridVisibleFromUI(false);
+
+  }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
+  console.log( 'guide _active' )
+    if (guideWindow) {
+      guideWindow.style.display = 'block';
+    }
+  } else {
+  console.log( 'guide _inactive' )
+    if (guideWindow) {
+      guideWindow.style.display = 'none';
+    }
 
   }} else if ( uiID === 'y_add' ){ if ( toggle === 'active' ){
   console.log( 'y_add _active' )
