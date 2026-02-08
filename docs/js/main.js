@@ -2670,6 +2670,7 @@ function createLine(p1, p2, color = 0xff0000) {
 
 // マウスを動かしたときのイベント
 function handleMouseMove(x, y) {
+  lastPointerClient = { x, y };
   const element = canvas;
   const hovered = document.elementFromPoint(x, y);
   pointerBlockedByUI = Boolean(hovered?.closest?.('button'));
@@ -3191,27 +3192,7 @@ async function onerun_search_point() {
   
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
-
-  if (objectEditMode === 'PICK' && intersects.length > 0) {
-    const hit = intersects[0];           // 一番近いヒット
-    console.log('hit.object =', hit.object);
-
-    // top-level の targetObjects の要素を見つける（子メッシュから親を辿る）
-    let top = hit.object;
-    while (top && !targetObjects.includes(top)) {
-      top = top.parent;                  // parent を辿っていく
-    }
-
-    const idx = top ? targetObjects.indexOf(top) : -1; // 見つからなければ -1
-    console.log('targetObjects のインデックス:', idx);
-    group_EditNow = idx
-
-    // InstancedMesh の場合は instanceId があるかチェック
-    if ('instanceId' in hit && hit.instanceId !== undefined) {
-      console.log('InstancedMesh のインスタンス番号:', hit.instanceId);
-      group_EditNow = hit.instanceId
-    }
-  }
+  
 
   if (intersects.length > 0) {
     const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
@@ -3232,10 +3213,14 @@ async function onerun_search_point() {
       guideRailHover = null;
       setGuideHoverPin(null);
     }
+    // console.log('hit')
+    console.log(intersects.length)
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
+        console.log('green')
         resetChoiceObjectColor(choice_object);
+
         GuideLine.visible = false
       }
 
@@ -3246,6 +3231,9 @@ async function onerun_search_point() {
         setAddPointGuideGridColor(0x00ff00);
       }
 
+      console.log('color set')
+      console.log(choice_object)
+
       if (move_direction_y){
         GuideLine.position.copy(choice_object.position)
         GuideLine.visible = true
@@ -3255,6 +3243,8 @@ async function onerun_search_point() {
         if (targetObjects.includes(addPointGridHandle)) {
           AddPointGuideGrid.position.copy(choice_object.position)
           setAddPointGuideGridColor(0x88aa88)
+          GuideGrid.position.copy(choice_object.position)
+          GuideGrid.material.color.set(0x88aa88)
         } else {
           GuideGrid.position.copy(choice_object.position)
           GuideGrid.material.color.set(0x88aa88)
@@ -3262,16 +3252,17 @@ async function onerun_search_point() {
         // visibility controlled by UIevent
       }
     }
-  
 
   } else {
-    if (choice_object !== false){resetChoiceObjectColor(choice_object)}
+    // console.log('not hit')
+    if (choice_object !== false){
+      resetChoiceObjectColor(choice_object);
+    }
+
     choice_object = false;
     guideRailHover = null;
     setGuideHoverPin(null);
-
-    dragging = false;
-    invalid = false;
+    // dragging = false;
     GuideLine.visible = false
     GuideGrid.visible = false
   }  
@@ -3504,6 +3495,11 @@ function getPositionById(scene, id, space = 'world') {
 
 let dragging = false;
 let efficacy = true;
+let lastPointerClient = null;
+let moveClickPending = false;
+let moveDownPos = null;
+let shouldToggle = false;
+const MOVE_CLICK_THRESHOLD = 4;
 
 function handleDrag() {
   if (rotateDragging) {
@@ -3550,6 +3546,32 @@ async function handleMouseUp(mobile = false) {
     rotateDragging = false;
     updateRotateGizmo();
     efficacy = true;
+    return;
+  }
+
+  if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && moveClickPending) {
+    moveClickPending = false;
+    moveDownPos = null;
+    if (shouldToggle) {
+      console.log('onerun')
+      await onerun_search_point();
+      
+      if (choice_object) {
+        const already = steelFrameMode.isSelectedPoint(choice_object);
+        steelFrameMode.toggleSelectedPoint(choice_object);
+        if (steelFrameMode?.getSelectedPointMeshes) {
+          const group = steelFrameMode.getSelectedPointMeshes();
+          const tag = already ? 'remove' : 'add';
+          console.log(`[move_point] group(${tag})`, group.map((m) => ({
+            id: m?.id,
+            x: m?.position?.x,
+            y: m?.position?.y,
+            z: m?.position?.z,
+          })));
+        }
+      }
+    }
+    shouldToggle = true;
     return;
   }
 
@@ -3615,6 +3637,7 @@ async function handleMouseDown() {
   if (pointerBlockedByUI) { return; }
 
   console.log('run')
+  shouldToggle = true
 
   if (constructionModeActive) {
     const pin = pickStructurePinnedPin();
@@ -3741,9 +3764,10 @@ async function handleMouseDown() {
   if (objectEditMode === 'MOVE_EXISTING' || objectEditMode === 'PICK' || objectEditMode === 'CONSTRUCT' || objectEditMode === EDIT_RAIL){
 
     console.log('selecting object...')
+    moveClickPending = true;
 
     search_object = false
-    await sleep(100);
+    // await sleep(100);
 
     // if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === EDIT_RAIL)) {
     //   refreshRailSelectionTargets();
@@ -3820,6 +3844,13 @@ async function handleMouseDown() {
     }
 
     if (objectEditMode === 'MOVE_EXISTING'){
+      if (editObject === 'STEEL_FRAME') {
+        // move_point: クリックのみ（ドラッグ無効）
+        moveClickPending = true;
+        shouldToggle = true;
+        moveDownPos = lastPointerClient ? { ...lastPointerClient } : null;
+        return;
+      }
 
       beginDragFromChoice();
     
@@ -4727,6 +4758,14 @@ document.addEventListener('mousemove', (e) => {
   if (!isInteractionAllowed(e.clientX, e.clientY)) return;
   // UI監視 編集モード
   handleMouseMove(e.clientX, e.clientY);
+  if (moveClickPending && moveDownPos && shouldToggle) {
+    const dx = e.clientX - moveDownPos.x;
+    const dy = e.clientY - moveDownPos.y;
+    if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
+      // shouldToggle = false;
+      console.log('??????')
+    }
+  }
   handleDrag();
 });
 
