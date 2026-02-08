@@ -3084,6 +3084,13 @@ function setAddPointGuideGridVisibleFromUI(visible) {
 
 function resetChoiceObjectColor(mesh) {
   if (!mesh) { return; }
+  if (editObject === 'STEEL_FRAME' && steelFrameMode?.isSelectedPoint && steelFrameMode.isSelectedPoint(mesh)) {
+    // グループ所属は水色に戻す
+    if (mesh?.material?.color) {
+      mesh.material.color.set(0x7be6ff);
+    }
+    return;
+  }
   if (editObject === 'STEEL_FRAME' && objectEditMode === 'CONSTRUCT') {
     steelFrameMode.restorePointColor(mesh);
     return;
@@ -3499,6 +3506,8 @@ let lastPointerClient = null;
 let moveClickPending = false;
 let moveDownPos = null;
 let shouldToggle = false;
+let moveDragStartPositions = [];
+let moveDragAnchorStart = null;
 const MOVE_CLICK_THRESHOLD = 4;
 
 function handleDrag() {
@@ -3516,7 +3525,18 @@ function handleDrag() {
     point = coord_DisplayTo3D(choice_object.position)
   }
 
-  choice_object.position.set(point.x,point.y,point.z)
+  if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && moveDragStartPositions.length > 0) {
+    const delta = new THREE.Vector3(
+      point.x - moveDragAnchorStart.x,
+      point.y - moveDragAnchorStart.y,
+      point.z - moveDragAnchorStart.z
+    );
+    moveDragStartPositions.forEach(({ mesh, pos }) => {
+      mesh.position.set(pos.x + delta.x, pos.y + delta.y, pos.z + delta.z);
+    });
+  } else {
+    choice_object.position.set(point.x,point.y,point.z)
+  }
 
   if (choice_object === addPointGridHandle) {
     addPointGridY = choice_object.position.y;
@@ -3546,6 +3566,19 @@ async function handleMouseUp(mobile = false) {
     rotateDragging = false;
     updateRotateGizmo();
     efficacy = true;
+    return;
+  }
+
+  if (dragging === true) {
+    // ドラッグ中なら必ずここで終了処理
+    dragging = false;
+    efficacy = true;
+    moveClickPending = false;
+    shouldToggle = false;
+    moveDragStartPositions = [];
+    moveDragAnchorStart = null;
+    GuideLine.visible = false;
+    drawingObject();
     return;
   }
 
@@ -3581,6 +3614,10 @@ async function handleMouseUp(mobile = false) {
       
       dragging = false;
       efficacy = true;
+      moveClickPending = false;
+      shouldToggle = false;
+      moveDragStartPositions = [];
+      moveDragAnchorStart = null;
 
       // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
       let point= 0
@@ -3766,7 +3803,10 @@ async function handleMouseDown() {
     console.log('selecting object...')
     moveClickPending = true;
 
-    search_object = false
+    if (editObject != 'STEEL_FRAME' && objectEditMode != 'MOVE_EXISTING') {
+      search_object = false
+      console.log('start search_point')
+    }
     // await sleep(100);
 
     // if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === EDIT_RAIL)) {
@@ -3845,10 +3885,13 @@ async function handleMouseDown() {
 
     if (objectEditMode === 'MOVE_EXISTING'){
       if (editObject === 'STEEL_FRAME') {
-        // move_point: クリックのみ（ドラッグ無効）
+        // move_point: クリック or ドラッグで複数移動
         moveClickPending = true;
         shouldToggle = true;
         moveDownPos = lastPointerClient ? { ...lastPointerClient } : null;
+        moveDragStartPositions = [];
+        moveDragAnchorStart = null;
+        await onerun_search_point();
         return;
       }
 
@@ -4431,7 +4474,7 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
-    search_object = false
+    // search_object = false
     editObject = 'STEEL_FRAME'
     // steelFrameMode.clearSelection()
     steelFrameMode.setAllowPointAppend(false)
@@ -4440,6 +4483,8 @@ export function UIevent (uiID, toggle){
     console.log(targetObjects)
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
+
+    search_object = true
 
   } else {
   console.log( 'move_point _inactive' )
@@ -4762,8 +4807,48 @@ document.addEventListener('mousemove', (e) => {
     const dx = e.clientX - moveDownPos.x;
     const dy = e.clientY - moveDownPos.y;
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
-      // shouldToggle = false;
-      console.log('??????')
+      shouldToggle = false;
+    }
+  }
+  if (moveClickPending && moveDownPos && !dragging && editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
+    const dx = e.clientX - moveDownPos.x;
+    const dy = e.clientY - moveDownPos.y;
+    if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
+      shouldToggle = false;
+      if (choice_object) {
+        if (!steelFrameMode.isSelectedPoint(choice_object)) {
+          steelFrameMode.toggleSelectedPoint(choice_object);
+        }
+        moveDragAnchorStart = choice_object.position.clone();
+        moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
+          mesh,
+          pos: mesh.position.clone(),
+        }));
+
+        const pos = camera.position;
+        if (!move_direction_y){
+          let set_y = choice_object.position.y;
+          raycaster.setFromCamera(mouse, camera);
+          const dir = raycaster.ray.direction;
+          const t = Math.abs((pos.y - set_y)/dir.y);
+          TargetDiff = [
+            choice_object.position.x - (pos.x + dir.x * t),
+            choice_object.position.z - (pos.z + dir.z * t)
+          ];
+        } else {
+          raycaster.setFromCamera(mouse, camera);
+          const dir = raycaster.ray.direction;
+          const diff = {x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z}
+          const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x**2 + diff.z**2)
+          const t = hypotenuse/(Math.cos(cameraAngleY)*dir.z+Math.sin(cameraAngleY)*dir.x);
+          TargetDiff = choice_object.position.y - (pos.y + dir.y * t); 
+        }
+
+        dragging = true;
+        efficacy = false;
+        moveClickPending = false;
+        GuideLine.visible = true;
+      }
     }
   }
   handleDrag();
@@ -4779,6 +4864,53 @@ document.addEventListener('touchmove', (e) => {
 
   // UI監視
   handleMouseMove(touch.clientX, touch.clientY);
+  if (moveClickPending && moveDownPos && shouldToggle) {
+    const dx = touch.clientX - moveDownPos.x;
+    const dy = touch.clientY - moveDownPos.y;
+    if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
+      shouldToggle = false;
+    }
+  }
+  if (moveClickPending && moveDownPos && !dragging && editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
+    const dx = touch.clientX - moveDownPos.x;
+    const dy = touch.clientY - moveDownPos.y;
+    if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
+      shouldToggle = false;
+      if (choice_object) {
+        if (!steelFrameMode.isSelectedPoint(choice_object)) {
+          steelFrameMode.toggleSelectedPoint(choice_object);
+        }
+        moveDragAnchorStart = choice_object.position.clone();
+        moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
+          mesh,
+          pos: mesh.position.clone(),
+        }));
+
+        const pos = camera.position;
+        if (!move_direction_y){
+          let set_y = choice_object.position.y;
+          raycaster.setFromCamera(mouse, camera);
+          const dir = raycaster.ray.direction;
+          const t = Math.abs((pos.y - set_y)/dir.y);
+          TargetDiff = [
+            choice_object.position.x - (pos.x + dir.x * t),
+            choice_object.position.z - (pos.z + dir.z * t)
+          ];
+        } else {
+          raycaster.setFromCamera(mouse, camera);
+          const dir = raycaster.ray.direction;
+          const diff = {x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z}
+          const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x**2 + diff.z**2)
+          const t = hypotenuse/(Math.cos(cameraAngleY)*dir.z+Math.sin(cameraAngleY)*dir.x);
+          TargetDiff = choice_object.position.y - (pos.y + dir.y * t); 
+        }
+
+        dragging = true;
+        efficacy = false;
+        GuideLine.visible = true;
+      }
+    }
+  }
 
   // 視点
   if (e.touches.length === 1 && efficacy) {

@@ -6,7 +6,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   const segmentMeshes = [];
   const segmentName = 'SteelFrameSegment';
   const pointColor = 0xff0000;
-  const selectedPointColor = 0x00aaff;
+  const selectedPointColor = 0x7be6ff;
   const selectedPoints = [];
   const generatedRecords = [];
   let generatedRecordId = 1;
@@ -16,7 +16,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   let forcedCreatEnvMap = null;
 
   const envLoader = new THREE.TextureLoader();
-  envLoader.load('textures/test_station.jpeg', (texture) => {
+  envLoader.load('textures/ct.jpg', (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping;
     texture.colorSpace = THREE.SRGBColorSpace;
     forcedCreatEnvMap = texture;
