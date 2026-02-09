@@ -198,7 +198,9 @@ const threeUi = document.getElementById('three-ui');
         break;
     }
     const points = offsets.map((o) => new THREE.Vector3(basePoint.x + o[0], y + o[1], basePoint.z + o[2]));
-    return new THREE.CatmullRomCurve3(points);
+    const curve = new THREE.CatmullRomCurve3(points);
+    curve.userData = { ...(curve.userData || {}), controlPoints: points };
+    return curve;
   }
 
   const guideRailPickMeshes = [];
@@ -256,10 +258,12 @@ const threeUi = document.getElementById('three-ui');
     guidePlacementActive = true;
     OperationMode = 1;
     objectEditMode = 'CREATE_NEW';
-    editObject = 'ORIGINAL';
+    editObject = 'STEEL_FRAME';
     move_direction_y = false;
     search_object = false;
+    steelFrameMode.setAllowPointAppend(true);
     setGuideGridVisibleFromUI(true);
+    console.log('[guide] activate', { template, guidePlacementActive, editObject, objectEditMode });
   }
 
   const guideButtons = document.querySelectorAll('[data-guide-template]');
@@ -2518,13 +2522,13 @@ async function startQuadrupleCrossDemo() {
   crossoverRequested = false;
 }
 
-document.getElementById("toggle-crossover").addEventListener("click", () => {
-  startQuadrupleCrossDemo();
-});
+// document.getElementById("toggle-crossover").addEventListener("click", () => {
+//   startQuadrupleCrossDemo();
+// });
 
-document.getElementById("toggle-crossover").addEventListener("touchstart", () => {
-  startQuadrupleCrossDemo();
-});
+// document.getElementById("toggle-crossover").addEventListener("touchstart", () => {
+//   startQuadrupleCrossDemo();
+// });
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -3723,11 +3727,18 @@ async function handleMouseDown() {
     console.log('adding point...')
 
     if (guidePlacementActive && guidePlacementTemplate) {
+      console.log('[guide] place', { guidePlacementActive, guidePlacementTemplate, editObject, objectEditMode });
       const basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
       const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
       const name = `GuideRail_${Date.now()}`;
       TSys.createTrack(curve, 0, 0x00ff00, name);
       createGuideRailPickMesh(curve);
+      if (editObject === 'STEEL_FRAME' && curve?.userData?.controlPoints) {
+        console.log('[guide] controlPoints', curve.userData.controlPoints.length, curve.userData.controlPoints);
+        curve.userData.controlPoints.forEach((p) => {
+          steelFrameMode.addPoint(p);
+        });
+      }
       if (editObject === 'STEEL_FRAME') {
         targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
         setMeshListOpacity(targetObjects, 1);

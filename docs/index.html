@@ -543,7 +543,7 @@
 
               </div>
 
-              <button id="toggle-crossover" class="control-square-button" style="position: absolute; left: 20px; top: 20px; padding: 10px; font-size: 14px; z-index: 10; backdrop-filter: blur(4px);">ランダム立体交差（クアトロ交差）切替</button>
+              <!-- ランダム立体交差ボタンは非表示に変更 -->
 
               <div id="frontViewButtons" style="position: fixed; top: 20px; right: 20px; z-index: 100;">
                 <button class="frontViewBtn" data-train="1">1番線</button>
@@ -554,8 +554,10 @@
 
               <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
 
-              <button id="save-track-data" class="control-square-button" style="position: absolute; left: 20px; top: 120px; padding: 10px; font-size: 14px; z-index: 10; backdrop-filter: blur(4px);">軌道保存</button>
-              <button id="save-structure-data" class="control-square-button" style="position: absolute; left: 20px; top: 170px; padding: 10px; font-size: 14px; z-index: 10; backdrop-filter: blur(4px);">ピン保存</button>
+              <div id="save-buttons" style="position: absolute; left: 20px; top: 20px; display: flex; gap: 8px; z-index: 10;">
+                <button id="save-track-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">軌道保存</button>
+                <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
+              </div>
 
               <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 130px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
               
