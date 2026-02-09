@@ -157,6 +157,15 @@
     .canvas-ui { pointer-events: auto; }
   </style>
   <style>
+    /* Dragging: prevent text selection */
+    body.dragging, body.dragging * {
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+    }
+  </style>
+  <style>
     /* UiGroup tooltip */
     #UiGroup { position: fixed; }
     .ui-tooltip {

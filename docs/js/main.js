@@ -3142,7 +3142,7 @@ async function search_point() {
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
   
-  await sleep(40);
+  await sleep(80);
 
   if (intersects.length > 0) {
     const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
@@ -3163,8 +3163,8 @@ async function search_point() {
       guideRailHover = null;
       setGuideHoverPin(null);
     }
-    // console.log('hit')
-    console.log(intersects.length)
+    console.log('hit')
+    // console.log(intersects.length)
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
         // 残像防止
@@ -3204,7 +3204,7 @@ async function search_point() {
     }
 
   } else {
-    // console.log('not hit')
+    console.log('not hit')
     if (choice_object !== false){
       resetChoiceObjectColor(choice_object);
     }
@@ -3570,6 +3570,7 @@ function handleDrag() {
       }
     });
   } else {
+    if (!choice_object || !choice_object.position) { return; }
     choice_object.position.set(point.x,point.y,point.z)
     if (choice_object?.userData?.guideCurve && typeof choice_object.userData.guideControlIndex === 'number') {
       const curve = choice_object.userData.guideCurve;
@@ -3616,6 +3617,11 @@ async function handleMouseUp(mobile = false) {
     // ドラッグ中なら必ずここで終了処理
     dragging = false;
     efficacy = true;
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
+      resetChoiceObjectColor(choice_object);
+      search_object = true;
+      search_point();
+    }
     moveClickPending = false;
     shouldToggle = false;
     moveDragStartPositions = [];
@@ -4912,6 +4918,7 @@ document.addEventListener('mousemove', (e) => {
         dragging = true;
         efficacy = false;
         moveClickPending = false;
+        search_object = false;
         GuideLine.visible = true;
       }
     }
@@ -4974,6 +4981,7 @@ document.addEventListener('touchmove', (e) => {
 
         dragging = true;
         efficacy = false;
+        search_object = false;
         GuideLine.visible = true;
       }
     }
@@ -5273,9 +5281,15 @@ function animate() {
   }
   renderer.setScissorTest(true);
 
+  // document.body.classList.toggle('dragging', dragging === true);
+
   renderer.render(scene, camera);
 
   if (dragging === true){
+    if (!choice_object || !choice_object.position) {
+      dragging = false;
+      return;
+    }
     const pos = choice_object.position
     cameraSub.position.set(pos.x-Math.sin(cameraAngleY)*0.2,pos.y+5,pos.z-Math.cos(cameraAngleY)*0.2)
 
