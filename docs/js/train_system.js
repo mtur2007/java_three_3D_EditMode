@@ -419,6 +419,7 @@ export class TrainSystem {
       line.name = name
     }
     this.scene.add(line);
+    return line;
   }  
 
   //---- 軌道調整 ----

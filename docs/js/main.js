@@ -218,7 +218,30 @@ const threeUi = document.getElementById('three-ui');
     mesh.userData.guideCurve = curve;
     scene.add(mesh);
     guideRailPickMeshes.push(mesh);
+    if (curve) {
+      curve.userData = { ...(curve.userData || {}), guidePickMesh: mesh };
+    }
     return mesh;
+  }
+
+  function updateGuideCurve(curve) {
+    if (!curve || !curve.userData?.controlPoints) { return; }
+    curve.points = curve.userData.controlPoints;
+
+    const pick = curve.userData.guidePickMesh;
+    if (pick) {
+      const newGeom = new THREE.TubeGeometry(curve, 60, 0.45, 10, false);
+      if (pick.geometry) pick.geometry.dispose();
+      pick.geometry = newGeom;
+    }
+
+    const line = curve.userData.guideLine;
+    if (line) {
+      const points = curve.getPoints(100);
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      if (line.geometry) line.geometry.dispose();
+      line.geometry = geom;
+    }
   }
 
   function setGuideHoverPin(position) {
@@ -3291,7 +3314,7 @@ function coord_DisplayTo3D(Axis_num=false){
   let point = []
   if (move_direction_y === false | Axis_num === false){
 
-    console.log('平面' , move_direction_y, Axis_num)
+    // console.log('平面' , move_direction_y, Axis_num)
 
     let set_y = 1
     if (Axis_num!=false){ set_y = Axis_num.y}
@@ -3301,7 +3324,7 @@ function coord_DisplayTo3D(Axis_num=false){
 
     const t = Math.abs((pos.y - set_y)/dir.y)
 
-    console.log(pos.x,'t : '+t)
+    // console.log(pos.x,'t : '+t)
     
     // 交点を計算
     point = new THREE.Vector3(
@@ -3319,14 +3342,14 @@ function coord_DisplayTo3D(Axis_num=false){
     //   point.z = pos_0.z + Math.cos(phi) * phi_rangth
     // }
 
-    console.log('point : '+point.x+', '+point.y+', '+point.z)
+    // console.log('point : '+point.x+', '+point.y+', '+point.z)
 
     if (objectEditMode != 'CREATE_NEW') {
       point.x += TargetDiff[0]
       point.z += TargetDiff[1]
     }
 
-    console.log('point : '+point.x+', '+point.y+', '+point.z)
+    // console.log('point : '+point.x+', '+point.y+', '+point.z)
 
   } else {
     raycaster.setFromCamera(mouse, camera);
@@ -3537,9 +3560,25 @@ function handleDrag() {
     );
     moveDragStartPositions.forEach(({ mesh, pos }) => {
       mesh.position.set(pos.x + delta.x, pos.y + delta.y, pos.z + delta.z);
+      if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
+        const curve = mesh.userData.guideCurve;
+        const idx = mesh.userData.guideControlIndex;
+        if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+          curve.userData.controlPoints[idx] = mesh.position.clone();
+          updateGuideCurve(curve);
+        }
+      }
     });
   } else {
     choice_object.position.set(point.x,point.y,point.z)
+    if (choice_object?.userData?.guideCurve && typeof choice_object.userData.guideControlIndex === 'number') {
+      const curve = choice_object.userData.guideCurve;
+      const idx = choice_object.userData.guideControlIndex;
+      if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+        curve.userData.controlPoints[idx] = choice_object.position.clone();
+        updateGuideCurve(curve);
+      }
+    }
   }
 
   if (choice_object === addPointGridHandle) {
@@ -3594,6 +3633,7 @@ async function handleMouseUp(mobile = false) {
       await onerun_search_point();
       
       if (choice_object) {
+        console.log('add_group')
         const already = steelFrameMode.isSelectedPoint(choice_object);
         steelFrameMode.toggleSelectedPoint(choice_object);
         if (steelFrameMode?.getSelectedPointMeshes) {
@@ -3731,12 +3771,19 @@ async function handleMouseDown() {
       const basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
       const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
       const name = `GuideRail_${Date.now()}`;
-      TSys.createTrack(curve, 0, 0x00ff00, name);
+      const line = TSys.createTrack(curve, 0, 0x00ff00, name);
+      if (line) {
+        line.userData = { ...(line.userData || {}), guideCurve: curve };
+        curve.userData = { ...(curve.userData || {}), guideLine: line };
+      }
       createGuideRailPickMesh(curve);
       if (editObject === 'STEEL_FRAME' && curve?.userData?.controlPoints) {
         console.log('[guide] controlPoints', curve.userData.controlPoints.length, curve.userData.controlPoints);
-        curve.userData.controlPoints.forEach((p) => {
-          steelFrameMode.addPoint(p);
+        curve.userData.controlPoints.forEach((p, idx) => {
+          const mesh = steelFrameMode.addPoint(p);
+          if (mesh) {
+            mesh.userData = { ...(mesh.userData || {}), guideCurve: curve, guideControlIndex: idx };
+          }
         });
       }
       if (editObject === 'STEEL_FRAME') {
@@ -4827,14 +4874,21 @@ document.addEventListener('mousemove', (e) => {
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
       shouldToggle = false;
       if (choice_object) {
-        if (!steelFrameMode.isSelectedPoint(choice_object)) {
-          steelFrameMode.toggleSelectedPoint(choice_object);
+        const hasGroup = steelFrameMode.getSelectedPointMeshes().length > 0;
+        if (!hasGroup) {
+          // グループが空なら単体移動に切替
+          moveDragAnchorStart = choice_object.position.clone();
+          moveDragStartPositions = [];
+        } else {
+          if (!steelFrameMode.isSelectedPoint(choice_object)) {
+            steelFrameMode.toggleSelectedPoint(choice_object);
+          }
+          moveDragAnchorStart = choice_object.position.clone();
+          moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
+            mesh,
+            pos: mesh.position.clone(),
+          }));
         }
-        moveDragAnchorStart = choice_object.position.clone();
-        moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
-          mesh,
-          pos: mesh.position.clone(),
-        }));
 
         const pos = camera.position;
         if (!move_direction_y){
@@ -4880,6 +4934,7 @@ document.addEventListener('touchmove', (e) => {
     const dy = touch.clientY - moveDownPos.y;
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
       shouldToggle = false;
+      console.log('shouldToggle:', shouldToggle);
     }
   }
   if (moveClickPending && moveDownPos && !dragging && editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
@@ -4887,6 +4942,7 @@ document.addEventListener('touchmove', (e) => {
     const dy = touch.clientY - moveDownPos.y;
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
       shouldToggle = false;
+      console.log('shouldToggle:', shouldToggle);
       if (choice_object) {
         if (!steelFrameMode.isSelectedPoint(choice_object)) {
           steelFrameMode.toggleSelectedPoint(choice_object);
