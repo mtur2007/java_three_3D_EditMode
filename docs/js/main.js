@@ -3593,11 +3593,15 @@ let movePlaneGizmoGroup = null;
 const movePlaneGizmoMeshes = [];
 let movePlaneRotateDragging = false;
 let movePlaneRotateAxis = new THREE.Vector3(0, 1, 0);
+let movePlaneRotateAxisLocal = null;
 let movePlaneRotateStartVector = new THREE.Vector3();
 let movePlaneRotatePlane = new THREE.Plane();
 let movePlaneNormalStart = new THREE.Vector3(0, 1, 0);
 let movePlaneBasisQuatStart = new THREE.Quaternion();
 let movePlaneRotateCenter = new THREE.Vector3();
+let movePlaneGizmoQuat = new THREE.Quaternion();
+let movePlaneGizmoYaw = 0;
+let movePlaneGizmoYawStart = 0;
 
 function updateMovePlaneNormal() {
   const base = new THREE.Vector3(0, 1, 0);
@@ -3625,7 +3629,7 @@ function updateMovePlaneNormal() {
 function updateMovePlaneGizmo() {
   if (!movePlaneGizmoGroup) { return; }
   movePlaneGizmoGroup.position.copy(movePlaneAnchor);
-  movePlaneGizmoGroup.quaternion.identity();
+  movePlaneGizmoGroup.quaternion.copy(movePlaneGizmoQuat);
   movePlaneGizmoGroup.visible = movePlaneMode === 'change_angle';
   movePlaneGizmoGroup.updateMatrixWorld(true);
 }
@@ -3659,7 +3663,15 @@ function ensureMovePlaneGizmo() {
 
 function beginMovePlaneRotateDrag(axisMesh) {
   ensureMovePlaneGizmo();
-  movePlaneRotateAxis = axisMesh.userData.axis.clone().normalize();
+  movePlaneRotateAxisLocal = axisMesh.userData.axis.clone().normalize();
+  // 平面側の軸は現在の平面回転を反映した軸に合わせる
+  if (movePlaneRotateAxisLocal.y === 1) {
+    // Y軸は常にワールド固定
+    movePlaneRotateAxis = new THREE.Vector3(0, 1, 0);
+  } else {
+    // X/Z は平面の回転に追従
+    movePlaneRotateAxis = movePlaneRotateAxisLocal.clone().applyQuaternion(movePlaneBasisQuat).normalize();
+  }
   movePlaneRotateCenter.copy(movePlaneAnchor);
   movePlaneRotatePlane.setFromNormalAndCoplanarPoint(movePlaneRotateAxis, movePlaneRotateCenter);
   raycaster.setFromCamera(mouse, camera);
@@ -3669,6 +3681,9 @@ function beginMovePlaneRotateDrag(axisMesh) {
   movePlaneRotateStartVector.copy(hit).sub(movePlaneRotateCenter).normalize();
   movePlaneNormalStart.copy(movePlaneNormal);
   movePlaneBasisQuatStart.copy(movePlaneBasisQuat);
+  if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
+    movePlaneGizmoYawStart = movePlaneGizmoYaw;
+  }
   movePlaneRotateDragging = true;
   efficacy = false;
   console.log('[change_angle] rotate start', {
@@ -3696,6 +3711,11 @@ function updateMovePlaneRotateDrag() {
   movePlaneGridHelper.position.copy(movePlaneAnchor);
   movePlaneGridHelper.quaternion.copy(movePlaneBasisQuat);
   movePlaneGridHelper.updateMatrixWorld(true);
+  // ギズモは平面に追従させず、Y回転時のみワールドY基準で回す
+  if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
+    movePlaneGizmoYaw = movePlaneGizmoYawStart + angle;
+    movePlaneGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), movePlaneGizmoYaw);
+  }
   updateMovePlaneGizmo();
   console.log('[change_angle] rotating', {
     angle,
@@ -4797,6 +4817,9 @@ export function UIevent (uiID, toggle){
     movePlaneMode = 'change_angle'
     movePlaneBasisQuat.identity();
     ensureMovePlaneGizmo();
+    movePlaneGizmoQuat.identity();
+    movePlaneGizmoYaw = 0;
+    movePlaneGizmoYawStart = 0;
     if (rotationPanel) {
       rotationPanel.style.display = 'block';
     }
