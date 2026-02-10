@@ -187,6 +187,7 @@ const uiTree = {
             'move_point':{
                 'x_z_sf':'',
                 'y_sf':'',
+                'change_angle':'',
             },
             'construction':{
                 'pillar':{

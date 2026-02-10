@@ -125,6 +125,29 @@ const threeUi = document.getElementById('three-ui');
 
   function applyRotationFromPanel() {
     const meshes = getRotateSelectionMeshes();
+    if (movePlaneMode === 'change_angle') {
+      const xRaw = rotationInputX?.value?.trim?.() ?? '';
+      const yRaw = rotationInputY?.value?.trim?.() ?? '';
+      const zRaw = rotationInputZ?.value?.trim?.() ?? '';
+      const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : movePlaneAngles.x;
+      const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : movePlaneAngles.y;
+      const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : movePlaneAngles.z;
+      movePlaneAngles = { x: axDeg, y: ayDeg, z: azDeg };
+      updateMovePlaneNormal();
+      if (rotationInputX) {
+        rotationInputX.value = '';
+        rotationInputX.placeholder = String(axDeg);
+      }
+      if (rotationInputY) {
+        rotationInputY.value = '';
+        rotationInputY.placeholder = String(ayDeg);
+      }
+      if (rotationInputZ) {
+        rotationInputZ.value = '';
+        rotationInputZ.placeholder = String(azDeg);
+      }
+      return;
+    }
     if (meshes.length < 1) { return; }
     const degToRad = Math.PI / 180;
     const xRaw = rotationInputX?.value?.trim?.() ?? '';
@@ -154,6 +177,18 @@ const threeUi = document.getElementById('three-ui');
     rotateByAxis(new THREE.Vector3(1, 0, 0), dx * degToRad);
     rotateByAxis(new THREE.Vector3(0, 1, 0), dy * degToRad);
     rotateByAxis(new THREE.Vector3(0, 0, 1), dz * degToRad);
+    const curves = new Set();
+    meshes.forEach((m) => {
+      if (m?.userData?.guideCurve) {
+        const curve = m.userData.guideCurve;
+        const idx = m.userData.guideControlIndex;
+        if (curve?.userData?.controlPoints && typeof idx === 'number') {
+          curve.userData.controlPoints[idx] = m.position.clone();
+          curves.add(curve);
+        }
+      }
+    });
+    curves.forEach((curve) => updateGuideCurve(curve));
 
     if (rotationInputX) {
       rotationInputX.value = '';
@@ -3064,7 +3099,7 @@ function getIntersectObjects(){
   raycaster.setFromCamera(mouse, camera);
 
   // その光線とぶつかったオブジェクトを得る
-  if (editObject === 'STEEL_FRAME' || guidePlacementActive) {
+  if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW') {
     const list = targetObjects.concat(guideRailPickMeshes);
     return raycaster.intersectObjects(list, true);
   }
@@ -3312,9 +3347,16 @@ function coord_DisplayTo3D(Axis_num=false){
   
   let t = 0
   let point = []
+  if (movePlaneMode === 'change_angle' && choice_object) {
+    raycaster.setFromCamera(mouse, camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(plane, hit);
+    if (ok) {
+      return hit;
+    }
+  }
   if (move_direction_y === false | Axis_num === false){
-
-    // console.log('平面' , move_direction_y, Axis_num)
 
     let set_y = 1
     if (Axis_num!=false){ set_y = Axis_num.y}
@@ -3324,8 +3366,6 @@ function coord_DisplayTo3D(Axis_num=false){
 
     const t = Math.abs((pos.y - set_y)/dir.y)
 
-    // console.log(pos.x,'t : '+t)
-    
     // 交点を計算
     point = new THREE.Vector3(
       pos.x + dir.x * t,
@@ -3536,10 +3576,140 @@ let shouldToggle = false;
 let moveDragStartPositions = [];
 let moveDragAnchorStart = null;
 const MOVE_CLICK_THRESHOLD = 4;
+let movePlaneMode = 'default';
+let movePlaneAnchor = new THREE.Vector3();
+let movePlaneAngles = { x: 0, y: 0, z: 0 };
+let movePlaneNormal = new THREE.Vector3(0, 1, 0);
+let movePlaneBasisQuat = new THREE.Quaternion();
+const movePlaneGrid = new THREE.PlaneHelper(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), 8, 0x7be6ff);
+const movePlaneGridHelper = new THREE.GridHelper(8, 8, 0x7be6ff, 0x7be6ff);
+movePlaneGridHelper.material.transparent = true;
+movePlaneGridHelper.material.opacity = 0.6;
+movePlaneGridHelper.visible = false;
+movePlaneGrid.visible = false;
+scene.add(movePlaneGrid);
+scene.add(movePlaneGridHelper);
+let movePlaneGizmoGroup = null;
+const movePlaneGizmoMeshes = [];
+let movePlaneRotateDragging = false;
+let movePlaneRotateAxis = new THREE.Vector3(0, 1, 0);
+let movePlaneRotateStartVector = new THREE.Vector3();
+let movePlaneRotatePlane = new THREE.Plane();
+let movePlaneNormalStart = new THREE.Vector3(0, 1, 0);
+let movePlaneBasisQuatStart = new THREE.Quaternion();
+let movePlaneRotateCenter = new THREE.Vector3();
+
+function updateMovePlaneNormal() {
+  const base = new THREE.Vector3(0, 1, 0);
+  if (movePlaneMode === 'change_angle') {
+    movePlaneNormal.copy(base.applyQuaternion(movePlaneBasisQuat)).normalize();
+  } else {
+    const euler = new THREE.Euler(
+      movePlaneAngles.x * Math.PI / 180,
+      movePlaneAngles.y * Math.PI / 180,
+      movePlaneAngles.z * Math.PI / 180,
+      'XYZ'
+    );
+    movePlaneNormal.copy(base.applyEuler(euler)).normalize();
+  }
+  movePlaneGrid.plane.setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
+  movePlaneGrid.position.copy(movePlaneAnchor);
+  movePlaneGrid.quaternion.copy(movePlaneBasisQuat);
+  movePlaneGrid.updateMatrixWorld(true);
+  movePlaneGridHelper.position.copy(movePlaneAnchor);
+  movePlaneGridHelper.quaternion.copy(movePlaneBasisQuat);
+  movePlaneGridHelper.updateMatrixWorld(true);
+  updateMovePlaneGizmo();
+}
+
+function updateMovePlaneGizmo() {
+  if (!movePlaneGizmoGroup) { return; }
+  movePlaneGizmoGroup.position.copy(movePlaneAnchor);
+  movePlaneGizmoGroup.quaternion.identity();
+  movePlaneGizmoGroup.visible = movePlaneMode === 'change_angle';
+  movePlaneGizmoGroup.updateMatrixWorld(true);
+}
+
+function ensureMovePlaneGizmo() {
+  if (movePlaneGizmoGroup) { return; }
+  movePlaneGizmoGroup = new THREE.Group();
+  movePlaneGizmoGroup.name = 'MovePlaneGizmo';
+
+  const ringRadius = 1.0;
+  const ringTube = 0.03;
+  const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
+  const makeRing = (color, axis) => {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.userData = { ...(mesh.userData || {}), isMovePlaneGizmo: true, axis };
+    movePlaneGizmoGroup.add(mesh);
+    movePlaneGizmoMeshes.push(mesh);
+    return mesh;
+  };
+
+  const ringX = makeRing(0xff5c5c, new THREE.Vector3(1, 0, 0));
+  ringX.rotation.y = Math.PI / 2;
+  const ringY = makeRing(0x5cff88, new THREE.Vector3(0, 1, 0));
+  ringY.rotation.x = Math.PI / 2;
+  const ringZ = makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1));
+
+  movePlaneGizmoGroup.visible = false;
+  scene.add(movePlaneGizmoGroup);
+}
+
+function beginMovePlaneRotateDrag(axisMesh) {
+  ensureMovePlaneGizmo();
+  movePlaneRotateAxis = axisMesh.userData.axis.clone().normalize();
+  movePlaneRotateCenter.copy(movePlaneAnchor);
+  movePlaneRotatePlane.setFromNormalAndCoplanarPoint(movePlaneRotateAxis, movePlaneRotateCenter);
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(movePlaneRotatePlane, hit);
+  if (!ok) { return; }
+  movePlaneRotateStartVector.copy(hit).sub(movePlaneRotateCenter).normalize();
+  movePlaneNormalStart.copy(movePlaneNormal);
+  movePlaneBasisQuatStart.copy(movePlaneBasisQuat);
+  movePlaneRotateDragging = true;
+  efficacy = false;
+  console.log('[change_angle] rotate start', {
+    axis: movePlaneRotateAxis.toArray(),
+    anchor: movePlaneAnchor.toArray(),
+  });
+}
+
+function updateMovePlaneRotateDrag() {
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(movePlaneRotatePlane, hit);
+  if (!ok) { return; }
+  const current = hit.clone().sub(movePlaneRotateCenter).normalize();
+  const cross = new THREE.Vector3().crossVectors(movePlaneRotateStartVector, current);
+  const dot = movePlaneRotateStartVector.dot(current);
+  const angle = Math.atan2(cross.dot(movePlaneRotateAxis), dot);
+  const deltaQuat = new THREE.Quaternion().setFromAxisAngle(movePlaneRotateAxis, angle);
+  movePlaneBasisQuat.copy(deltaQuat.multiply(movePlaneBasisQuatStart)).normalize();
+  movePlaneNormal.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(movePlaneBasisQuat)).normalize();
+  movePlaneGrid.plane.setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
+  movePlaneGrid.position.copy(movePlaneAnchor);
+  movePlaneGrid.quaternion.copy(movePlaneBasisQuat);
+  movePlaneGrid.updateMatrixWorld(true);
+  movePlaneGridHelper.position.copy(movePlaneAnchor);
+  movePlaneGridHelper.quaternion.copy(movePlaneBasisQuat);
+  movePlaneGridHelper.updateMatrixWorld(true);
+  updateMovePlaneGizmo();
+  console.log('[change_angle] rotating', {
+    angle,
+    normal: movePlaneNormal.toArray(),
+  });
+}
 
 function handleDrag() {
   if (rotateDragging) {
     updateRotateDrag();
+    return;
+  }
+  if (movePlaneRotateDragging) {
+    updateMovePlaneRotateDrag();
     return;
   }
   if (dragging != true) { return }
@@ -3617,7 +3787,7 @@ async function handleMouseUp(mobile = false) {
     // ドラッグ中なら必ずここで終了処理
     dragging = false;
     efficacy = true;
-    if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
+    if (objectEditMode === 'MOVE_EXISTING') {
       resetChoiceObjectColor(choice_object);
       search_object = true;
       search_point();
@@ -3628,6 +3798,12 @@ async function handleMouseUp(mobile = false) {
     moveDragAnchorStart = null;
     GuideLine.visible = false;
     drawingObject();
+    return;
+  }
+
+  if (movePlaneRotateDragging) {
+    movePlaneRotateDragging = false;
+    efficacy = true;
     return;
   }
 
@@ -3725,6 +3901,19 @@ async function handleMouseDown() {
 
   console.log('run')
   shouldToggle = true
+
+  if (movePlaneMode === 'change_angle') {
+    ensureMovePlaneGizmo();
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(movePlaneGizmoMeshes, true);
+    const hit = hits[0] || null;
+    console.log('[change_angle] gizmo hits:', hits.length);
+    if (hit) {
+      console.log('[change_angle] hit axis', hit.object?.userData?.axis);
+      beginMovePlaneRotateDrag(hit.object);
+      return;
+    }
+  }
 
   if (constructionModeActive) {
     const pin = pickStructurePinnedPin();
@@ -3867,7 +4056,7 @@ async function handleMouseDown() {
     console.log('selecting object...')
     moveClickPending = true;
 
-    if (editObject != 'STEEL_FRAME' && objectEditMode != 'MOVE_EXISTING') {
+    if (objectEditMode === 'MOVE_EXISTING') {
       search_object = false
       console.log('start search_point')
     }
@@ -3953,6 +4142,11 @@ async function handleMouseDown() {
         moveClickPending = true;
         shouldToggle = true;
         moveDownPos = lastPointerClient ? { ...lastPointerClient } : null;
+        if (choice_object?.position) {
+          movePlaneAnchor.copy(choice_object.position);
+          updateMovePlaneNormal();
+        }
+        updateMovePlaneGizmo();
         moveDragStartPositions = [];
         moveDragAnchorStart = null;
         await onerun_search_point();
@@ -4123,7 +4317,22 @@ function updateRotateDrag() {
     const offset = pos.clone().sub(rotateCenter);
     offset.applyAxisAngle(rotateAxis, angle);
     mesh.position.copy(rotateCenter.clone().add(offset));
+    if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
+      const curve = mesh.userData.guideCurve;
+      const idx = mesh.userData.guideControlIndex;
+      if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+        curve.userData.controlPoints[idx] = mesh.position.clone();
+      }
+    }
   });
+  // update curves once per drag step
+  const curves = new Set();
+  rotateStartPositions.forEach(({ mesh }) => {
+    if (mesh?.userData?.guideCurve) {
+      curves.add(mesh.userData.guideCurve);
+    }
+  });
+  curves.forEach((curve) => updateGuideCurve(curve));
 }
 
 // Ensure resize uses unified handler
@@ -4417,6 +4626,7 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'view' ){ if ( toggle === 'active' ){
   console.log( 'view _active' )
+    search_object = false
     targetObjects = steelFrameMode.getCurrentPointMeshes()
     setMeshListOpacity(targetObjects, 0);
   } else {
@@ -4582,6 +4792,28 @@ export function UIevent (uiID, toggle){
   } else {
   console.log( 'y_sf _inactive' )
     search_object = false
+  }} else if ( uiID === 'change_angle' ){ if ( toggle === 'active' ){
+  console.log( 'change_angle _active' )
+    movePlaneMode = 'change_angle'
+    movePlaneBasisQuat.identity();
+    ensureMovePlaneGizmo();
+    if (rotationPanel) {
+      rotationPanel.style.display = 'block';
+    }
+    movePlaneGrid.visible = true;
+    movePlaneGridHelper.visible = true;
+  } else {
+  console.log( 'change_angle _inactive' )
+    if (movePlaneMode === 'change_angle') {
+      movePlaneMode = 'default'
+    }
+    movePlaneRotateDragging = false;
+    if (rotationPanel) {
+      rotationPanel.style.display = 'none';
+    }
+    movePlaneGrid.visible = false;
+    movePlaneGridHelper.visible = false;
+    if (movePlaneGizmoGroup) movePlaneGizmoGroup.visible = false;
   }} else if ( uiID === 'construction/2' ){ if ( toggle === 'active' ){
   console.log( 'construction/2 _active' )
     editObject = 'STEEL_FRAME'
@@ -4867,6 +5099,10 @@ document.addEventListener('mousemove', (e) => {
   if (!isInteractionAllowed(e.clientX, e.clientY)) return;
   // UI監視 編集モード
   handleMouseMove(e.clientX, e.clientY);
+  if (movePlaneRotateDragging) {
+    updateMovePlaneRotateDrag();
+    return;
+  }
   if (moveClickPending && moveDownPos && shouldToggle) {
     const dx = e.clientX - moveDownPos.x;
     const dy = e.clientY - moveDownPos.y;
@@ -4936,6 +5172,10 @@ document.addEventListener('touchmove', (e) => {
 
   // UI監視
   handleMouseMove(touch.clientX, touch.clientY);
+  if (movePlaneRotateDragging) {
+    updateMovePlaneRotateDrag();
+    return;
+  }
   if (moveClickPending && moveDownPos && shouldToggle) {
     const dx = touch.clientX - moveDownPos.x;
     const dy = touch.clientY - moveDownPos.y;
@@ -5282,6 +5522,9 @@ function animate() {
   renderer.setScissorTest(true);
 
   // document.body.classList.toggle('dragging', dragging === true);
+  if (movePlaneMode === 'change_angle') {
+    updateMovePlaneGizmo();
+  }
 
   renderer.render(scene, camera);
 
