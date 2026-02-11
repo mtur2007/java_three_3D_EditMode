@@ -214,8 +214,7 @@ const threeUi = document.getElementById('three-ui');
   let guideRailHover = null;
   let guideHoverPin = null;
 
-  function buildGuideCurve(template, basePoint) {
-    const y = basePoint.y;
+  function buildGuideCurve(template, basePoint, basisQuat = null) {
     let offsets = [];
     switch (template) {
       case 'curve_s':
@@ -232,7 +231,13 @@ const threeUi = document.getElementById('three-ui');
         offsets = [[-6, 0, 0], [0, 0, 0], [6, 0, 0]];
         break;
     }
-    const points = offsets.map((o) => new THREE.Vector3(basePoint.x + o[0], y + o[1], basePoint.z + o[2]));
+    const points = offsets.map((o) => {
+      const local = new THREE.Vector3(o[0], o[1], o[2]);
+      if (basisQuat) {
+        local.applyQuaternion(basisQuat);
+      }
+      return basePoint.clone().add(local);
+    });
     const curve = new THREE.CatmullRomCurve3(points);
     curve.userData = { ...(curve.userData || {}), controlPoints: points };
     return curve;
@@ -4099,8 +4104,21 @@ async function handleMouseDown() {
     }
 
     if (guidePlacementActive && guidePlacementTemplate) {
-      const basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
-      const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
+      let basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
+      let basisQuat = (changeAngleGridTarget?.quaternion || AddPointGuideGrid?.quaternion || null);
+      if (guideAddGridPicks.length > 0) {
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(guideAddGridPicks, true);
+        const hit = hits[0] || null;
+        const hitGrid = hit?.object?.userData?.guideAddGrid || null;
+        if (hit?.point) {
+          basePoint = hit.point.clone();
+        }
+        if (hitGrid?.quaternion) {
+          basisQuat = hitGrid.quaternion;
+        }
+      }
+      const curve = buildGuideCurve(guidePlacementTemplate, basePoint, basisQuat);
       const name = `GuideRail_${Date.now()}`;
       const line = TSys.createTrack(curve, 0, 0x00ff00, name);
       if (line) {
