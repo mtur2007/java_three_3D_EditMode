@@ -321,7 +321,6 @@ const threeUi = document.getElementById('three-ui');
     search_object = false;
     steelFrameMode.setAllowPointAppend(true);
     setGuideGridVisibleFromUI(true);
-    console.log('[guide] activate', { template, guidePlacementActive, editObject, objectEditMode });
   }
 
   const guideButtons = document.querySelectorAll('[data-guide-template]');
@@ -2088,7 +2087,6 @@ function logPillarSideJudgement() {
     return;
   }
   const rows = [];
-  console.log('pillar judgement start');
   for (let i = 0; i < trackCurves.length; i++) {
     for (let j = i + 1; j < trackCurves.length; j++) {
       const a = trackCurves[i];
@@ -2109,24 +2107,17 @@ function logPillarSideJudgement() {
     return `${r1.leftTrack}->${r1.rightTrack}`.localeCompare(`${r2.leftTrack}->${r2.rightTrack}`);
   });
   rows.forEach((row) => {
-    console.log(`[pillar] ${row.leftTrack} -> ${row.rightTrack} : ${row.side}`);
   });
 
   const scored = getOrderedTracksByLateralPosition(trackCurves, 0.5);
   const reversedTracks = scored.filter((row) => row.reversed).map((row) => row.trackName);
   if (reversedTracks.length > 0) {
-    console.log('[pillar-reversed]', reversedTracks.join(', '));
   } else {
-    console.log('[pillar-reversed] none');
   }
   if (scored.length > 0) {
     const rightmost = scored[0].trackName;
     const leftmost = scored[scored.length - 1].trackName;
-    console.log(`[pillar-edge] rightmost: ${rightmost}, leftmost: ${leftmost} (ref: ${scored[0].refTrackName})`);
-    console.log('[pillar-order x-axis]', scored.map((row) => `${row.trackName}:${row.xLocal.toFixed(3)}${row.reversed ? '(reversed)' : ''}`).join(', '));
   }
-
-  console.log('pillar judgement end');
 }
 
 async function loadStructureData(url) {
@@ -3036,9 +3027,12 @@ const createModeHiddenObjects = new Map()
 let sinjyukuCity = null
 let addPointGridActive = false
 let guideAddModeActive = false
+const guideAddGrids = []
+const guideAddGridPicks = []
 let changeAngleGridTarget = null
 let addPointGridY = 0
 const GUIDE_ADD_GRID_COLOR = 0x88aa88;
+const GUIDE_ADD_GRID_SELECTED_COLOR = 0x00ff00;
 
 let choice_object = false
 let search_object = false
@@ -3211,7 +3205,7 @@ async function search_point() {
       guideRailHover = null;
       setGuideHoverPin(null);
     }
-    console.log('hit')
+    // console.log('hit')
     // console.log(intersects.length)
     if (choice_object != intersects[0].object){
       if (choice_object !== false){ 
@@ -3258,7 +3252,7 @@ async function search_point() {
     }
 
   } else {
-    console.log('not hit')
+    // console.log('not hit')
     if (choice_object !== false){
       resetChoiceObjectColor(choice_object);
     }
@@ -3655,6 +3649,12 @@ function updateMovePlaneNormal() {
       changeAngleGridTarget.position.copy(movePlaneAnchor);
       changeAngleGridTarget.quaternion.copy(movePlaneBasisQuat);
       changeAngleGridTarget.updateMatrixWorld(true);
+      const pick = changeAngleGridTarget.userData?.pickMesh;
+      if (pick) {
+        pick.position.copy(changeAngleGridTarget.position);
+        pick.quaternion.copy(changeAngleGridTarget.quaternion).multiply(addPointGridBaseQuat);
+        pick.updateMatrixWorld(true);
+      }
     }
   }
   updateMovePlaneGizmo();
@@ -3726,6 +3726,30 @@ function beginMovePlaneRotateDrag(axisMesh) {
   });
 }
 
+function beginMovePlaneRotateDragAxis(axisWorld, axisLocal = axisWorld) {
+  ensureMovePlaneGizmo();
+  movePlaneRotateAxisLocal = axisLocal.clone().normalize();
+  movePlaneRotateAxis = axisWorld.clone().normalize();
+  movePlaneRotateCenter.copy(movePlaneAnchor);
+  movePlaneRotatePlane.setFromNormalAndCoplanarPoint(movePlaneRotateAxis, movePlaneRotateCenter);
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(movePlaneRotatePlane, hit);
+  if (!ok) { return; }
+  movePlaneRotateStartVector.copy(hit).sub(movePlaneRotateCenter).normalize();
+  movePlaneNormalStart.copy(movePlaneNormal);
+  movePlaneBasisQuatStart.copy(movePlaneBasisQuat);
+  if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
+    movePlaneGizmoYawStart = movePlaneGizmoYaw;
+  }
+  movePlaneRotateDragging = true;
+  efficacy = false;
+  console.log('[change_angle] rotate start (grid)', {
+    axis: movePlaneRotateAxis.toArray(),
+    anchor: movePlaneAnchor.toArray(),
+  });
+}
+
 function updateMovePlaneRotateDrag() {
   raycaster.setFromCamera(mouse, camera);
   const hit = new THREE.Vector3();
@@ -3752,6 +3776,12 @@ function updateMovePlaneRotateDrag() {
     addPointGridHandle.position.copy(movePlaneAnchor);
     addPointGridHandle.quaternion.copy(movePlaneBasisQuat).multiply(addPointGridBaseQuat);
     addPointGridHandle.updateMatrixWorld(true);
+    const pick = changeAngleGridTarget.userData?.pickMesh;
+    if (pick) {
+      pick.position.copy(changeAngleGridTarget.position);
+      pick.quaternion.copy(changeAngleGridTarget.quaternion).multiply(addPointGridBaseQuat);
+      pick.updateMatrixWorld(true);
+    }
   }
   // ギズモは平面に追従させず、Y回転時のみワールドY基準で回す
   if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
@@ -3969,11 +3999,21 @@ async function handleMouseDown() {
     raycaster.setFromCamera(mouse, camera);
     const hits = raycaster.intersectObjects(movePlaneGizmoMeshes, true);
     const hit = hits[0] || null;
-    console.log('[change_angle] gizmo hits:', hits.length);
     if (hit) {
-      console.log('[change_angle] hit axis', hit.object?.userData?.axis);
       beginMovePlaneRotateDrag(hit.object);
       return;
+    }
+    if (guideAddGridPicks.length > 0) {
+      const gridHits = raycaster.intersectObjects(guideAddGridPicks, true);
+      const gridHit = gridHits[0] || null;
+      const pickedGrid = gridHit?.object?.userData?.guideAddGrid || null;
+      if (pickedGrid) {
+        changeAngleGridTarget = pickedGrid;
+        movePlaneAnchor.copy(pickedGrid.position);
+        updateMovePlaneNormal();
+        // クリックで回転開始（ワールドY基準）
+        beginMovePlaneRotateDragAxis(new THREE.Vector3(0, 1, 0));
+      }
     }
     // change_angle 中はポイント追加や配置を行わない
     return;
@@ -4032,6 +4072,25 @@ async function handleMouseDown() {
       AddPointGuideGrid.position.set(point.x, addPointGridY || 0, point.z);
       setAddPointGuideGridVisibleFromUI(true);
       setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
+      // 追加: 現在位置を複製グリッドとして保存
+      const newGrid = new THREE.GridHelper(5, 10, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
+      newGrid.name = 'AddPointGuideGridClone';
+      newGrid.position.copy(AddPointGuideGrid.position);
+      newGrid.quaternion.copy(AddPointGuideGrid.quaternion);
+      scene.add(newGrid);
+      guideAddGrids.push(newGrid);
+      const pick = new THREE.Mesh(
+        new THREE.PlaneGeometry(5, 5),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
+      );
+      pick.name = 'GuideAddGridPick';
+      pick.position.copy(newGrid.position);
+      pick.quaternion.copy(newGrid.quaternion).multiply(addPointGridBaseQuat);
+      pick.userData = { ...pick.userData, guideAddGrid: newGrid };
+      newGrid.userData = { ...newGrid.userData, pickMesh: pick };
+      scene.add(pick);
+      guideAddGridPicks.push(pick);
+      changeAngleGridTarget = newGrid;
       if (movePlaneMode === 'change_angle') {
         movePlaneAnchor.copy(AddPointGuideGrid.position);
         updateMovePlaneNormal();
@@ -4040,7 +4099,6 @@ async function handleMouseDown() {
     }
 
     if (guidePlacementActive && guidePlacementTemplate) {
-      console.log('[guide] place', { guidePlacementActive, guidePlacementTemplate, editObject, objectEditMode });
       const basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
       const curve = buildGuideCurve(guidePlacementTemplate, basePoint);
       const name = `GuideRail_${Date.now()}`;
@@ -4051,7 +4109,6 @@ async function handleMouseDown() {
       }
       createGuideRailPickMesh(curve);
       if (editObject === 'STEEL_FRAME' && curve?.userData?.controlPoints) {
-        console.log('[guide] controlPoints', curve.userData.controlPoints.length, curve.userData.controlPoints);
         curve.userData.controlPoints.forEach((p, idx) => {
           const mesh = steelFrameMode.addPoint(p);
           if (mesh) {
@@ -4064,6 +4121,32 @@ async function handleMouseDown() {
         setMeshListOpacity(targetObjects, 1);
       }
       return;
+    }
+
+    let gridHitPoint = null;
+    if (editObject === 'STEEL_FRAME' && guideAddGridPicks.length > 0) {
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(guideAddGridPicks, true);
+      const hit = hits[0] || null;
+      console.log('[grid-hit] count:', hits.length);
+      if (hit?.point) {
+        gridHitPoint = hit.point.clone();
+        const hitGrid = hit.object?.userData?.guideAddGrid || null;
+        guideAddGrids.forEach((grid) => {
+          setGuideAddGridColor(grid, grid === hitGrid ? GUIDE_ADD_GRID_SELECTED_COLOR : GUIDE_ADD_GRID_COLOR);
+        });
+        console.log('[grid-hit] true');
+      } else {
+        console.log('[grid-hit] false');
+        guideAddGrids.forEach((grid) => {
+          setGuideAddGridColor(grid, GUIDE_ADD_GRID_COLOR);
+        });
+      }
+    } else if (editObject === 'STEEL_FRAME') {
+      console.log('[grid-hit] no picks');
+      guideAddGrids.forEach((grid) => {
+        setGuideAddGridColor(grid, GUIDE_ADD_GRID_COLOR);
+      });
     }
 
     let guideSnapPoint = null;
@@ -4081,6 +4164,9 @@ async function handleMouseDown() {
     let point = (editObject === 'STEEL_FRAME')
       ? coord_DisplayTo3D({ y: addPointGridY })
       : coord_DisplayTo3D({ y: addPointGridY });
+    if (gridHitPoint) {
+      point = gridHitPoint;
+    }
     if (guideSnapPoint) {
       point = guideSnapPoint;
     }
@@ -4201,7 +4287,6 @@ async function handleMouseDown() {
 
       dragging = true;
       efficacy = false;
-      console.log('dragging started');
 
       GuideLine.visible = true
       if (!move_direction_y){
@@ -4236,7 +4321,6 @@ async function handleMouseDown() {
     } else if (objectEditMode === 'CONSTRUCT'){
       if (editObject === 'STEEL_FRAME') {
         steelFrameMode.toggleSelectedPoint(choice_object);
-        console.log('[steel_frame] selected order:', steelFrameMode.getSelectedPointOrder());
         return;
       }
       if (pick_vertexs.includes(choice_object.id)){
@@ -4633,7 +4717,6 @@ export function UIevent (uiID, toggle){
       trackName: pin.userData?.trackName ?? null,
     }));
     const edges = getEdgeTrackNamesForConstruction(0.5);
-    console.log(`[rib_bridge-edge] right=${edges.right} left=${edges.left}`);
     TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
       edgeTrackNames: { right: edges.right, left: edges.left },
     });
@@ -4907,10 +4990,13 @@ export function UIevent (uiID, toggle){
     movePlaneGizmoQuat.identity();
     movePlaneGizmoYaw = 0;
     movePlaneGizmoYawStart = 0;
-    changeAngleGridTarget = AddPointGuideGrid;
+    changeAngleGridTarget = guideAddGrids.length > 0
+      ? guideAddGrids[guideAddGrids.length - 1]
+      : AddPointGuideGrid;
     AddPointGuideGrid.visible = true;
+    GuideGrid.visible = false;
     addPointGridActive = true;
-    movePlaneAnchor.copy(AddPointGuideGrid.position);
+    movePlaneAnchor.copy(changeAngleGridTarget.position);
     updateMovePlaneNormal();
     targetObjects = [addPointGridHandle];
     setMeshListOpacity(targetObjects, 1);
@@ -4963,22 +5049,16 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'Round_bar' ){ if ( toggle === 'active' ){
   console.log( 'Round_bar _active' )
     steelFrameMode.setSegmentProfile('round')
-    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
-    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
   } else {
   console.log( 'Round_bar _inactive' )
   }} else if ( uiID === 'H_beam' ){ if ( toggle === 'active' ){
   console.log( 'H_beam _active' )
     steelFrameMode.setSegmentProfile('h_beam')
-    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
-    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
   } else {
   console.log( 'H_beam _inactive' )
   }} else if ( uiID === 'tubular' ){ if ( toggle === 'active' ){
   console.log( 'tubular _active' )
     steelFrameMode.setSegmentProfile('tubular')
-    console.log('[steel_frame] generate from order:', steelFrameMode.getSelectedPointOrder());
-    console.log('[steel_frame] generated:', steelFrameMode.generateSteelFrame());
   } else {
   console.log( 'tubular _inactive' )
 
@@ -5301,7 +5381,6 @@ document.addEventListener('touchmove', (e) => {
     const dy = touch.clientY - moveDownPos.y;
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
       shouldToggle = false;
-      console.log('shouldToggle:', shouldToggle);
     }
   }
   if (moveClickPending && moveDownPos && !dragging && editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
@@ -5309,7 +5388,6 @@ document.addEventListener('touchmove', (e) => {
     const dy = touch.clientY - moveDownPos.y;
     if (dx * dx + dy * dy >= MOVE_CLICK_THRESHOLD * MOVE_CLICK_THRESHOLD) {
       shouldToggle = false;
-      console.log('shouldToggle:', shouldToggle);
       if (choice_object) {
         if (!steelFrameMode.isSelectedPoint(choice_object)) {
           steelFrameMode.toggleSelectedPoint(choice_object);
