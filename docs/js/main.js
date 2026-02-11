@@ -3015,6 +3015,16 @@ const addPointGridHandle = new THREE.Mesh(
 addPointGridHandle.name = 'AddPointGridHandle';
 addPointGridHandle.rotation.x = -Math.PI / 2;
 scene.add(addPointGridHandle);
+const addPointGridBaseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+
+function setGuideAddGridColor(grid, color) {
+  if (!grid || !grid.material) { return; }
+  if (Array.isArray(grid.material)) {
+    grid.material.forEach((mat) => mat?.color?.set?.(color));
+  } else if (grid.material.color) {
+    grid.material.color.set(color);
+  }
+}
 
 console.log(new THREE.Vector3(5.5, y, -50))
 
@@ -3025,7 +3035,10 @@ let createModeWorldFocused = false
 const createModeHiddenObjects = new Map()
 let sinjyukuCity = null
 let addPointGridActive = false
+let guideAddModeActive = false
+let changeAngleGridTarget = null
 let addPointGridY = 0
+const GUIDE_ADD_GRID_COLOR = 0x88aa88;
 
 let choice_object = false
 let search_object = false
@@ -3224,15 +3237,21 @@ async function search_point() {
         GuideLine.visible = true
 
       } else {
-        GuideGrid.visible = true
+        if (movePlaneMode !== 'change_angle') {
+          GuideGrid.visible = true
+        }
         if (targetObjects.includes(addPointGridHandle)) {
           AddPointGuideGrid.position.copy(choice_object.position)
           setAddPointGuideGridColor(0x88aa88)
-          GuideGrid.position.copy(choice_object.position)
-          GuideGrid.material.color.set(0x88aa88)
+          if (movePlaneMode !== 'change_angle') {
+            GuideGrid.position.copy(choice_object.position)
+            GuideGrid.material.color.set(0x88aa88)
+          }
         } else {
-          GuideGrid.position.copy(choice_object.position)
-          GuideGrid.material.color.set(0x88aa88)
+          if (movePlaneMode !== 'change_angle') {
+            GuideGrid.position.copy(choice_object.position)
+            GuideGrid.material.color.set(0x88aa88)
+          }
         }
         // visibility controlled by UIevent
       }
@@ -3308,15 +3327,21 @@ async function onerun_search_point() {
         GuideLine.visible = true
 
       } else {
-        GuideGrid.visible = true
+        if (movePlaneMode !== 'change_angle') {
+          GuideGrid.visible = true
+        }
         if (targetObjects.includes(addPointGridHandle)) {
           AddPointGuideGrid.position.copy(choice_object.position)
           setAddPointGuideGridColor(0x88aa88)
-          GuideGrid.position.copy(choice_object.position)
-          GuideGrid.material.color.set(0x88aa88)
+          if (movePlaneMode !== 'change_angle') {
+            GuideGrid.position.copy(choice_object.position)
+            GuideGrid.material.color.set(0x88aa88)
+          }
         } else {
-          GuideGrid.position.copy(choice_object.position)
-          GuideGrid.material.color.set(0x88aa88)
+          if (movePlaneMode !== 'change_angle') {
+            GuideGrid.position.copy(choice_object.position)
+            GuideGrid.material.color.set(0x88aa88)
+          }
         }
         // visibility controlled by UIevent
       }
@@ -3623,6 +3648,15 @@ function updateMovePlaneNormal() {
   movePlaneGridHelper.position.copy(movePlaneAnchor);
   movePlaneGridHelper.quaternion.copy(movePlaneBasisQuat);
   movePlaneGridHelper.updateMatrixWorld(true);
+  if (movePlaneMode === 'change_angle') {
+    addPointGridHandle.position.copy(movePlaneAnchor);
+    addPointGridHandle.quaternion.copy(movePlaneBasisQuat).multiply(addPointGridBaseQuat);
+    if (changeAngleGridTarget) {
+      changeAngleGridTarget.position.copy(movePlaneAnchor);
+      changeAngleGridTarget.quaternion.copy(movePlaneBasisQuat);
+      changeAngleGridTarget.updateMatrixWorld(true);
+    }
+  }
   updateMovePlaneGizmo();
 }
 
@@ -3711,6 +3745,14 @@ function updateMovePlaneRotateDrag() {
   movePlaneGridHelper.position.copy(movePlaneAnchor);
   movePlaneGridHelper.quaternion.copy(movePlaneBasisQuat);
   movePlaneGridHelper.updateMatrixWorld(true);
+  if (movePlaneMode === 'change_angle' && changeAngleGridTarget) {
+    changeAngleGridTarget.position.copy(movePlaneAnchor);
+    changeAngleGridTarget.quaternion.copy(movePlaneBasisQuat);
+    changeAngleGridTarget.updateMatrixWorld(true);
+    addPointGridHandle.position.copy(movePlaneAnchor);
+    addPointGridHandle.quaternion.copy(movePlaneBasisQuat).multiply(addPointGridBaseQuat);
+    addPointGridHandle.updateMatrixWorld(true);
+  }
   // ギズモは平面に追従させず、Y回転時のみワールドY基準で回す
   if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
     movePlaneGizmoYaw = movePlaneGizmoYawStart + angle;
@@ -3933,6 +3975,8 @@ async function handleMouseDown() {
       beginMovePlaneRotateDrag(hit.object);
       return;
     }
+    // change_angle 中はポイント追加や配置を行わない
+    return;
   }
 
   if (constructionModeActive) {
@@ -3980,6 +4024,20 @@ async function handleMouseDown() {
   if (objectEditMode === 'CREATE_NEW') {
 
     console.log('adding point...')
+
+    if (guideAddModeActive) {
+      const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+      addPointGridActive = true;
+      addPointGridHandle.position.set(point.x, addPointGridY || 0, point.z);
+      AddPointGuideGrid.position.set(point.x, addPointGridY || 0, point.z);
+      setAddPointGuideGridVisibleFromUI(true);
+      setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
+      if (movePlaneMode === 'change_angle') {
+        movePlaneAnchor.copy(AddPointGuideGrid.position);
+        updateMovePlaneNormal();
+      }
+      return;
+    }
 
     if (guidePlacementActive && guidePlacementTemplate) {
       console.log('[guide] place', { guidePlacementActive, guidePlacementTemplate, editObject, objectEditMode });
@@ -4684,13 +4742,13 @@ export function UIevent (uiID, toggle){
     setAddPointGuideGridVisibleFromUI(false);
     guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = false; });
 
-  }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
-  console.log( 'guide _active' )
+  }} else if ( uiID === 'template' ){ if ( toggle === 'active' ){
+  console.log( 'template _active' )
     if (guideWindow) {
       guideWindow.style.display = 'block';
     }
   } else {
-  console.log( 'guide _inactive' )
+  console.log( 'template _inactive' )
     if (guideWindow) {
       guideWindow.style.display = 'none';
     }
@@ -4698,7 +4756,36 @@ export function UIevent (uiID, toggle){
     guidePlacementActive = false;
     guideRailHover = null;
     setGuideHoverPin(null);
-    // guide を閉じたら add_point の状態を再適用する
+    // template を閉じたら add_point の状態を再適用する
+    UIevent('add_point', 'active');
+  }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
+  console.log( 'guide _active' )
+  } else {
+  console.log( 'guide _inactive' )
+  }} else if ( uiID === 'add' ){ if ( toggle === 'active' ){
+  console.log( 'add _active' )
+    guideAddModeActive = true;
+    if (guideWindow) {
+      guideWindow.style.display = 'none';
+    }
+    editObject = 'STEEL_FRAME';
+    objectEditMode = 'CREATE_NEW';
+    search_object = true;
+    // 平面指定でガイド用グリッドを表示
+    addPointGridActive = true;
+    addPointGridY = addPointGridY || 0;
+    const gridPos = coord_DisplayTo3DAtCenter({ y: addPointGridY });
+    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
+    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    setAddPointGuideGridVisibleFromUI(true);
+  } else {
+  console.log( 'add _inactive' )
+    guideAddModeActive = false;
+    guidePlacementTemplate = null;
+    guidePlacementActive = false;
+    guideRailHover = null;
+    setGuideHoverPin(null);
+    // add を閉じたら add_point の状態を再適用する
     UIevent('add_point', 'active');
 
   }} else if ( uiID === 'y_add' ){ if ( toggle === 'active' ){
@@ -4820,16 +4907,26 @@ export function UIevent (uiID, toggle){
     movePlaneGizmoQuat.identity();
     movePlaneGizmoYaw = 0;
     movePlaneGizmoYawStart = 0;
+    changeAngleGridTarget = AddPointGuideGrid;
+    AddPointGuideGrid.visible = true;
+    addPointGridActive = true;
+    movePlaneAnchor.copy(AddPointGuideGrid.position);
+    updateMovePlaneNormal();
+    targetObjects = [addPointGridHandle];
+    setMeshListOpacity(targetObjects, 1);
+    search_object = true;
+    search_point();
     if (rotationPanel) {
       rotationPanel.style.display = 'block';
     }
-    movePlaneGrid.visible = true;
-    movePlaneGridHelper.visible = true;
+    movePlaneGrid.visible = false;
+    movePlaneGridHelper.visible = false;
   } else {
   console.log( 'change_angle _inactive' )
     if (movePlaneMode === 'change_angle') {
       movePlaneMode = 'default'
     }
+    changeAngleGridTarget = null;
     movePlaneRotateDragging = false;
     if (rotationPanel) {
       rotationPanel.style.display = 'none';

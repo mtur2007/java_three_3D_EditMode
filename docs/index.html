@@ -676,8 +676,9 @@
             <li><strong>creat → view</strong>: クリエイト系の表示切替。</li>
             <li><strong>creat → add_point</strong>: 点の追加モード。タップで点を生成し、軌道として結びます。</li>
             <li><strong>add_point → y_add</strong>: 高さ方向（Y）だけを移動する補助モード。</li>
-            <li><strong>add_point → guide</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
-            <li><strong>guide のホバー</strong>: ガイド軌道にホバー中はガイド色が変化し、ピンが表示されます。</li>
+            <li><strong>add_point → template</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
+            <li><strong>add_point → guide → add</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
+            <li><strong>template / add のホバー</strong>: ガイド軌道にホバー中はガイド色が変化し、ピンが表示されます。</li>
             <li><strong>add_point のガイド配置</strong>: ガイド軌道に当たっている間は、その軌道上に点を打てます。</li>
             <li><strong>creat → construction</strong>: 追加した点を選択して `pillar` / `rite` などの部材を選択して生成。</li>
             <li><strong>move_point</strong>: 既存の点を移動。`x_z_sf`/`y_sf` で移動平面切替。</li>
@@ -1004,7 +1005,9 @@ window.addEventListener('load', () => {
     'view': 'プレビュー表示',
     'add_point': 'ポイント追加',
     'y_add': '生成時の高さの変更',
-    'guide': '生成サポーターの追加',
+    'template': '生成サポーターの追加',
+    'guide': 'ガイドメニュー',
+    'add': 'ガイド追加',
     'rotation': '回転',
     'move_point': 'ポイント移動',
     'change_angle': '移動平面の角度変更',

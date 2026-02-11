@@ -181,13 +181,16 @@ const uiTree = {
             'view':'',
             'add_point':{
                 'y_add':'',
-                'guide':''
+                'template':'',
+                'guide':{
+                    'add':'',
+                    'change_angle':'',
+                }
             },
             'rotation':'',
             'move_point':{
                 'x_z_sf':'',
                 'y_sf':'',
-                'change_angle':'',
             },
             'construction':{
                 'pillar':{
