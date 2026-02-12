@@ -224,6 +224,7 @@ const uiTree = {
                 'guide': { 'add': '', 'change_angle': '' },
             },
             'rotation': '',
+            'search': '',
             'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '' },
             'construction': {
                 'pillar': { 'Round_bar': '', 'H_beam': '' },

@@ -4,6 +4,66 @@
   <meta charset="UTF-8" />
   <title>都市を走る鉄道模型 DEMO</title>
   <style>
+    #loading-overlay {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 1px;
+      height: 1px;
+      background-color: #0f1726;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(90, 146, 255, 0.24), transparent 40%),
+        linear-gradient(180deg, rgba(8, 14, 24, 0.96), rgba(10, 18, 30, 0.96));
+      color: #eaf3ff;
+      transition: opacity 260ms ease, visibility 260ms ease;
+    }
+    #loading-overlay.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .loading-panel {
+      min-width: min(80vw, 360px);
+      padding: 18px 20px;
+      border-radius: 12px;
+      border: 1px solid rgba(154, 198, 255, 0.36);
+      background: rgba(14, 24, 42, 0.72);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+      text-align: center;
+      backdrop-filter: blur(8px);
+    }
+    .loading-title {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      opacity: 0.96;
+    }
+    #loading-text {
+      margin: 0;
+      font-size: 12px;
+      color: #c7ddff;
+    }
+    .loading-bar {
+      width: 100%;
+      height: 7px;
+      margin: 10px 0 6px;
+      border-radius: 999px;
+      background: rgba(163, 196, 250, 0.2);
+      overflow: hidden;
+    }
+    .loading-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #4a92ff, #66d6ff);
+      transition: width 200ms ease;
+    }
+
     @font-face {
       font-family: 'KH Dot Akihabara';
       src: url('fonts/KH-Dot-Akihabara-16.ttf') format('truetype');
@@ -11,7 +71,19 @@
       font-style: normal;
       font-display: swap;
     }
-    body { margin: 0; overflow: auto; font-family: 'KH Dot Akihabara', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background-color: #0f1726;
+      overscroll-behavior-y: none;
+      overscroll-behavior-x: none;
+    }
+    body {
+      overflow: auto;
+      overflow-x: hidden;
+      font-family: 'KH Dot Akihabara', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+      background-color: #0f1726;
+    }
     /* Three.js のキャンバス状態 */
     #three-canvas.full-canvas {
       position: fixed;
@@ -150,6 +222,7 @@
     #three-ui {
       position: absolute; /* intro 時は intro-wrapper 内で相対配置 */
       inset: 0;
+      display: none; /* 初期状態は非表示。表示切替はJSで行う */
       pointer-events: none; /* 子要素のみ反応させる */
       z-index: 2;
     }
@@ -205,6 +278,7 @@
     /* ただし three-ui（キャンバス上の UI）は表示する */
     body.only-canvas #three-ui { display: block !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; pointer-events: auto !important; }
     body.only-canvas .canvas-ui { pointer-events: auto !important; }
+    body.only-canvas #loading-overlay { display: flex !important; }
   </style>
 
   <!-- Google Analytics 設定 閲覧数の測定用です。-->
@@ -224,6 +298,15 @@
   </script>
 </head>
 <body>
+  <div id="loading-overlay" role="status" aria-live="polite" aria-label="ロード中">
+    <div class="loading-panel">
+      <p class="loading-title">LOADING SCENE</p>
+      <div class="loading-bar" aria-hidden="true">
+        <div id="loading-bar-fill" class="loading-bar-fill"></div>
+      </div>
+      <p id="loading-text">読み込み中...</p>
+    </div>
+  </div>
 <!--   
   <button id="speed-up" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 200px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">▶︎▷</button>
 
@@ -233,38 +316,155 @@
   
   <button id="btn-down" class="no-touch-highlight" style="position: fixed; left: 20px; bottom: 40px; width: 60px; height: 60px; font-size: 24px; border-radius: 30px; z-index: 20; opacity: 0.3;">🔻</button> -->
   <style>
+    :root {
+      --bg-top: #0f1726;
+      --bg-bottom: #1d2f4d;
+      --panel-bg: rgba(14, 22, 36, 0.72);
+      --panel-border: rgba(180, 210, 255, 0.24);
+      --text-main: #eef5ff;
+      --text-sub: #c2d4ee;
+      --accent: #58a6ff;
+      --accent-strong: #3c8dff;
+      --shadow-deep: 0 16px 40px rgba(0, 0, 0, 0.45);
+    }
+
     .section {
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.6);
+      background: transparent;
       z-index: 200;
-      min-height: 80vh; /* 少し短めにしてセクション間の余白を減らす */
-      padding: 12px 0 0 0;  /* 上方向のパディングのみにして下余白を無くす */
-      margin: 0; /* セクション間の外側の余白を無くす */
+      min-height: 72vh;
+      padding: 18px 0 0 0;
+      margin: 0;
+    }
+    html {
+      background:
+        radial-gradient(circle at 10% 10%, rgba(91, 159, 255, 0.28), transparent 42%),
+        radial-gradient(circle at 80% 5%, rgba(89, 216, 255, 0.16), transparent 36%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      background-attachment: fixed;
+    }
+    body {
+      background:
+        radial-gradient(circle at 10% 10%, rgba(91, 159, 255, 0.28), transparent 42%),
+        radial-gradient(circle at 80% 5%, rgba(89, 216, 255, 0.16), transparent 36%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      color: var(--text-main);
+      line-height: 1.6;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(91, 159, 255, 0.28), transparent 42%),
+        radial-gradient(circle at 80% 5%, rgba(89, 216, 255, 0.16), transparent 36%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
     }
 
-    /* 連続するセクション間の隙間をゼロにする */
     .section + .section { margin-top: 0; padding-top: 0; }
-
-    /* Welcome の内側余白も詰める */
     .welcome-content { margin-bottom: 0; padding-bottom: 0; }
+    .glass-panel {
+      width: min(1080px, 90vw);
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow-deep);
+      padding: 24px;
+    }
+    .intro-layout {
+      display: flex;
+      gap: 16px;
+      align-items: stretch;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    #intro-wrapper {
+      flex: 1 1 540px;
+      min-height: 440px;
+      max-width: 700px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(160, 196, 255, 0.2);
+      border-radius: 12px;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .welcome-side {
+      flex: 1 1 280px;
+      min-width: 240px;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+    }
+    .preview-card {
+      background: rgba(10, 18, 32, 0.62);
+      border: 1px solid rgba(149, 187, 246, 0.26);
+      border-radius: 12px;
+      padding: 16px;
+      color: var(--text-main);
+    }
+    .preview-card h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      color: #f4f8ff;
+    }
+    .preview-card ul,
+    #instructions-panel ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-sub);
+    }
+    .preview-card p {
+      margin: 0;
+      color: var(--text-sub);
+      font-size: 13px;
+    }
+    .preview-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    #preview-start {
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+    #preview-start {
+      padding: 14px 20px;
+      font-size: 18px;
+      background: linear-gradient(135deg, #2a84ff, #206fe6);
+      color: #fff;
+      box-shadow: 0 8px 20px rgba(16, 86, 189, 0.45);
+    }
+    #preview-start:hover {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
 
     .control-button {
-    position: absolute;
+      position: absolute;
       width: 60px;
       height: 60px;
       font-size: 24px;
-      border: none;
+      border: 1px solid rgba(164, 194, 255, 0.3);
       border-radius: 30px;
-      background-color: rgba(255, 255, 255, 0.2); /* 透過っぽい */
-      color: white;
+      background-color: rgba(14, 26, 44, 0.65);
+      color: #ecf3ff;
       z-index: 20;
-      backdrop-filter: blur(4px); /* iOSっぽいガラス感 */
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      backdrop-filter: blur(4px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
       transition: all 0.1s ease-in-out;
-      
       user-select: none;
       -webkit-user-select: none;
       -moz-user-select: none;
@@ -275,16 +475,17 @@
 
   .control-square-button {
     position: relative;
-    width: 400px;
+    width: auto;
+    min-width: 120px;
     height: 40px;
-    font-size: 24px;
-    border: none;
-    border-radius: 4px; /* ← 四角っぽい角丸（完全に四角なら 0 に） */
-    background-color: rgba(255, 255, 255, 0.2);
-    color: white;
+    font-size: 14px;
+    border: 1px solid rgba(164, 194, 255, 0.35);
+    border-radius: 8px;
+    background-color: rgba(14, 26, 44, 0.72);
+    color: #eef6ff;
     z-index: 20;
     backdrop-filter: blur(4px);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.35);
     transition: all 0.1s ease-in-out;
 
     user-select: none;
@@ -296,16 +497,16 @@
   }
   .log-control-square-button {
     position: relative;
-    width: 800px;
-    height: 400px;
-    font-size: 24px;
+    width: min(70vw, 720px);
+    height: min(40vh, 380px);
+    font-size: 14px;
     border: none;
-    border-radius: 4px; /* ← 四角っぽい角丸（完全に四角なら 0 に） */
-    background-color: rgba(255, 255, 255, 0.2);
-    color: white;
+    border-radius: 10px;
+    background-color: rgba(242, 248, 255, 0.92);
+    color: #1d2a3c;
     z-index: 20;
     backdrop-filter: blur(4px);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.3);
     transition: all 0.1s ease-in-out;
 
     user-select: none;
@@ -355,14 +556,16 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(255,255,255,0.9);
-    padding: 6px 12px;
+    background: rgba(9, 16, 28, 0.92);
+    border-top: 1px solid rgba(150, 184, 238, 0.25);
+    color: #d9e8ff;
+    padding: 8px 12px;
     font-size: 12px;
     text-align: center;
     z-index: 9999;
-    box-shadow: 0 -1px 6px rgba(0,0,0,0.12);
+    box-shadow: 0 -1px 10px rgba(0,0,0,0.2);
   }
-  .credits-footer a { color: #0645ad; text-decoration: underline; }
+  .credits-footer a { color: #8cc8ff; text-decoration: underline; }
 
   /* コントローラーのスタイル */
   .circle-ctrl-area {
@@ -405,13 +608,61 @@
     position: relative; /* ここを基準にする */
     width: 10%;
     height: 590px;
-    border: 1px solid rgba(221, 221, 221, 0.2); /* 透明度 0.5 (=50%) */
+    border: 1px solid rgba(195, 219, 255, 0.25);
+    border-radius: 10px;
+    background: rgba(8, 16, 28, 0.45);
+    backdrop-filter: blur(8px);
   }
   #UiGroup button {
     position: absolute; /* top が効くようにする */
     left: 0;
     width: 72px;
     height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(180, 208, 255, 0.32);
+    background: rgba(10, 20, 36, 0.85);
+    color: #e6f1ff;
+  }
+  #frontViewButtons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  #frontViewButtons .frontViewBtn {
+    border: 1px solid rgba(164, 194, 255, 0.35);
+    border-radius: 8px;
+    background: rgba(12, 26, 46, 0.78);
+    color: #e6f2ff;
+    padding: 7px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: filter 120ms ease, transform 120ms ease;
+  }
+  #frontViewButtons .frontViewBtn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+  }
+  #toggle-daynight {
+    border: 1px solid rgba(164, 194, 255, 0.34);
+    background: rgba(12, 26, 46, 0.78);
+    color: #ebf5ff;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+    cursor: pointer;
+  }
+  #instructions-panel,
+  #rotation-panel {
+    border: 1px solid rgba(170, 200, 250, 0.3);
+  }
+  #rotation-panel input,
+  #rotation-apply {
+    border-radius: 8px;
+  }
+  #rotation-apply {
+    border: 1px solid rgba(160, 194, 252, 0.45);
+    background: linear-gradient(135deg, #2a84ff, #246fd9);
+    color: #fff;
+    cursor: pointer;
   }
 
   .edit-guide {
@@ -420,18 +671,20 @@
     gap: 14px;
   }
   .edit-guide .guide-block {
-    background: rgba(0,0,0,0.35);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 12px;
+    background: rgba(8, 17, 29, 0.62);
+    border: 1px solid rgba(169, 202, 255, 0.2);
+    border-radius: 12px;
+    padding: 14px;
   }
   .edit-guide .guide-block h3 {
     margin: 0 0 8px 0;
     font-size: 15px;
+    color: #f0f6ff;
   }
   .edit-guide .guide-block ul {
     margin: 0 0 0 18px;
     line-height: 1.7;
+    color: var(--text-sub);
   }
 
   #guide-window {
@@ -526,13 +779,55 @@
     font-size: 10px;
     color: #777;
   }
+  .operation-content h1 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 28px;
+    letter-spacing: 0.02em;
+  }
+  .operation-content > p {
+    color: var(--text-sub);
+  }
+  .operation-note {
+    margin-top: 14px;
+    font-size: 13px;
+    opacity: 0.9;
+    color: var(--text-sub);
+  }
+
+  @media (max-width: 900px) {
+    .glass-panel {
+      width: calc(100vw - 24px);
+      padding: 16px;
+      border-radius: 14px;
+    }
+    .section {
+      min-height: auto;
+      padding-top: 12px;
+    }
+    #intro-wrapper {
+      min-height: 300px;
+      flex-basis: 100%;
+    }
+    #UiGroup {
+      height: 420px;
+    }
+    #show-instructions-btn {
+      right: 10px;
+      top: 12px;
+    }
+    .log-control-square-button {
+      width: min(88vw, 640px);
+      height: min(34vh, 300px);
+    }
+  }
 
 </style>
   
 
   <!-- Welcome overlay with a scaled-down canvas preview -->
   <section id="welcome" class="section">
-      <div class="welcome-content" style="width: 80%; max-width: 960px; background: rgba(255,255,255,0.06); padding: 24px; border-radius: 12px; backdrop-filter: blur(6px);"> 
+      <div class="welcome-content glass-panel">
       <div class="led-marquee" aria-label="announcement">
 
         <div class="led-marquee__inner" id="led-marquee-inner">
@@ -542,8 +837,8 @@
         </div>
 
       </div>
-      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
-        <div id="intro-wrapper" style="flex: 1 1 480px; max-width: 640px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 8px; display:flex; align-items:center; justify-content:center; position: relative;">
+      <div class="intro-layout">
+        <div id="intro-wrapper">
           <canvas id="three-canvas"></canvas>
           <!-- three-ui: プレビュー時はここにボタン群を表示 -->
           <div id="three-ui">
@@ -684,27 +979,24 @@
             </div>
           </div>
         </div>
-        <div style="flex: 1 1 260px; min-width: 220px;">
-          <div id="preview-feature" style="margin:12px 0; padding:16px; background: rgba(255,255,255,0.04); border-radius:10px; text-align:center;">
-            <h2 style="margin:0 0 8px 0; font-size:18px;">操作説明</h2>
+        <div class="welcome-side">
+          <div id="preview-feature" class="preview-card">
+            <h2>操作説明</h2>
             <ul>
                   [視点] 画面上をスライド/ドラッグで視点を回転・移動します。<br>
                   [移動] 左下のコントローラ 又は A.S.D.W キーで 前後左右に移動できます。<br>
                   [表示切替] 右上のボタンで列車ビュー等を切替えます。<br>
                   [フルスクリーン] 「表示を開始する」でフルスクリーン表示に切替、再度「操作説明」を閉じてプレビューに戻せます。
             </ul>
-            <p style="margin-bottom:0;">※ モバイルでは画面を長押しするとズームします。</p>
+            <p>※ モバイルでは画面を長押しするとズームします。</p>
 
           </div>
-        </div>
-      </div>
-      <div style="flex: 1 1 260px; min-width: 220px;">
-        <div id="preview-feature" style="margin:12px 0; padding:16px; background: rgba(255,255,255,0.04); border-radius:10px; text-align:center;">
-          <h2 style="margin:0 0 8px 0; font-size:18px;">プレビュー用 操作パネル</h2>
-          <p style="margin:0 0 12px 0; opacity:0.9;">ここからフルスクリーン表示に切替えられます。</p>
-          <div style="display:flex; gap:10px; justify-content:center;">
-            <button id="preview-start" style="padding:14px 20px; font-size:18px; border-radius:10px; background:#0078d4; color:#fff; border:none;">表示を開始する</button>
-            <button id="preview-skip" style="padding:12px 16px; font-size:16px; border-radius:10px; background:rgba(0,0,0,0.6); color:#fff; border:none;">プレビューのまま閉じる</button>
+          <div id="preview-launch-card" class="preview-card">
+            <h2>プレビュー用 操作パネル</h2>
+            <p style="margin-bottom:12px;">ここからフルスクリーン表示に切替えられます。</p>
+            <div class="preview-actions">
+              <button id="preview-start">表示を開始する</button>
+            </div>
           </div>
         </div>
       </div>
@@ -712,12 +1004,40 @@
   </section>
 
   <section id="operation" class="section">
-    <div style="width: 80%; max-width: 960px; background: rgba(255,255,255,0.06); padding: 24px; border-radius: 12px; backdrop-filter: blur(6px); color: white;"> 
-      <h1 style="margin-top: 0;">編集モードの説明</h1>
+    <div class="operation-content glass-panel">
+      <h1>編集モードの説明</h1>
       
       <p>このモードでは、線路の形状の編集、構造物の配置から作成まで行えます。<br>以下は <strong>edit</strong> と <strong>creat</strong> で分けた説明です。</p>
 
       <div class="edit-guide">
+        <div class="guide-block">
+          <h3>モード早見表（UIボタン別）</h3>
+          <ul>
+            <li><strong>🎦 see</strong>: 鑑賞モード。編集用の当たり判定を無効化し、表示確認に集中します。</li>
+            <li><strong>🛠️ edit</strong>: 編集モードの入口。以下の rail / creat / custom を選んで作業します。</li>
+            <li><strong>🛤️ rail</strong>: 線路編集モード。</li>
+            <li><strong>rail → new</strong>: 線路の制御点を追加します。</li>
+            <li><strong>rail → move</strong>: 線路制御点を移動します。</li>
+            <li><strong>move → x_z / y</strong>: 平面移動か高さ移動かを切り替えます。</li>
+            <li><strong>rail → structure → new</strong>: 構造物配置用のピンを追加します。</li>
+            <li><strong>rail → structure → construction</strong>: ピンから bridge / elevated / wall / floor / pillar / rib_bridge / tunnel_rect を生成します。</li>
+            <li><strong>creat → view</strong>: クリエイト対象の表示/非表示を確認します。</li>
+            <li><strong>creat → add_point</strong>: 点を追加して形状の基礎を作ります。</li>
+            <li><strong>add_point → y_add</strong>: 追加基準面の高さ（Y）を調整します。</li>
+            <li><strong>add_point → template</strong>: テンプレートガイドを使って配置します。</li>
+            <li><strong>add_point → guide → add</strong>: ガイド面を追加します。</li>
+            <li><strong>add_point → guide → change_angle</strong>: 追加したガイド面の角度を調整します。</li>
+            <li><strong>creat → rotation</strong>: 選択点群をまとめて回転します（回転パネル対応）。</li>
+            <li><strong>creat → move_point</strong>: 既存点を直接移動します。</li>
+            <li><strong>move_point → x_z_sf / y_sf</strong>: 点移動の軸を切り替えます。</li>
+            <li><strong>move_point → rotation</strong>: 点ごとの回転ギズモを使って向きを編集します（回転パネル対応）。</li>
+            <li><strong>creat → construction</strong>: 点列から部材を生成します。</li>
+            <li><strong>construction → pillar → Round_bar / H_beam</strong>: 柱部材の断面種別を選択して生成します。</li>
+            <li><strong>construction → rite → tubular</strong>: チューブ部材を生成します。</li>
+            <li><strong>custom → new / move / construct</strong>: カスタム形状向けの追加・移動・構築を行います。</li>
+          </ul>
+        </div>
+
         <div class="guide-block">
           <h3>edit（編集）/ 軌道の編集や、橋・トンネルといった構造物の生成を簡単に行えるモード</h3>
           <ul>
@@ -747,14 +1067,8 @@
         </div>
       </div>
 
-      <p style="margin: 0 0 12px 0; opacity:0.85;">ポイント: `add_point` を有効にするとガイド判定やガイドチューブが有効になります。`move` 中はガイドホバーは停止します。</p>
-      
-      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
-        <div id="intro-wrapper" style="flex: 1 1 480px; max-width: 640px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 8px; display:flex; align-items:center; justify-content:center; position: relative;">
-          <canvas id="three-canvas"></canvas>
-          <!-- three-ui: プレビュー時はここにボタン群を表示 -->
-        </div>
-      <p style="opacity:0.8; font-size:13px; margin-top:12px;">※ モバイルではタッチ操作、デスクトップではマウスで操作できます。</p>
+      <p class="operation-note">ポイント: `add_point` を有効にするとガイド判定やガイドチューブが有効になります。`move` 中はガイドホバーは停止します。</p>
+      <p class="operation-note">※ モバイルではタッチ操作、デスクトップではマウスで操作できます。</p>
     </div>
   </section>
   
@@ -1068,6 +1382,7 @@ window.addEventListener('load', () => {
     'guide': 'ガイドメニュー',
     'add': 'ガイド追加',
     'rotation': '回転',
+    'search': '角度サーチ',
     'rotation/2': 'ポイント回転',
     'move_point': 'ポイント移動',
     'change_angle': '移動平面の角度変更',

@@ -71,6 +71,116 @@ const scene = new THREE.Scene();
 
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingText = document.getElementById('loading-text');
+const loadingBarFill = document.getElementById('loading-bar-fill');
+let loadingDone = false;
+let loadingReady = false;
+let renderedFramesSinceReady = 0;
+let loadingReadyAt = 0;
+const LOADING_STABLE_FRAMES = 20;
+const LOADING_MIN_WAIT_MS = 450;
+
+function positionLoadingOverlayToCanvas() {
+  if (!loadingOverlay || !canvas || loadingDone) { return; }
+  const rect = canvas.getBoundingClientRect();
+  // サブピクセル丸め誤差で端に隙間が出ないよう、1px外側まで拡張して配置する。
+  const bleed = 2;
+  const left = Math.max(0, Math.floor(rect.left - bleed));
+  const top = Math.max(0, Math.floor(rect.top - bleed));
+  const right = Math.min(window.innerWidth, Math.ceil(rect.right + bleed));
+  const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + bleed));
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+  loadingOverlay.style.left = `${left}px`;
+  loadingOverlay.style.top = `${top}px`;
+  loadingOverlay.style.width = `${width}px`;
+  loadingOverlay.style.height = `${height}px`;
+  const canvasRadius = window.getComputedStyle(canvas).borderRadius || '0px';
+  loadingOverlay.style.borderRadius = canvas.classList.contains('intro-canvas') ? canvasRadius : '0px';
+}
+
+function setLoadingProgress(loaded, total, url = '') {
+  if (!loadingOverlay) { return; }
+  const safeTotal = Math.max(0, Number(total) || 0);
+  const safeLoaded = Math.max(0, Number(loaded) || 0);
+  const percent = safeTotal > 0 ? Math.min(100, Math.round((safeLoaded / safeTotal) * 100)) : 0;
+  if (loadingBarFill) {
+    loadingBarFill.style.width = `${percent}%`;
+  }
+  if (loadingText) {
+    const tail = url ? ` (${url.split('/').pop()})` : '';
+    loadingText.textContent = safeTotal > 0
+      ? `読み込み中... ${safeLoaded}/${safeTotal} (${percent}%)${tail}`
+      : '読み込み中...';
+  }
+}
+
+function hideLoadingOverlay() {
+  if (!loadingOverlay || loadingDone) { return; }
+  loadingDone = true;
+  if (loadingBarFill) {
+    loadingBarFill.style.width = '100%';
+  }
+  if (loadingText) {
+    loadingText.textContent = '読み込み完了';
+  }
+  requestAnimationFrame(() => {
+    loadingOverlay.classList.add('is-hidden');
+  });
+}
+
+function tryFinishLoadingOverlay() {
+  if (loadingDone) { return; }
+  if (!loadingReady) { return; }
+  const elapsed = loadingReadyAt > 0 ? (performance.now() - loadingReadyAt) : 0;
+  if (renderedFramesSinceReady < LOADING_STABLE_FRAMES || elapsed < LOADING_MIN_WAIT_MS) {
+    if (loadingText) {
+      loadingText.textContent = `描画準備中... (${Math.min(renderedFramesSinceReady, LOADING_STABLE_FRAMES)}/${LOADING_STABLE_FRAMES})`;
+    }
+    return;
+  }
+  hideLoadingOverlay();
+}
+
+function markLoadingReady() {
+  if (loadingReady) { return; }
+  loadingReady = true;
+  loadingReadyAt = performance.now();
+  renderedFramesSinceReady = 0;
+  tryFinishLoadingOverlay();
+}
+
+function markRenderFrame() {
+  if (!loadingReady || loadingDone) { return; }
+  renderedFramesSinceReady += 1;
+  tryFinishLoadingOverlay();
+}
+
+THREE.DefaultLoadingManager.onStart = (_url, itemsLoaded, itemsTotal) => {
+  setLoadingProgress(itemsLoaded, itemsTotal);
+};
+
+THREE.DefaultLoadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
+  setLoadingProgress(itemsLoaded, itemsTotal, url);
+};
+
+THREE.DefaultLoadingManager.onLoad = () => {
+  markLoadingReady();
+};
+
+THREE.DefaultLoadingManager.onError = (url) => {
+  if (loadingText) {
+    loadingText.textContent = `一部の読み込みに失敗しました: ${url}`;
+  }
+  setTimeout(markLoadingReady, 900);
+};
+
+// Fallback: ローダー管理に載らない処理が残っても、window load後に終了可能へ遷移。
+window.addEventListener('load', () => {
+  positionLoadingOverlayToCanvas();
+  setTimeout(markLoadingReady, 400);
+}, { once: true });
 
 // 初期はウェルカム用の縮小プレビューがある場合、そのサイズに合わせる。
 const introWrapper = document.getElementById('intro-wrapper');
@@ -88,7 +198,6 @@ const threeUi = document.getElementById('three-ui');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
-  const previewSkipBtn = document.getElementById('preview-skip');
 
   // 初期表示: プレビューでは three-ui を隠してプレビュー用パネルを表示
   if (threeUi) {
@@ -174,26 +283,39 @@ const threeUi = document.getElementById('three-ui');
 
     const meshes = getRotateSelectionMeshes();
     if (movePlaneMode === 'change_angle') {
+      const degToRad = Math.PI / 180;
+      const state = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
+        ? { ...changeAngleGridTarget.userData.changeAnglePanelAngles }
+        : { ...movePlanePanelAngles };
       const xRaw = rotationInputX?.value?.trim?.() ?? '';
       const yRaw = rotationInputY?.value?.trim?.() ?? '';
       const zRaw = rotationInputZ?.value?.trim?.() ?? '';
-      const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : movePlaneAngles.x;
-      const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : movePlaneAngles.y;
-      const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : movePlaneAngles.z;
-      movePlaneAngles = { x: axDeg, y: ayDeg, z: azDeg };
+      const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(state.x) || 0);
+      const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(state.y) || 0);
+      const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(state.z) || 0);
+      const dx = axDeg - (Number(state.x) || 0);
+      const dy = ayDeg - (Number(state.y) || 0);
+      const dz = azDeg - (Number(state.z) || 0);
+
+      if (Math.abs(dx) > 1e-6) {
+        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(movePlaneBasisQuat).normalize();
+        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, dx * degToRad);
+        movePlaneBasisQuat.copy(qx.multiply(movePlaneBasisQuat)).normalize();
+      }
+      if (Math.abs(dy) > 1e-6) {
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dy * degToRad);
+        movePlaneBasisQuat.copy(qy.multiply(movePlaneBasisQuat)).normalize();
+      }
+      if (Math.abs(dz) > 1e-6) {
+        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(movePlaneBasisQuat).normalize();
+        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, dz * degToRad);
+        movePlaneBasisQuat.copy(qz.multiply(movePlaneBasisQuat)).normalize();
+      }
       updateMovePlaneNormal();
-      if (rotationInputX) {
-        rotationInputX.value = '';
-        rotationInputX.placeholder = String(axDeg);
-      }
-      if (rotationInputY) {
-        rotationInputY.value = '';
-        rotationInputY.placeholder = String(ayDeg);
-      }
-      if (rotationInputZ) {
-        rotationInputZ.value = '';
-        rotationInputZ.placeholder = String(azDeg);
-      }
+      // パネル操作でもギズモ姿勢を反映
+      movePlaneGizmoQuat.copy(movePlaneBasisQuat);
+      saveChangeAnglePanelAngles({ x: axDeg, y: ayDeg, z: azDeg }, { writeValue: true });
+      updateMovePlaneGizmo();
       return;
     }
     if (meshes.length < 1) { return; }
@@ -449,11 +571,13 @@ if (introWrapper) {
   // CSS 上の表示サイズも明示的に設定しておく
   canvas.style.width = previewWidth + 'px';
   canvas.style.height = previewHeight + 'px';
+  positionLoadingOverlayToCanvas();
   // controller 初期位置更新
   try { updateCtrlPos(); } catch (e) {}
 } else {
   canvas.classList.add('full-canvas');
   renderer.setSize(window.innerWidth, window.innerHeight);
+  positionLoadingOverlayToCanvas();
   // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 }
 
@@ -679,6 +803,7 @@ function onWindowResize() {
     try { renderer.setPixelRatio(1); } catch (e) {}
     canvas.style.width = previewWidth + 'px';
     canvas.style.height = previewHeight + 'px';
+    positionLoadingOverlayToCanvas();
   } else {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -686,11 +811,13 @@ function onWindowResize() {
     // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     canvas.style.width = '100%';
     canvas.style.height = '100%';
+    positionLoadingOverlayToCanvas();
   try { updateCtrlPos(); } catch (e) {}
   }
 }
 
 window.addEventListener('resize', onWindowResize, false);
+window.addEventListener('scroll', positionLoadingOverlayToCanvas, { passive: true });
 
 // ウェルカム画面のボタン処理: プレビュー -> 全画面へ
 const welcome = document.getElementById('welcome');
@@ -709,6 +836,7 @@ function startFullView() {
     canvas.classList.remove('intro-canvas');
     canvas.classList.add('full-canvas');
     onWindowResize();
+    positionLoadingOverlayToCanvas();
     try { updateCtrlPos(); } catch (e) {}
 
     // show UI overlay on full-screen
@@ -750,12 +878,6 @@ if (previewStartBtn) {
     startFullView();
   });
 }
-if (previewSkipBtn) {
-  previewSkipBtn.addEventListener('pointerdown', () => {
-    if (welcome) welcome.style.display = 'none';
-  });
-}
-
 // リンクからインナー（プレビュー）に戻す処理
 const showIntroLink = document.getElementById('show-intro-link');
 async function restorePreview() {
@@ -771,6 +893,7 @@ async function restorePreview() {
     // swap classes
     canvas.classList.remove('full-canvas');
     canvas.classList.add('intro-canvas');
+    positionLoadingOverlayToCanvas();
 
     // hide three-ui until user starts again
     if (threeUi) {
@@ -798,6 +921,7 @@ async function restorePreview() {
     const previewHeight = Math.floor(previewWidth * 9 / 16);
     try { renderer.setPixelRatio(1); } catch (e) {}
     renderer.setSize(previewWidth, previewHeight);
+    positionLoadingOverlayToCanvas();
     try { updateCtrlPos(); } catch (e) {}
     perfThrottled = false;
   } catch (e) {
@@ -3157,6 +3281,115 @@ let changeAngleGridTarget = null
 let addPointGridY = 0
 const GUIDE_ADD_GRID_COLOR = 0x88aa88;
 const GUIDE_ADD_GRID_SELECTED_COLOR = 0x00ff00;
+const searchGridVisuals = [];
+let searchSelectedGrid = null;
+
+function clearSearchGridVisuals() {
+  for (let i = searchGridVisuals.length - 1; i >= 0; i -= 1) {
+    const obj = searchGridVisuals[i];
+    if (!obj) { continue; }
+    if (obj.parent) {
+      obj.parent.remove(obj);
+    }
+    obj.traverse?.((node) => {
+      if (node.geometry?.dispose) {
+        node.geometry.dispose();
+      }
+      if (node.material) {
+        if (Array.isArray(node.material)) {
+          node.material.forEach((m) => {
+            if (m?.map?.dispose) { m.map.dispose(); }
+            m?.dispose?.();
+          });
+        } else if (node.material.dispose) {
+          if (node.material.map?.dispose) { node.material.map.dispose(); }
+          node.material.dispose();
+        }
+      }
+    });
+    searchGridVisuals.splice(i, 1);
+  }
+}
+
+function buildSimpleLabelSprite(text, color = '#16324f') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 220;
+  canvas.height = 82;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) { return null; }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.lineWidth = 2;
+  ctx.fillRect(6, 6, canvas.width - 12, canvas.height - 12);
+  ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+  ctx.fillStyle = color;
+  ctx.font = 'bold 34px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2.1, 0.78, 1);
+  sprite.renderOrder = 1001;
+  return sprite;
+}
+
+function updateSearchGridTiltVisuals() {
+  clearSearchGridVisuals();
+  if (!angleSearchModeActive || !searchSelectedGrid) { return; }
+
+  const center = searchSelectedGrid.position.clone();
+  const up = new THREE.Vector3(0, 1, 0);
+  const normal = up.clone().applyQuaternion(searchSelectedGrid.quaternion).normalize();
+  const radius = 1.2;
+
+  const upArrow = new THREE.ArrowHelper(up.clone(), center.clone(), radius, 0x2ecc71, 0.3, 0.18);
+  upArrow.name = 'SearchGridUpArrow';
+  scene.add(upArrow);
+  searchGridVisuals.push(upArrow);
+
+  const normalArrow = new THREE.ArrowHelper(normal.clone(), center.clone(), radius, 0x00bcd4, 0.3, 0.18);
+  normalArrow.name = 'SearchGridNormalArrow';
+  scene.add(normalArrow);
+  searchGridVisuals.push(normalArrow);
+
+  const axis = new THREE.Vector3().crossVectors(up, normal);
+  const axisLen = axis.length();
+  const dot = Math.min(1, Math.max(-1, up.dot(normal)));
+  const tiltRad = Math.acos(dot);
+  const tiltDeg = tiltRad * 180 / Math.PI;
+  if (axisLen > 1e-6 && tiltRad > 1e-6) {
+    const axisN = axis.normalize();
+    const points = [];
+    const steps = 24;
+    for (let i = 0; i <= steps; i += 1) {
+      const t = tiltRad * (i / steps);
+      const dir = up.clone().applyAxisAngle(axisN, t);
+      points.push(center.clone().add(dir.multiplyScalar(radius * 0.58)));
+    }
+    const arcGeom = new THREE.BufferGeometry().setFromPoints(points);
+    const arc = new THREE.Line(arcGeom, new THREE.LineBasicMaterial({ color: 0xf39c12 }));
+    arc.name = 'SearchGridTiltArc';
+    scene.add(arc);
+    searchGridVisuals.push(arc);
+  }
+
+  const label = buildSimpleLabelSprite(`${tiltDeg.toFixed(1)}deg`, '#1f5f7f');
+  if (label) {
+    label.position.copy(center.clone().add(normal.clone().multiplyScalar(radius * 0.72)).add(new THREE.Vector3(0, 0.16, 0)));
+    scene.add(label);
+    searchGridVisuals.push(label);
+  }
+}
 
 let choice_object = false
 let search_object = false
@@ -3775,6 +4008,79 @@ let movePlaneRotateCenter = new THREE.Vector3();
 let movePlaneGizmoQuat = new THREE.Quaternion();
 let movePlaneGizmoYaw = 0;
 let movePlaneGizmoYawStart = 0;
+let movePlanePanelAngles = { x: 0, y: 0, z: 0 };
+let movePlanePanelAnglesStart = { x: 0, y: 0, z: 0 };
+
+function syncMovePlaneGizmoFromBasis() {
+  const moveForward = new THREE.Vector3(0, 0, 1).applyQuaternion(movePlaneBasisQuat);
+  movePlaneGizmoYaw = Math.atan2(moveForward.x, moveForward.z);
+  movePlaneGizmoYawStart = movePlaneGizmoYaw;
+  movePlaneGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), movePlaneGizmoYaw);
+}
+
+function syncChangeAnglePanelFromBasis({ writeValue = false } = {}) {
+  const state = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
+    ? { ...changeAngleGridTarget.userData.changeAnglePanelAngles }
+    : { ...movePlanePanelAngles };
+  const axDeg = Number(state.x) || 0;
+  const ayDeg = Number(state.y) || 0;
+  const azDeg = Number(state.z) || 0;
+  movePlanePanelAngles = { x: axDeg, y: ayDeg, z: azDeg };
+  movePlaneAngles = { ...movePlanePanelAngles };
+
+  if (rotationInputX) {
+    if (writeValue) {
+      rotationInputX.value = String(axDeg.toFixed(1));
+    } else {
+      rotationInputX.value = '';
+    }
+    rotationInputX.placeholder = String(Number(axDeg.toFixed(1)));
+  }
+  if (rotationInputY) {
+    if (writeValue) {
+      rotationInputY.value = String(ayDeg.toFixed(1));
+    } else {
+      rotationInputY.value = '';
+    }
+    rotationInputY.placeholder = String(Number(ayDeg.toFixed(1)));
+  }
+  if (rotationInputZ) {
+    if (writeValue) {
+      rotationInputZ.value = String(azDeg.toFixed(1));
+    } else {
+      rotationInputZ.value = '';
+    }
+    rotationInputZ.placeholder = String(Number(azDeg.toFixed(1)));
+  }
+}
+
+function saveChangeAnglePanelAngles(state, { writeValue = true } = {}) {
+  const next = {
+    x: Number(state?.x) || 0,
+    y: Number(state?.y) || 0,
+    z: Number(state?.z) || 0,
+  };
+  movePlanePanelAngles = next;
+  movePlaneAngles = { ...next };
+  if (changeAngleGridTarget) {
+    changeAngleGridTarget.userData = {
+      ...(changeAngleGridTarget.userData || {}),
+      changeAnglePanelAngles: { ...next },
+    };
+  }
+  if (rotationInputX) {
+    rotationInputX.value = writeValue ? String(next.x.toFixed(1)) : '';
+    rotationInputX.placeholder = String(Number(next.x.toFixed(1)));
+  }
+  if (rotationInputY) {
+    rotationInputY.value = writeValue ? String(next.y.toFixed(1)) : '';
+    rotationInputY.placeholder = String(Number(next.y.toFixed(1)));
+  }
+  if (rotationInputZ) {
+    rotationInputZ.value = writeValue ? String(next.z.toFixed(1)) : '';
+    rotationInputZ.placeholder = String(Number(next.z.toFixed(1)));
+  }
+}
 
 function updateMovePlaneNormal() {
   const base = new THREE.Vector3(0, 1, 0);
@@ -3869,6 +4175,9 @@ function beginMovePlaneRotateDrag(axisMesh) {
   movePlaneRotateStartVector.copy(hit).sub(movePlaneRotateCenter).normalize();
   movePlaneNormalStart.copy(movePlaneNormal);
   movePlaneBasisQuatStart.copy(movePlaneBasisQuat);
+  movePlanePanelAnglesStart = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
+    ? { ...changeAngleGridTarget.userData.changeAnglePanelAngles }
+    : { ...movePlanePanelAngles };
   if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
     movePlaneGizmoYawStart = movePlaneGizmoYaw;
   }
@@ -3893,6 +4202,9 @@ function beginMovePlaneRotateDragAxis(axisWorld, axisLocal = axisWorld) {
   movePlaneRotateStartVector.copy(hit).sub(movePlaneRotateCenter).normalize();
   movePlaneNormalStart.copy(movePlaneNormal);
   movePlaneBasisQuatStart.copy(movePlaneBasisQuat);
+  movePlanePanelAnglesStart = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
+    ? { ...changeAngleGridTarget.userData.changeAnglePanelAngles }
+    : { ...movePlanePanelAngles };
   if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
     movePlaneGizmoYawStart = movePlaneGizmoYaw;
   }
@@ -3913,6 +4225,7 @@ function updateMovePlaneRotateDrag() {
   const cross = new THREE.Vector3().crossVectors(movePlaneRotateStartVector, current);
   const dot = movePlaneRotateStartVector.dot(current);
   const angle = Math.atan2(cross.dot(movePlaneRotateAxis), dot);
+  const angleDeg = angle * (180 / Math.PI);
   const deltaQuat = new THREE.Quaternion().setFromAxisAngle(movePlaneRotateAxis, angle);
   movePlaneBasisQuat.copy(deltaQuat.multiply(movePlaneBasisQuatStart)).normalize();
   movePlaneNormal.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(movePlaneBasisQuat)).normalize();
@@ -3941,6 +4254,17 @@ function updateMovePlaneRotateDrag() {
   if (movePlaneRotateAxisLocal && movePlaneRotateAxisLocal.y === 1) {
     movePlaneGizmoYaw = movePlaneGizmoYawStart + angle;
     movePlaneGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), movePlaneGizmoYaw);
+  }
+  if (movePlaneMode === 'change_angle') {
+    const next = { ...movePlanePanelAnglesStart };
+    if (movePlaneRotateAxisLocal?.x === 1) {
+      next.x = (Number(movePlanePanelAnglesStart.x) || 0) + angleDeg;
+    } else if (movePlaneRotateAxisLocal?.y === 1) {
+      next.y = (Number(movePlanePanelAnglesStart.y) || 0) + angleDeg;
+    } else if (movePlaneRotateAxisLocal?.z === 1) {
+      next.z = (Number(movePlanePanelAnglesStart.z) || 0) + angleDeg;
+    }
+    saveChangeAnglePanelAngles(next, { writeValue: true });
   }
   updateMovePlaneGizmo();
   console.log('[change_angle] rotating', {
@@ -4184,8 +4508,15 @@ async function handleMouseDown() {
       const pickedGrid = gridHit?.object?.userData?.guideAddGrid || null;
       if (pickedGrid) {
         changeAngleGridTarget = pickedGrid;
+        if (pickedGrid?.quaternion) {
+          movePlaneBasisQuat.copy(pickedGrid.quaternion).normalize();
+        } else {
+          movePlaneBasisQuat.identity();
+        }
+        syncMovePlaneGizmoFromBasis();
         movePlaneAnchor.copy(pickedGrid.position);
         updateMovePlaneNormal();
+        syncChangeAnglePanelFromBasis({ writeValue: false });
         // クリックで回転開始（ワールドY基準）
         beginMovePlaneRotateDragAxis(new THREE.Vector3(0, 1, 0));
       }
@@ -4222,6 +4553,29 @@ async function handleMouseDown() {
     if (hit?.object) {
       steelFrameMode.toggleSelectedPoint(hit.object);
       updateRotateGizmo();
+    }
+    return;
+  }
+
+  if (objectEditMode === SEARCH_MODE) {
+    raycaster.setFromCamera(mouse, camera);
+    const gridHits = raycaster.intersectObjects(guideAddGridPicks, true);
+    const gridHit = gridHits[0] || null;
+    const pickedGrid = gridHit?.object?.userData?.guideAddGrid || null;
+    if (pickedGrid) {
+      searchSelectedGrid = pickedGrid;
+      guideAddGrids.forEach((grid) => {
+        setGuideAddGridColor(grid, grid === pickedGrid ? GUIDE_ADD_GRID_SELECTED_COLOR : GUIDE_ADD_GRID_COLOR);
+      });
+      updateSearchGridTiltVisuals();
+      return;
+    }
+
+    const hits = getIntersectObjects();
+    const hit = hits.find((h) => h?.object?.userData?.steelFramePoint);
+    if (hit?.object) {
+      steelFrameMode.toggleSelectedPoint(hit.object);
+      updateRotationSelectionInfo();
     }
     return;
   }
@@ -4602,7 +4956,9 @@ let editObject = 'Standby'
 let objectEditMode = 'Standby'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 const EDIT_RAIL = 'EDIT_RAIL';
 const ROTATE_MODE = 'ROTATE';
+const SEARCH_MODE = 'SEARCH';
 let pointRotateModeActive = false;
+let angleSearchModeActive = false;
 
 let rotateGizmoGroup = null;
 const rotateGizmoMeshes = [];
@@ -4927,7 +5283,7 @@ function clearRotationInfoVisuals() {
 
 function updateRotationInfoVisuals() {
   clearRotationInfoVisuals();
-  if (objectEditMode !== ROTATE_MODE) { return; }
+  if (!angleSearchModeActive) { return; }
   const meshes = getRotateSelectionMeshes();
   if (!Array.isArray(meshes) || meshes.length < 2) { return; }
 
@@ -5247,6 +5603,11 @@ function getRotateSelectionMeshes() {
 
 function updateRotationSelectionInfo() {
   if (!rotationSelectionInfo) { return; }
+  if (!angleSearchModeActive) {
+    rotationSelectionInfo.textContent = '選択点: 2点以上で情報を表示';
+    clearRotationInfoVisuals();
+    return;
+  }
   const order = steelFrameMode?.getSelectedPointOrder ? steelFrameMode.getSelectedPointOrder() : [];
   if (!Array.isArray(order) || order.length < 2) {
     rotationSelectionInfo.textContent = '選択点: 2点以上で情報を表示';
@@ -5779,6 +6140,7 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'rotation' ){ if ( toggle === 'active' ){
   console.log( 'rotation _active' )
+    angleSearchModeActive = false
     editObject = 'STEEL_FRAME'
     objectEditMode = ROTATE_MODE
     search_object = true
@@ -5787,13 +6149,13 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     updateRotateGizmo()
-    updateRotationSelectionInfo()
     if (rotationPanel) {
       rotationPanel.style.display = 'block';
     }
     search_point()
   } else {
   console.log( 'rotation _inactive' )
+    angleSearchModeActive = false
     rotateDragging = false
     if (rotateGizmoGroup) {
       rotateGizmoGroup.visible = false;
@@ -5801,11 +6163,44 @@ export function UIevent (uiID, toggle){
     if (rotationPanel) {
       rotationPanel.style.display = 'none';
     }
-    clearRotationInfoVisuals();
-    updateRotationSelectionInfo()
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
+
+  }} else if ( uiID === 'search' ){ if ( toggle === 'active' ){
+  console.log( 'search _active' )
+    angleSearchModeActive = true
+    searchSelectedGrid = null
+    editObject = 'STEEL_FRAME'
+    objectEditMode = SEARCH_MODE
+    search_object = true
+    steelFrameMode.setAllowPointAppend(false)
+    targetObjects = steelFrameMode.getAllPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    if (rotationPanel) {
+      rotationPanel.style.display = 'block';
+    }
+    updateSearchGridTiltVisuals();
+    updateRotationSelectionInfo()
+    search_point()
+  } else {
+  console.log( 'search _inactive' )
+    angleSearchModeActive = false
+    searchSelectedGrid = null
+    guideAddGrids.forEach((grid) => setGuideAddGridColor(grid, GUIDE_ADD_GRID_COLOR));
+    clearSearchGridVisuals();
+    clearRotationInfoVisuals();
+    if (rotationSelectionInfo) {
+      rotationSelectionInfo.textContent = '選択点: 2点以上で情報を表示';
+    }
+    if (rotationPanel) {
+      rotationPanel.style.display = 'none';
+    }
+    if (editObject === 'STEEL_FRAME' && objectEditMode === SEARCH_MODE) {
+      objectEditMode = 'Standby'
+    }
+    search_object = false
 
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
@@ -5892,19 +6287,22 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'change_angle' ){ if ( toggle === 'active' ){
   console.log( 'change_angle _active' )
     movePlaneMode = 'change_angle'
-    movePlaneBasisQuat.identity();
     ensureMovePlaneGizmo();
-    movePlaneGizmoQuat.identity();
-    movePlaneGizmoYaw = 0;
-    movePlaneGizmoYawStart = 0;
     changeAngleGridTarget = guideAddGrids.length > 0
       ? guideAddGrids[guideAddGrids.length - 1]
       : AddPointGuideGrid;
+    if (changeAngleGridTarget?.quaternion) {
+      movePlaneBasisQuat.copy(changeAngleGridTarget.quaternion).normalize();
+    } else {
+      movePlaneBasisQuat.identity();
+    }
+    syncMovePlaneGizmoFromBasis();
     AddPointGuideGrid.visible = true;
     GuideGrid.visible = false;
     addPointGridActive = true;
     movePlaneAnchor.copy(changeAngleGridTarget.position);
     updateMovePlaneNormal();
+    syncChangeAnglePanelFromBasis({ writeValue: false });
     targetObjects = [addPointGridHandle];
     setMeshListOpacity(targetObjects, 1);
     search_object = true;
@@ -6632,6 +7030,7 @@ function animate() {
   }
 
   renderer.render(scene, camera);
+  markRenderFrame();
 
   if (dragging === true){
     if (!choice_object || !choice_object.position) {
