@@ -125,6 +125,53 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function applyRotationFromPanel() {
+    if (pointRotateModeActive && pointRotateTarget) {
+      const degToRad = Math.PI / 180;
+      const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
+      const xRaw = rotationInputX?.value?.trim?.() ?? '';
+      const yRaw = rotationInputY?.value?.trim?.() ?? '';
+      const zRaw = rotationInputZ?.value?.trim?.() ?? '';
+      const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : state.x;
+      const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : state.y;
+      const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : state.z;
+      const dx = axDeg - state.x;
+      const dy = ayDeg - state.y;
+      const dz = azDeg - state.z;
+
+      if (Math.abs(dx) > 1e-6) {
+        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(pointRotateBasisQuat).normalize();
+        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, dx * degToRad);
+        pointRotateBasisQuat.copy(qx.multiply(pointRotateBasisQuat)).normalize();
+      }
+      if (Math.abs(dy) > 1e-6) {
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dy * degToRad);
+        pointRotateBasisQuat.copy(qy.multiply(pointRotateBasisQuat)).normalize();
+      }
+      if (Math.abs(dz) > 1e-6) {
+        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat).normalize();
+        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, dz * degToRad);
+        pointRotateBasisQuat.copy(qz.multiply(pointRotateBasisQuat)).normalize();
+      }
+
+      pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+      pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+      pointRotateGizmoYawStart = pointRotateGizmoYaw;
+      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      pointRotateTarget.userData = {
+        ...(pointRotateTarget.userData || {}),
+        pointRotateDirection: pointRotateDirection.clone(),
+        pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+        pointRotatePanelAngles: { x: axDeg, y: ayDeg, z: azDeg },
+      };
+      showPointRotationGuideLine(pointRotateTarget);
+      updatePointRotateVisuals();
+
+      if (rotationInputX) { rotationInputX.value = ''; rotationInputX.placeholder = String(axDeg); }
+      if (rotationInputY) { rotationInputY.value = ''; rotationInputY.placeholder = String(ayDeg); }
+      if (rotationInputZ) { rotationInputZ.value = ''; rotationInputZ.placeholder = String(azDeg); }
+      return;
+    }
+
     const meshes = getRotateSelectionMeshes();
     if (movePlaneMode === 'change_angle') {
       const xRaw = rotationInputX?.value?.trim?.() ?? '';
@@ -3796,7 +3843,7 @@ function ensureMovePlaneGizmo() {
   ringX.rotation.y = Math.PI / 2;
   const ringY = makeRing(0x5cff88, new THREE.Vector3(0, 1, 0));
   ringY.rotation.x = Math.PI / 2;
-  const ringZ = makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1));
+  // change_angle では X/Y のみ使用（Zリングは表示しない）
 
   movePlaneGizmoGroup.visible = false;
   scene.add(movePlaneGizmoGroup);
@@ -4202,6 +4249,7 @@ async function handleMouseDown() {
         ...(pointRotateTarget.userData || {}),
         pointRotateDirection: pointRotateDirection.clone(),
         pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+        pointRotatePanelAngles: pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 },
       };
       // 再計算時は Y 軸固定で表示姿勢を復元する
       pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
@@ -4209,6 +4257,7 @@ async function handleMouseDown() {
       pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
       updatePointRotateVisuals();
       showPointRotationGuideLine(pointRotateTarget);
+      syncPointRotatePanelFromTarget();
       // rotation モード中の選択クリックはここで完結させる
       return;
     }
@@ -4587,6 +4636,7 @@ let pointRotateGizmoYaw = 0;
 let pointRotateGizmoYawStart = 0;
 let pointRotateMoveStartT = 0;
 let pointRotateMoveStartCenter = new THREE.Vector3();
+let pointRotatePanelAnglesStart = { x: 0, y: 0, z: 0 };
 
 function ensurePointRotateGizmo() {
   if (pointRotateGizmoGroup) { return; }
@@ -4604,7 +4654,7 @@ function ensurePointRotateGizmo() {
     pointRotateGizmoMeshes.push(mesh);
   };
   // 横方向（yaw: Y軸）
-  makeRing(0x2f6fb8, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0));
+  makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0));
   // 縦方向（pitch: X軸）
   makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0));
   pointRotateGizmoGroup.visible = false;
@@ -4617,6 +4667,23 @@ function ensurePointRotateArrow() {
   pointRotateArrow.name = 'PointRotateArrow';
   pointRotateArrow.visible = false;
   scene.add(pointRotateArrow);
+}
+
+function syncPointRotatePanelFromTarget() {
+  if (!pointRotateTarget) { return; }
+  const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
+  if (rotationInputX) {
+    rotationInputX.value = '';
+    rotationInputX.placeholder = String(state.x ?? 0);
+  }
+  if (rotationInputY) {
+    rotationInputY.value = '';
+    rotationInputY.placeholder = String(state.y ?? 0);
+  }
+  if (rotationInputZ) {
+    rotationInputZ.value = '';
+    rotationInputZ.placeholder = String(state.z ?? 0);
+  }
 }
 
 function loadPointRotateBasisFromTarget(target) {
@@ -4709,6 +4776,9 @@ function beginPointRotateDrag(axisMesh) {
   if (!ok) { return; }
   pointRotateStartVector.copy(hit).sub(pointRotateCenter).normalize();
   pointRotateBasisQuatStart.copy(pointRotateBasisQuat);
+  pointRotatePanelAnglesStart = pointRotateTarget?.userData?.pointRotatePanelAngles
+    ? { ...pointRotateTarget.userData.pointRotatePanelAngles }
+    : { x: 0, y: 0, z: 0 };
   if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1) {
     pointRotateGizmoYawStart = pointRotateGizmoYaw;
   }
@@ -4753,6 +4823,7 @@ function updatePointRotateDrag() {
   const cross = new THREE.Vector3().crossVectors(pointRotateStartVector, current);
   const dot = pointRotateStartVector.dot(current);
   const angle = Math.atan2(cross.dot(pointRotateAxis), dot);
+  const angleDeg = angle * (180 / Math.PI);
   const deltaQuat = new THREE.Quaternion().setFromAxisAngle(pointRotateAxis, angle);
   pointRotateBasisQuat.copy(deltaQuat.multiply(pointRotateBasisQuatStart)).normalize();
   pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
@@ -4761,11 +4832,24 @@ function updatePointRotateDrag() {
     pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
   }
   if (pointRotateTarget) {
+    const panelAngles = { ...pointRotatePanelAnglesStart };
+    if (pointRotateAxisLocal?.x === 1) {
+      panelAngles.x = pointRotatePanelAnglesStart.x + angleDeg;
+    } else if (pointRotateAxisLocal?.y === 1) {
+      panelAngles.y = pointRotatePanelAnglesStart.y + angleDeg;
+    } else if (pointRotateAxisLocal?.z === 1) {
+      panelAngles.z = pointRotatePanelAnglesStart.z + angleDeg;
+    }
+
     pointRotateTarget.userData = {
       ...(pointRotateTarget.userData || {}),
       pointRotateDirection: pointRotateDirection.clone(),
       pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+      pointRotatePanelAngles: panelAngles,
     };
+    if (rotationInputX) { rotationInputX.value = String(panelAngles.x.toFixed(1)); }
+    if (rotationInputY) { rotationInputY.value = String(panelAngles.y.toFixed(1)); }
+    if (rotationInputZ) { rotationInputZ.value = String(panelAngles.z.toFixed(1)); }
     showPointRotationGuideLine(pointRotateTarget);
   }
   updatePointRotateVisuals();
@@ -5789,11 +5873,17 @@ export function UIevent (uiID, toggle){
     targetObjects = steelFrameMode.getAllPointMeshes()
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
+    if (rotationPanel) {
+      rotationPanel.style.display = 'block';
+    }
     updatePointRotateVisuals()
     search_point()
   } else {
   console.log( 'rotation/2 _inactive' )
     pointRotateModeActive = false
+    if (rotationPanel) {
+      rotationPanel.style.display = 'none';
+    }
     clearPointRotateState()
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
       search_object = true

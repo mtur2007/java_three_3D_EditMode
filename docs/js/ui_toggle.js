@@ -1,6 +1,11 @@
 // インデックス検索コード
 import { UIevent } from './main.js';
 
+const UI_COLOR_DEFAULT = '';
+const UI_COLOR_ACTIVE = '#2b4f8a';   // 親（経路）ボタン
+const UI_COLOR_SELECTED = '#3f7cff'; // 押下ボタン
+const UI_TEXT_ACTIVE = '#ffffff';
+
 function compactVisibleButtons() {
     const buttons = Array.from(UiGroup.querySelectorAll('button'));
     let row = 0;
@@ -13,7 +18,29 @@ function compactVisibleButtons() {
     });
 }
 
-function toggleProcessing(uiIDs,next_nest){
+function paintUiSelection(uiIDs = [], selectedId = null) {
+    UiGroup.querySelectorAll('button').forEach((b) => {
+        b.style.backgroundColor = UI_COLOR_DEFAULT;
+        b.style.color = '';
+    });
+
+    UiGroup.querySelectorAll('button').forEach((b) => {
+        if (uiIDs.includes(b.id)) {
+            b.style.backgroundColor = UI_COLOR_ACTIVE;
+            b.style.color = UI_TEXT_ACTIVE;
+        }
+    });
+
+    if (selectedId) {
+        const selected = document.getElementById(selectedId);
+        if (selected) {
+            selected.style.backgroundColor = UI_COLOR_SELECTED;
+            selected.style.color = UI_TEXT_ACTIVE;
+        }
+    }
+}
+
+function toggleProcessing(uiIDs,next_nest,selectedId = null){
     
     // 無効化
     UiGroup.querySelectorAll('button').forEach(b => {
@@ -49,6 +76,7 @@ function toggleProcessing(uiIDs,next_nest){
     })
 
     compactVisibleButtons();
+    paintUiSelection(uiIDs, selectedId);
 }
 
 function getValueByIndex(uiTree, UiGroup, index){
@@ -91,7 +119,7 @@ function getValueByIndex(uiTree, UiGroup, index){
         }
     }
 
-    toggleProcessing(active_UIs,next_nest)
+    toggleProcessing(active_UIs,next_nest,active_UIs[active_UIs.length - 1] || null)
 
 }
 
@@ -304,6 +332,7 @@ UiGroup.querySelectorAll('button').forEach(b => {
       b.hidden = true;
     }
   })
+paintUiSelection(['see'], 'see');
 
 UiGroup.addEventListener('click', (event) => {
   // クリックされた要素から一番近い button を探す
