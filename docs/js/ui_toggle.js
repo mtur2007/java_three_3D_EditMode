@@ -1,6 +1,18 @@
 // インデックス検索コード
 import { UIevent } from './main.js';
 
+function compactVisibleButtons() {
+    const buttons = Array.from(UiGroup.querySelectorAll('button'));
+    let row = 0;
+    buttons.forEach((b) => {
+        if (b.hidden) {
+            return;
+        }
+        b.style.top = ((30 * row) + 10) + 'px';
+        row += 1;
+    });
+}
+
 function toggleProcessing(uiIDs,next_nest){
     
     // 無効化
@@ -35,6 +47,8 @@ function toggleProcessing(uiIDs,next_nest){
             }
         }
     })
+
+    compactVisibleButtons();
 }
 
 function getValueByIndex(uiTree, UiGroup, index){
@@ -156,59 +170,44 @@ function connectionUI(uiTree){
 }
 
 const uiTree = {
-    'see':'',
-
+    'see': '',
     'edit': {
-        'rail':{
-            'new':'', 
-            'move':{
-                'x_z':'', 
-                'y':''},
-            'structure':{
-                'new':'',
-                'construction':{
-                    'bridge':'',
-                    'elevated':'',
-                    'wall':'',
-                    'floor':'',
-                    'pillar':'',
-                    'rib_bridge':'',
-                    'tunnel_rect':'',
-                }}
-            
-        },
-        'creat':{
-            'view':'',
-            'add_point':{
-                'y_add':'',
-                'template':'',
-                'guide':{
-                    'add':'',
-                    'change_angle':'',
-                }
-            },
-            'rotation':'',
-            'move_point':{
-                'x_z_sf':'',
-                'y_sf':'',
-            },
-            'construction':{
-                'pillar':{
-                    'Round_bar':'',
-                    'H_beam':'',
+        'rail': {
+            'new': '',
+            'move': { 'x_z': '', 'y': '' },
+            'structure': {
+                'new': '',
+                'construction': {
+                    'bridge': '',
+                    'elevated': '',
+                    'wall': '',
+                    'floor': '',
+                    'pillar': '',
+                    'rib_bridge': '',
+                    'tunnel_rect': '',
                 },
-                'rite':{
-                    'tubular':'',
-                }
             },
         },
-
-        'custom':{
-            'new':'',
-            'move':{'x_z':'', 'y':''},
-            'construct':''
-        }
-    }
+        'creat': {
+            'view': '',
+            'add_point': {
+                'y_add': '',
+                'template': '',
+                'guide': { 'add': '', 'change_angle': '' },
+            },
+            'rotation': '',
+            'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '' },
+            'construction': {
+                'pillar': { 'Round_bar': '', 'H_beam': '' },
+                'rite': { 'tubular': '' },
+            },
+        },
+        'custom': {
+            'new': '',
+            'move': { 'x_z': '', 'y': '' },
+            'construct': '',
+        },
+    },
 }
 
 // function UIevent (uiID, toggle){

@@ -84,6 +84,7 @@ const threeUi = document.getElementById('three-ui');
   const rotationInputY = document.getElementById('rotation-input-y');
   const rotationInputZ = document.getElementById('rotation-input-z');
   const rotationApplyBtn = document.getElementById('rotation-apply');
+  const rotationSelectionInfo = document.getElementById('rotation-selection-info');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
@@ -215,7 +216,20 @@ const threeUi = document.getElementById('three-ui');
   let guideHoverPin = null;
 
   function buildGuideCurve(template, basePoint, basisQuat = null) {
+    const buildLinearClosedCurve = (points) => {
+      const path = new THREE.CurvePath();
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        path.add(new THREE.LineCurve3(a.clone(), b.clone()));
+      }
+      path.autoClose = true;
+      return path;
+    };
+
     let offsets = [];
+    let isClosed = false;
+    let isLinearClosed = false;
     switch (template) {
       case 'curve_s':
         offsets = [[-6, 0, -2], [-2, 0, 2], [2, 0, -2], [6, 0, 2]];
@@ -226,6 +240,21 @@ const threeUi = document.getElementById('three-ui');
       case 'curve_u':
         offsets = [[-4, 0, -2], [-4, 0, 2], [0, 0, 4], [4, 0, 2], [4, 0, -2]];
         break;
+      case 'curve_square':
+        offsets = [[-4, 0, -4], [4, 0, -4], [4, 0, 4], [-4, 0, 4]];
+        isClosed = true;
+        isLinearClosed = true;
+        break;
+      case 'curve_circle': {
+        const radius = 4;
+        const segments = 12;
+        offsets = Array.from({ length: segments }, (_, i) => {
+          const t = (i / segments) * Math.PI * 2;
+          return [Math.cos(t) * radius, 0, Math.sin(t) * radius];
+        });
+        isClosed = true;
+        break;
+      }
       case 'curve_straight':
       default:
         offsets = [[-6, 0, 0], [0, 0, 0], [6, 0, 0]];
@@ -238,15 +267,23 @@ const threeUi = document.getElementById('three-ui');
       }
       return basePoint.clone().add(local);
     });
-    const curve = new THREE.CatmullRomCurve3(points);
-    curve.userData = { ...(curve.userData || {}), controlPoints: points };
+    const curve = isLinearClosed
+      ? buildLinearClosedCurve(points)
+      : new THREE.CatmullRomCurve3(points, isClosed);
+    curve.closed = isClosed;
+    curve.userData = {
+      ...(curve.userData || {}),
+      controlPoints: points,
+      isLinearClosed,
+      templateType: template,
+    };
     return curve;
   }
 
   const guideRailPickMeshes = [];
 
   function createGuideRailPickMesh(curve) {
-    const tube = new THREE.TubeGeometry(curve, 60, 0.45, 10, false);
+    const tube = new THREE.TubeGeometry(curve, 60, 0.45, 10, curve?.closed === true);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x6d86ff,
       transparent: true,
@@ -266,11 +303,25 @@ const threeUi = document.getElementById('three-ui');
 
   function updateGuideCurve(curve) {
     if (!curve || !curve.userData?.controlPoints) { return; }
-    curve.points = curve.userData.controlPoints;
+    if (curve.userData.isLinearClosed) {
+      const cps = curve.userData.controlPoints;
+      const rebuilt = new THREE.CurvePath();
+      for (let i = 0; i < cps.length; i += 1) {
+        const a = cps[i];
+        const b = cps[(i + 1) % cps.length];
+        rebuilt.add(new THREE.LineCurve3(a.clone(), b.clone()));
+      }
+      rebuilt.autoClose = true;
+      // Keep existing object reference used by other features.
+      curve.curves = rebuilt.curves;
+      curve.cacheArcLengths = null;
+    } else {
+      curve.points = curve.userData.controlPoints;
+    }
 
     const pick = curve.userData.guidePickMesh;
     if (pick) {
-      const newGeom = new THREE.TubeGeometry(curve, 60, 0.45, 10, false);
+      const newGeom = new THREE.TubeGeometry(curve, 60, 0.45, 10, curve?.closed === true);
       if (pick.geometry) pick.geometry.dispose();
       pick.geometry = newGeom;
     }
@@ -2978,6 +3029,27 @@ GuideLine.name = 'GuideLine'
 GuideLine.position.set(0,0,0);
 scene.add(GuideLine)
 
+function updateGuideLineDirectionFromMesh(mesh) {
+  if (!GuideLine) { return; }
+  const baseAxis = new THREE.Vector3(0, 1, 0);
+  const dir = mesh?.userData?.pointRotateDirection;
+  if (dir?.x != null && dir?.y != null && dir?.z != null) {
+    const d = new THREE.Vector3(dir.x, dir.y, dir.z);
+    if (d.lengthSq() > 1e-8) {
+      GuideLine.quaternion.setFromUnitVectors(baseAxis, d.normalize());
+      return;
+    }
+  }
+  GuideLine.quaternion.identity();
+}
+
+function showPointRotationGuideLine(mesh) {
+  if (!mesh || !mesh.position) { return; }
+  GuideLine.position.copy(mesh.position);
+  updateGuideLineDirectionFromMesh(mesh);
+  GuideLine.visible = true;
+}
+
 const GuideGrid = new THREE.GridHelper(5, 10, 0x8888aa, 0x88aa88);
 GuideGrid.name = "GuideGrid";
 GuideGrid.position.set(0,0,0);
@@ -3233,7 +3305,10 @@ async function search_point() {
 
       if (move_direction_y){
         GuideLine.position.copy(choice_object.position)
+        GuideLine.quaternion.identity()
         GuideLine.visible = true
+      } else if (pointRotateModeActive) {
+        showPointRotationGuideLine(choice_object);
 
       } else {
         if (movePlaneMode !== 'change_angle') {
@@ -3323,7 +3398,10 @@ async function onerun_search_point() {
 
       if (move_direction_y){
         GuideLine.position.copy(choice_object.position)
+        GuideLine.quaternion.identity()
         GuideLine.visible = true
+      } else if (pointRotateModeActive) {
+        showPointRotationGuideLine(choice_object);
 
       } else {
         if (movePlaneMode !== 'change_angle') {
@@ -3371,7 +3449,31 @@ function coord_DisplayTo3D(Axis_num=false){
   
   let t = 0
   let point = []
+  if (choice_object?.userData?.planeRef && !move_direction_y) {
+    const planeRef = choice_object.userData.planeRef;
+    const normal = new THREE.Vector3(0, 1, 0);
+    if (planeRef?.quaternion) {
+      normal.applyQuaternion(planeRef.quaternion).normalize();
+    }
+    const anchor = planeRef?.position ? planeRef.position : choice_object.position;
+    raycaster.setFromCamera(mouse, camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(plane, hit);
+    if (ok) {
+      return hit;
+    }
+  }
   if (movePlaneMode === 'change_angle' && choice_object) {
+    raycaster.setFromCamera(mouse, camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(plane, hit);
+    if (ok) {
+      return hit;
+    }
+  }
+  if (movePlaneMode === 'change_angle' && changeAngleGridTarget && !move_direction_y) {
     raycaster.setFromCamera(mouse, camera);
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
     const hit = new THREE.Vector3();
@@ -3801,6 +3903,14 @@ function updateMovePlaneRotateDrag() {
 }
 
 function handleDrag() {
+  if (pointRotateMoveDragging) {
+    updatePointRotateMoveDrag();
+    return;
+  }
+  if (pointRotateDragging) {
+    updatePointRotateDrag();
+    return;
+  }
   if (rotateDragging) {
     updateRotateDrag();
     return;
@@ -3855,6 +3965,9 @@ function handleDrag() {
   }
 
   GuideLine.position.set(point.x,point.y,point.z)
+  if (move_direction_y) {
+    GuideLine.quaternion.identity();
+  }
   // GuideLine.visible = true
 
   if (!move_direction_y){
@@ -3873,6 +3986,16 @@ function handleDrag() {
 async function handleMouseUp(mobile = false) {
 
   if (pause){return};
+  if (pointRotateMoveDragging) {
+    pointRotateMoveDragging = false;
+    efficacy = true;
+    return;
+  }
+  if (pointRotateDragging) {
+    pointRotateDragging = false;
+    efficacy = true;
+    return;
+  }
   if (rotateDragging) {
     rotateDragging = false;
     updateRotateGizmo();
@@ -4055,6 +4178,41 @@ async function handleMouseDown() {
     }
     return;
   }
+
+  if (pointRotateModeActive) {
+    ensurePointRotateGizmo();
+    raycaster.setFromCamera(mouse, camera);
+    const gizmoHit = raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null;
+    if (gizmoHit && pointRotateTarget) {
+      beginPointRotateDrag(gizmoHit.object);
+      return;
+    }
+    const hits = getIntersectObjects();
+    const hit = hits.find((h) => h?.object?.userData?.steelFramePoint);
+    if (hit?.object) {
+      if (pointRotateTarget && hit.object === pointRotateTarget) {
+        beginPointRotateMoveDrag();
+        return;
+      }
+      pointRotateTarget = hit.object;
+      pointRotateCenter.copy(pointRotateTarget.position);
+      pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(pointRotateTarget));
+      pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+      pointRotateTarget.userData = {
+        ...(pointRotateTarget.userData || {}),
+        pointRotateDirection: pointRotateDirection.clone(),
+        pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+      };
+      // 再計算時は Y 軸固定で表示姿勢を復元する
+      pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+      pointRotateGizmoYawStart = pointRotateGizmoYaw;
+      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      updatePointRotateVisuals();
+      showPointRotationGuideLine(pointRotateTarget);
+      // rotation モード中の選択クリックはここで完結させる
+      return;
+    }
+  }
   
   // 架線柱配置モード
   if (polePlacementMode) {
@@ -4106,6 +4264,7 @@ async function handleMouseDown() {
     if (guidePlacementActive && guidePlacementTemplate) {
       let basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
       let basisQuat = (changeAngleGridTarget?.quaternion || AddPointGuideGrid?.quaternion || null);
+      let basisPlaneRef = changeAngleGridTarget || AddPointGuideGrid || null;
       if (guideAddGridPicks.length > 0) {
         raycaster.setFromCamera(mouse, camera);
         const hits = raycaster.intersectObjects(guideAddGridPicks, true);
@@ -4116,6 +4275,7 @@ async function handleMouseDown() {
         }
         if (hitGrid?.quaternion) {
           basisQuat = hitGrid.quaternion;
+          basisPlaneRef = hitGrid;
         }
       }
       const curve = buildGuideCurve(guidePlacementTemplate, basePoint, basisQuat);
@@ -4130,7 +4290,12 @@ async function handleMouseDown() {
         curve.userData.controlPoints.forEach((p, idx) => {
           const mesh = steelFrameMode.addPoint(p);
           if (mesh) {
-            mesh.userData = { ...(mesh.userData || {}), guideCurve: curve, guideControlIndex: idx };
+            mesh.userData = {
+              ...(mesh.userData || {}),
+              guideCurve: curve,
+              guideControlIndex: idx,
+              planeRef: basisPlaneRef || null,
+            };
           }
         });
       }
@@ -4142,6 +4307,7 @@ async function handleMouseDown() {
     }
 
     let gridHitPoint = null;
+    let gridHitRef = null;
     if (editObject === 'STEEL_FRAME' && guideAddGridPicks.length > 0) {
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObjects(guideAddGridPicks, true);
@@ -4150,6 +4316,7 @@ async function handleMouseDown() {
       if (hit?.point) {
         gridHitPoint = hit.point.clone();
         const hitGrid = hit.object?.userData?.guideAddGrid || null;
+        gridHitRef = hitGrid || null;
         guideAddGrids.forEach((grid) => {
           setGuideAddGridColor(grid, grid === hitGrid ? GUIDE_ADD_GRID_SELECTED_COLOR : GUIDE_ADD_GRID_COLOR);
         });
@@ -4196,7 +4363,10 @@ async function handleMouseDown() {
       scene.add(cube_clone);
       targetObjects.push(cube_clone);
     } else if (editObject === 'STEEL_FRAME') {
-      steelFrameMode.addPoint(point);
+      const mesh = steelFrameMode.addPoint(point);
+      if (mesh && gridHitRef) {
+        mesh.userData = { ...(mesh.userData || {}), planeRef: gridHitRef };
+      }
       targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
 
     } else if (editObject === 'ORIGINAL'){
@@ -4383,6 +4553,7 @@ let editObject = 'Standby'
 let objectEditMode = 'Standby'; // 'CREATE_NEW' or 'MOVE_EXISTING'
 const EDIT_RAIL = 'EDIT_RAIL';
 const ROTATE_MODE = 'ROTATE';
+let pointRotateModeActive = false;
 
 let rotateGizmoGroup = null;
 const rotateGizmoMeshes = [];
@@ -4396,6 +4567,566 @@ let rotatePanelState = {
   idsKey: '',
   angles: { x: 0, y: 0, z: 0 },
 };
+const rotationInfoVisuals = [];
+let pointRotateGizmoGroup = null;
+const pointRotateGizmoMeshes = [];
+let pointRotateArrow = null;
+let pointRotateTarget = null;
+let pointRotateCenter = new THREE.Vector3();
+let pointRotateDirection = new THREE.Vector3(0, 0, 1);
+let pointRotateDragging = false;
+let pointRotateMoveDragging = false;
+let pointRotateAxis = new THREE.Vector3(0, 1, 0);
+const pointRotatePlane = new THREE.Plane();
+let pointRotateStartVector = new THREE.Vector3();
+let pointRotateAxisLocal = null;
+let pointRotateBasisQuat = new THREE.Quaternion();
+let pointRotateBasisQuatStart = new THREE.Quaternion();
+let pointRotateGizmoQuat = new THREE.Quaternion();
+let pointRotateGizmoYaw = 0;
+let pointRotateGizmoYawStart = 0;
+let pointRotateMoveStartT = 0;
+let pointRotateMoveStartCenter = new THREE.Vector3();
+
+function ensurePointRotateGizmo() {
+  if (pointRotateGizmoGroup) { return; }
+  pointRotateGizmoGroup = new THREE.Group();
+  pointRotateGizmoGroup.name = 'PointRotateGizmo';
+  const ringRadius = 1.0;
+  const ringTube = 0.03;
+  const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
+  const makeRing = (color, axis, euler) => {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.rotation.set(euler.x, euler.y, euler.z);
+    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis };
+    pointRotateGizmoGroup.add(mesh);
+    pointRotateGizmoMeshes.push(mesh);
+  };
+  // 横方向（yaw: Y軸）
+  makeRing(0x2f6fb8, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0));
+  // 縦方向（pitch: X軸）
+  makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0));
+  pointRotateGizmoGroup.visible = false;
+  scene.add(pointRotateGizmoGroup);
+}
+
+function ensurePointRotateArrow() {
+  if (pointRotateArrow) { return; }
+  pointRotateArrow = new THREE.ArrowHelper(pointRotateDirection.clone().normalize(), pointRotateCenter.clone(), 2, 0xf4c430, 0.45, 0.25);
+  pointRotateArrow.name = 'PointRotateArrow';
+  pointRotateArrow.visible = false;
+  scene.add(pointRotateArrow);
+}
+
+function loadPointRotateBasisFromTarget(target) {
+  const q = new THREE.Quaternion();
+  const savedQuat = target?.userData?.pointRotateBasisQuat;
+
+  // Backward-compatible restore:
+  // accept [x,y,z,w], Float32Array, THREE.Quaternion, or {x,y,z,w}.
+  let restored = false;
+  if (Array.isArray(savedQuat) && savedQuat.length === 4) {
+    const arr = savedQuat.map((v) => Number(v));
+    if (arr.every((v) => Number.isFinite(v))) {
+      q.fromArray(arr).normalize();
+      restored = true;
+    }
+  } else if (savedQuat && typeof savedQuat === 'object' && 'length' in savedQuat && savedQuat.length === 4) {
+    const arr = Array.from(savedQuat);
+    if (arr.every((v) => Number.isFinite(v))) {
+      q.fromArray(arr).normalize();
+      restored = true;
+    }
+  } else if (savedQuat?.isQuaternion) {
+    q.copy(savedQuat).normalize();
+    restored = true;
+  } else if (savedQuat && typeof savedQuat === 'object') {
+    const x = Number(savedQuat.x);
+    const y = Number(savedQuat.y);
+    const z = Number(savedQuat.z);
+    const w = Number(savedQuat.w);
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) && Number.isFinite(w)) {
+      q.set(x, y, z, w).normalize();
+      restored = true;
+    }
+  }
+  if (restored) {
+    target.userData = {
+      ...(target.userData || {}),
+      pointRotateBasisQuat: q.toArray(),
+    };
+    return q;
+  }
+  // 回転方式と揃えるため、復元は basisQuat のみを正として扱う。
+  // 未保存データは identity で初期化して保存する。
+  q.identity();
+  target.userData = {
+    ...(target.userData || {}),
+    pointRotateBasisQuat: q.toArray(),
+    pointRotateDirection: new THREE.Vector3(0, 0, 1),
+  };
+  return q;
+}
+
+function updatePointRotateVisuals() {
+  ensurePointRotateGizmo();
+  ensurePointRotateArrow();
+  const active = pointRotateModeActive && Boolean(pointRotateTarget);
+  pointRotateGizmoGroup.visible = active;
+  pointRotateArrow.visible = active;
+  if (!active) { return; }
+  pointRotateGizmoGroup.position.copy(pointRotateCenter);
+  pointRotateGizmoGroup.quaternion.copy(pointRotateGizmoQuat);
+  pointRotateGizmoGroup.scale.setScalar(1.2);
+  pointRotateArrow.position.copy(pointRotateCenter);
+  pointRotateArrow.setDirection(pointRotateDirection.clone().normalize());
+  pointRotateArrow.setLength(2, 0.45, 0.25);
+}
+
+function getYawOnlyQuatFromDirection(direction) {
+  const flat = direction.clone();
+  flat.y = 0;
+  if (flat.lengthSq() < 1e-8) {
+    return new THREE.Quaternion();
+  }
+  flat.normalize();
+  const yaw = Math.atan2(flat.x, flat.z);
+  return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+}
+
+function beginPointRotateDrag(axisMesh) {
+  pointRotateAxisLocal = axisMesh?.userData?.axis?.clone?.().normalize?.() || new THREE.Vector3(0, 1, 0);
+  if (pointRotateAxisLocal.y === 1) {
+    pointRotateAxis.copy(new THREE.Vector3(0, 1, 0));
+  } else {
+    pointRotateAxis.copy(pointRotateAxisLocal.clone().applyQuaternion(pointRotateBasisQuat).normalize());
+  }
+  pointRotatePlane.setFromNormalAndCoplanarPoint(pointRotateAxis, pointRotateCenter);
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(pointRotatePlane, hit);
+  if (!ok) { return; }
+  pointRotateStartVector.copy(hit).sub(pointRotateCenter).normalize();
+  pointRotateBasisQuatStart.copy(pointRotateBasisQuat);
+  if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1) {
+    pointRotateGizmoYawStart = pointRotateGizmoYaw;
+  }
+  pointRotateDragging = true;
+  efficacy = false;
+}
+
+function getAxisParamFromPointer(axisOrigin, axisDir) {
+  raycaster.setFromCamera(mouse, camera);
+  const rayOrigin = raycaster.ray.origin;
+  const rayDir = raycaster.ray.direction.clone().normalize();
+  const u = axisDir.clone().normalize();
+  const w0 = axisOrigin.clone().sub(rayOrigin);
+  const a = u.dot(u);
+  const b = u.dot(rayDir);
+  const c = rayDir.dot(rayDir);
+  const d = u.dot(w0);
+  const e = rayDir.dot(w0);
+  const denom = (a * c) - (b * b);
+  if (Math.abs(denom) < 1e-6) {
+    return d;
+  }
+  return ((b * e) - (c * d)) / denom;
+}
+
+function beginPointRotateMoveDrag() {
+  if (!pointRotateTarget) { return; }
+  const axisDir = pointRotateDirection.clone().normalize();
+  if (axisDir.lengthSq() < 1e-8) { return; }
+  pointRotateMoveStartCenter.copy(pointRotateCenter);
+  pointRotateMoveStartT = getAxisParamFromPointer(pointRotateCenter, axisDir);
+  pointRotateMoveDragging = true;
+  efficacy = false;
+}
+
+function updatePointRotateDrag() {
+  raycaster.setFromCamera(mouse, camera);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(pointRotatePlane, hit);
+  if (!ok) { return; }
+  const current = hit.clone().sub(pointRotateCenter).normalize();
+  const cross = new THREE.Vector3().crossVectors(pointRotateStartVector, current);
+  const dot = pointRotateStartVector.dot(current);
+  const angle = Math.atan2(cross.dot(pointRotateAxis), dot);
+  const deltaQuat = new THREE.Quaternion().setFromAxisAngle(pointRotateAxis, angle);
+  pointRotateBasisQuat.copy(deltaQuat.multiply(pointRotateBasisQuatStart)).normalize();
+  pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+  if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1) {
+    pointRotateGizmoYaw = pointRotateGizmoYawStart + angle;
+    pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+  }
+  if (pointRotateTarget) {
+    pointRotateTarget.userData = {
+      ...(pointRotateTarget.userData || {}),
+      pointRotateDirection: pointRotateDirection.clone(),
+      pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+    };
+    showPointRotationGuideLine(pointRotateTarget);
+  }
+  updatePointRotateVisuals();
+}
+
+function updatePointRotateMoveDrag() {
+  if (!pointRotateTarget) { return; }
+  const axisDir = pointRotateDirection.clone().normalize();
+  if (axisDir.lengthSq() < 1e-8) { return; }
+  const nowT = getAxisParamFromPointer(pointRotateMoveStartCenter, axisDir);
+  const delta = nowT - pointRotateMoveStartT;
+  const nextCenter = pointRotateMoveStartCenter.clone().add(axisDir.multiplyScalar(delta));
+  pointRotateCenter.copy(nextCenter);
+  pointRotateTarget.position.copy(nextCenter);
+  pointRotateTarget.userData = {
+    ...(pointRotateTarget.userData || {}),
+    pointRotateDirection: pointRotateDirection.clone(),
+    pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+  };
+  showPointRotationGuideLine(pointRotateTarget);
+  updatePointRotateVisuals();
+}
+
+function clearPointRotateState() {
+  pointRotateDragging = false;
+  pointRotateMoveDragging = false;
+  dragging = false;
+  moveClickPending = false;
+  shouldToggle = false;
+  moveDragStartPositions = [];
+  moveDragAnchorStart = null;
+  pointRotateTarget = null;
+  pointRotateAxisLocal = null;
+  pointRotateBasisQuat.identity();
+  pointRotateBasisQuatStart.identity();
+  pointRotateGizmoQuat.identity();
+  pointRotateGizmoYaw = 0;
+  pointRotateGizmoYawStart = 0;
+  if (pointRotateGizmoGroup) {
+    pointRotateGizmoGroup.visible = false;
+  }
+  if (pointRotateArrow) {
+    pointRotateArrow.visible = false;
+  }
+  GuideLine.visible = false;
+  GuideLine.quaternion.identity();
+}
+
+function clearRotationInfoVisuals() {
+  for (let i = rotationInfoVisuals.length - 1; i >= 0; i -= 1) {
+    const obj = rotationInfoVisuals[i];
+    if (!obj) { continue; }
+    if (obj.parent) {
+      obj.parent.remove(obj);
+    }
+    obj.traverse?.((node) => {
+      if (node.geometry?.dispose) {
+        node.geometry.dispose();
+      }
+      if (node.material) {
+        if (Array.isArray(node.material)) {
+          node.material.forEach((m) => {
+            if (m?.map?.dispose) { m.map.dispose(); }
+            m?.dispose?.();
+          });
+        } else if (node.material.dispose) {
+          if (node.material.map?.dispose) { node.material.map.dispose(); }
+          node.material.dispose();
+        }
+      }
+    });
+    rotationInfoVisuals.splice(i, 1);
+  }
+}
+
+function updateRotationInfoVisuals() {
+  clearRotationInfoVisuals();
+  if (objectEditMode !== ROTATE_MODE) { return; }
+  const meshes = getRotateSelectionMeshes();
+  if (!Array.isArray(meshes) || meshes.length < 2) { return; }
+
+  const colorLen = 0xf4c430;   // yellow
+  const colorEl = 0xe63946;    // red
+  const colorZero = 0x6c757d;  // gray (0deg reference)
+  const colorDc = 0x17a2b8;    // cyan (vertical component)
+  const colorAz = 0x2ecc71;    // green
+  const arcSegments = 24;
+
+  const buildArcLine = (center, fromDir, toDir, radius, color) => {
+    const a = fromDir.clone().normalize();
+    const b = toDir.clone().normalize();
+    const axis = new THREE.Vector3().crossVectors(a, b);
+    const axisLen = axis.length();
+    if (axisLen < 1e-6) { return null; }
+    axis.normalize();
+    const angle = Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
+    const points = [];
+    for (let i = 0; i <= arcSegments; i += 1) {
+      const t = angle * (i / arcSegments);
+      const p = a.clone().applyAxisAngle(axis, t).multiplyScalar(radius).add(center);
+      points.push(p);
+    }
+    const geom = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color });
+    return new THREE.Line(geom, mat);
+  };
+  const buildAzSector = (center, fromDir, toDir, radius, color, opacity = 0.22) => {
+    const a = fromDir.clone().normalize();
+    const b = toDir.clone().normalize();
+    const crossY = a.z * b.x - a.x * b.z;
+    let signed = Math.atan2(crossY, a.dot(b));
+    if (Math.abs(signed) < 1e-6) { return null; }
+    const steps = Math.max(8, Math.floor(arcSegments * 0.75));
+    const points = [center.clone()];
+    for (let i = 0; i <= steps; i += 1) {
+      const t = signed * (i / steps);
+      const p = a.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), t).multiplyScalar(radius).add(center);
+      points.push(p);
+    }
+    const vertices = [];
+    points.forEach((p) => {
+      vertices.push(p.x, p.y + 0.03, p.z);
+    });
+    const indices = [];
+    for (let i = 1; i < points.length - 1; i += 1) {
+      indices.push(0, i, i + 1);
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.renderOrder = 999;
+    return mesh;
+  };
+  const buildAngleSector3D = (center, fromDir, toDir, axis, radius, color, opacity = 0.22) => {
+    const from = fromDir.clone().normalize();
+    const to = toDir.clone().normalize();
+    const rotAxis = axis.clone().normalize();
+    if (rotAxis.lengthSq() < 1e-6) { return null; }
+    const signed = Math.atan2(
+      new THREE.Vector3().crossVectors(from, to).dot(rotAxis),
+      from.dot(to),
+    );
+    if (Math.abs(signed) < 1e-6) { return null; }
+    const steps = Math.max(8, Math.floor(arcSegments * 0.75));
+    const points = [center.clone()];
+    for (let i = 0; i <= steps; i += 1) {
+      const t = signed * (i / steps);
+      const p = from.clone().applyAxisAngle(rotAxis, t).multiplyScalar(radius).add(center);
+      points.push(p);
+    }
+    const vertices = [];
+    points.forEach((p) => {
+      vertices.push(p.x, p.y, p.z);
+    });
+    const indices = [];
+    for (let i = 1; i < points.length - 1; i += 1) {
+      indices.push(0, i, i + 1);
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.add(rotAxis.clone().multiplyScalar(0.03));
+    mesh.renderOrder = 999;
+    return mesh;
+  };
+  const buildAngleLabelSprite = (text, color = '#e63946') => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { return null; }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 2;
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 10);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16);
+      ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    }
+    ctx.fillStyle = color;
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(2.2, 0.9, 1);
+    sprite.renderOrder = 1000;
+    return sprite;
+  };
+
+  for (let i = 0; i < meshes.length - 1; i += 1) {
+    const a = meshes[i]?.position;
+    const b = meshes[i + 1]?.position;
+    if (!a || !b) { continue; }
+    const full = b.clone().sub(a);
+    const fullLen = full.length();
+    if (fullLen < 1e-6) { continue; }
+
+    const pH = new THREE.Vector3(b.x, a.y, b.z);
+    const horizontal = pH.clone().sub(a);
+    const hLen = horizontal.length();
+    const vertical = b.clone().sub(pH);
+    const vLen = vertical.length();
+
+    // 1) full vector (len) - yellow
+    const fullArrow = new THREE.ArrowHelper(
+      full.clone().normalize(),
+      a.clone(),
+      fullLen,
+      colorLen,
+      Math.min(0.9, fullLen * 0.18),
+      Math.min(0.45, fullLen * 0.1)
+    );
+    fullArrow.name = 'RotationInfoLenArrow';
+    scene.add(fullArrow);
+    rotationInfoVisuals.push(fullArrow);
+
+    // 2) horizontal projection (el baseline) - red
+    if (hLen > 1e-6) {
+      const hDir = horizontal.clone().normalize();
+      const hArrow = new THREE.ArrowHelper(
+        hDir,
+        a.clone(),
+        hLen,
+        colorEl,
+        Math.min(0.8, hLen * 0.2),
+        Math.min(0.4, hLen * 0.12)
+      );
+      hArrow.name = 'RotationInfoElArrow';
+      scene.add(hArrow);
+      rotationInfoVisuals.push(hArrow);
+
+      // el: horizontal -> full direction angle sector/arc/label in red
+      const fullDir = full.clone().normalize();
+      const elAxis = new THREE.Vector3().crossVectors(hDir, fullDir);
+      if (elAxis.lengthSq() > 1e-8) {
+        const elSector = buildAngleSector3D(a.clone(), hDir, fullDir, elAxis, fullLen, colorEl, 0.35);
+        if (elSector) {
+          elSector.name = 'RotationInfoElSector';
+          scene.add(elSector);
+          rotationInfoVisuals.push(elSector);
+        }
+        const elArcRadius = Math.min(1.2, Math.max(0.45, hLen * 0.22));
+        const elArc = buildArcLine(a.clone(), hDir, fullDir, elArcRadius, colorEl);
+        if (elArc) {
+          elArc.name = 'RotationInfoElArc';
+          scene.add(elArc);
+          rotationInfoVisuals.push(elArc);
+        }
+        const elDeg = Math.atan2(vertical.y, hLen) * 180 / Math.PI;
+        const signedElRad = Math.atan2(
+          new THREE.Vector3().crossVectors(hDir, fullDir).dot(elAxis.clone().normalize()),
+          hDir.dot(fullDir),
+        );
+        const labelRadius = Math.max(0.7, fullLen * 0.45);
+        const labelDir = hDir.clone().applyAxisAngle(elAxis.clone().normalize(), signedElRad * 0.5);
+        const labelPos = a.clone().add(labelDir.multiplyScalar(labelRadius));
+        labelPos.y += 0.22;
+        const elLabel = buildAngleLabelSprite(`${Math.abs(elDeg).toFixed(1)}deg`, '#8f1020');
+        if (elLabel) {
+          elLabel.position.copy(labelPos);
+          scene.add(elLabel);
+          rotationInfoVisuals.push(elLabel);
+        }
+      }
+    }
+
+    // 3) vertical component (dc) - cyan
+    if (vLen > 1e-6) {
+      const vArrow = new THREE.ArrowHelper(
+        vertical.clone().normalize(),
+        pH.clone(),
+        vLen,
+        colorDc,
+        Math.min(0.7, vLen * 0.25),
+        Math.min(0.35, vLen * 0.15)
+      );
+      vArrow.name = 'RotationInfoDcArrow';
+      scene.add(vArrow);
+      rotationInfoVisuals.push(vArrow);
+    }
+
+    // 4) 0 degree reference in XZ plane - green
+    if (hLen > 1e-6) {
+      const forward = new THREE.Vector3(0, 0, 1);
+      const zeroRefLen = fullLen;
+      const zeroRefArrow = new THREE.ArrowHelper(
+        forward.clone(),
+        a.clone(),
+        zeroRefLen,
+        colorZero,
+        Math.min(0.5, zeroRefLen * 0.25),
+        Math.min(0.25, zeroRefLen * 0.14)
+      );
+      zeroRefArrow.name = 'RotationInfoZeroRefArrow';
+      scene.add(zeroRefArrow);
+      rotationInfoVisuals.push(zeroRefArrow);
+
+      // 5) azimuth arc in XZ plane - red
+      const hDir = horizontal.clone().normalize();
+      const arcRadius = Math.min(1.2, Math.max(0.45, hLen * 0.22));
+      const azSector = buildAzSector(a.clone(), forward, hDir, fullLen, colorAz, 0.5);
+      if (azSector) {
+        azSector.name = 'RotationInfoAzSector';
+        scene.add(azSector);
+        rotationInfoVisuals.push(azSector);
+      }
+      const azArc = buildArcLine(a.clone(), forward, hDir, arcRadius, colorAz);
+      if (azArc) {
+        azArc.name = 'RotationInfoAzArc';
+        scene.add(azArc);
+        rotationInfoVisuals.push(azArc);
+      }
+      const azDeg = Math.atan2(horizontal.x, horizontal.z) * 180 / Math.PI;
+      const midAngle = (azDeg * Math.PI / 180) * 0.5;
+      const labelRadius = Math.max(0.7, fullLen * 0.5);
+      const labelDir = forward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), midAngle);
+      const labelPos = a.clone().add(labelDir.multiplyScalar(labelRadius));
+      labelPos.y += 0.22;
+      const label = buildAngleLabelSprite(`${Math.abs(azDeg).toFixed(1)}deg`, '#0f6b35');
+      if (label) {
+        label.position.copy(labelPos);
+        scene.add(label);
+        rotationInfoVisuals.push(label);
+      }
+    }
+  }
+}
 
 function ensureRotateGizmo() {
   if (rotateGizmoGroup) { return; }
@@ -4430,11 +5161,44 @@ function getRotateSelectionMeshes() {
   return steelFrameMode.getSelectedPointMeshes();
 }
 
+function updateRotationSelectionInfo() {
+  if (!rotationSelectionInfo) { return; }
+  const order = steelFrameMode?.getSelectedPointOrder ? steelFrameMode.getSelectedPointOrder() : [];
+  if (!Array.isArray(order) || order.length < 2) {
+    rotationSelectionInfo.textContent = '選択点: 2点以上で情報を表示';
+    updateRotationInfoVisuals();
+    return;
+  }
+  const lines = [];
+  const toNum = (v) => (Number.isFinite(v) ? v : 0);
+  const fmt = (v) => toNum(v).toFixed(2);
+  lines.push(`選択点: ${order.length}`);
+  for (let i = 0; i < order.length - 1; i += 1) {
+    const a = order[i];
+    const b = order[i + 1];
+    const dx = toNum(b.x) - toNum(a.x);
+    const dy = toNum(b.y) - toNum(a.y);
+    const dz = toNum(b.z) - toNum(a.z);
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const azDeg = Math.atan2(dx, dz) * 180 / Math.PI;
+    const elDeg = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * 180 / Math.PI;
+    lines.push(`[${i + 1}] ${a.id} -> ${b.id}`);
+    lines.push(`vec: (${fmt(dx)}, ${fmt(dy)}, ${fmt(dz)})`);
+    lines.push(`len(yellow): ${fmt(len)}`);
+    lines.push(`el(red): ${fmt(elDeg)}deg`);
+    lines.push(`az(green): ${fmt(azDeg)}deg`);
+    lines.push(`0deg ref(gray): +Z`);
+  }
+  rotationSelectionInfo.textContent = lines.join('\n');
+  updateRotationInfoVisuals();
+}
+
 function updateRotateGizmo() {
   ensureRotateGizmo();
   const meshes = getRotateSelectionMeshes();
   if (objectEditMode !== ROTATE_MODE || meshes.length < 2) {
     rotateGizmoGroup.visible = false;
+    updateRotationSelectionInfo();
     return;
   }
   const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',');
@@ -4465,6 +5229,7 @@ function updateRotateGizmo() {
   const scale = Math.max(1.2, maxDist * 1.2);
   rotateGizmoGroup.scale.setScalar(scale);
   rotateGizmoGroup.visible = true;
+  updateRotationSelectionInfo();
 }
 
 function beginRotateDrag(axisMesh) {
@@ -4513,6 +5278,7 @@ function updateRotateDrag() {
     }
   });
   curves.forEach((curve) => updateGuideCurve(curve));
+  updateRotationSelectionInfo();
 }
 
 // Ensure resize uses unified handler
@@ -4937,6 +5703,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     updateRotateGizmo()
+    updateRotationSelectionInfo()
     if (rotationPanel) {
       rotationPanel.style.display = 'block';
     }
@@ -4950,6 +5717,8 @@ export function UIevent (uiID, toggle){
     if (rotationPanel) {
       rotationPanel.style.display = 'none';
     }
+    clearRotationInfoVisuals();
+    updateRotationSelectionInfo()
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
@@ -4970,16 +5739,21 @@ export function UIevent (uiID, toggle){
 
   } else {
   console.log( 'move_point _inactive' )
+    pointRotateModeActive = false
     search_object = false
     move_direction_y = false
     steelFrameMode.setAllowPointAppend(false)
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
+    clearPointRotateState();
   }} else if ( uiID === 'x_z_sf' ){ if ( toggle === 'active' ){
   console.log( 'x_z_sf _active' )
+    pointRotateModeActive = false
+    clearPointRotateState()
     editObject = 'STEEL_FRAME'
     move_direction_y = false
+    objectEditMode = 'MOVE_EXISTING'
     targetObjects = steelFrameMode.getCurrentPointMeshes()
     setMeshListOpacity(targetObjects, 1)
     search_object = true
@@ -4990,8 +5764,11 @@ export function UIevent (uiID, toggle){
     search_object = false
   }} else if ( uiID === 'y_sf' ){ if ( toggle === 'active' ){
   console.log( 'y_sf _active' )
+    pointRotateModeActive = false
+    clearPointRotateState()
     editObject = 'STEEL_FRAME'
     move_direction_y = true
+    objectEditMode = 'MOVE_EXISTING'
     targetObjects = steelFrameMode.getCurrentPointMeshes()
     setMeshListOpacity(targetObjects, 1)
     search_object = true
@@ -5000,6 +5777,28 @@ export function UIevent (uiID, toggle){
   } else {
   console.log( 'y_sf _inactive' )
     search_object = false
+  }} else if ( uiID === 'rotation/2' ){ if ( toggle === 'active' ){
+  console.log( 'rotation/2 _active' )
+    pointRotateModeActive = true
+    editObject = 'STEEL_FRAME'
+    if (objectEditMode === 'Standby') {
+      objectEditMode = 'MOVE_EXISTING'
+    }
+    search_object = true
+    steelFrameMode.setAllowPointAppend(false)
+    targetObjects = steelFrameMode.getAllPointMeshes()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    updatePointRotateVisuals()
+    search_point()
+  } else {
+  console.log( 'rotation/2 _inactive' )
+    pointRotateModeActive = false
+    clearPointRotateState()
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
+      search_object = true
+      search_point()
+    }
   }} else if ( uiID === 'change_angle' ){ if ( toggle === 'active' ){
   console.log( 'change_angle _active' )
     movePlaneMode = 'change_angle'
