@@ -3012,6 +3012,29 @@ function setMeshListOpacity(list, opacity) {
       return;
     }
 
+    // Difference 空間ボックスは独自の透過/描画設定を維持する。
+    // 汎用の opacity 上書きで material が変質して見える問題を防ぐ。
+    if (mesh.userData?.differenceSpacePlane) {
+      const applyDifferenceStyle = (material) => {
+        if (!material) { return; }
+        material.opacity = 0.5;
+        material.transparent = true;
+        material.side = THREE.DoubleSide;
+        material.depthWrite = false;
+        if ('metalness' in material) { material.metalness = 0.0; }
+        if ('roughness' in material) { material.roughness = 1.0; }
+        if ('flatShading' in material) { material.flatShading = true; }
+        material.needsUpdate = true;
+      };
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(applyDifferenceStyle);
+      } else {
+        applyDifferenceStyle(mesh.material);
+      }
+      mesh.visible = opacity > 0;
+      return;
+    }
+
     const applyOpacity = (material) => {
       if (!material) { return; }
       if ('opacity' in material) {
@@ -3871,6 +3894,9 @@ function createDifferenceSpacePlane(position) {
       opacity: 0.5,
       side: THREE.DoubleSide,
       depthWrite: false,
+      metalness: 0.0,
+      roughness: 1.0,
+      flatShading: true,
     }),
   );
   plane.position.copy(position);
@@ -4146,7 +4172,20 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
       opacity: 0.5,
       side: THREE.DoubleSide,
       depthWrite: false,
+      metalness: 0.0,
+      roughness: 1.0,
+      flatShading: true,
     });
+  if (mat) {
+    mat.opacity = 0.5;
+    mat.transparent = true;
+    mat.side = THREE.DoubleSide;
+    mat.depthWrite = false;
+    if ('metalness' in mat) { mat.metalness = 0.0; }
+    if ('roughness' in mat) { mat.roughness = 1.0; }
+    if ('flatShading' in mat) { mat.flatShading = true; }
+    mat.needsUpdate = true;
+  }
   const mesh = new THREE.Mesh(geometry, mat);
   mesh.name = 'DifferenceSpacePlane';
   mesh.userData = {
