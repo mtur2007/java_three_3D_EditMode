@@ -66,7 +66,7 @@ log_hidden.addEventListener("touchstart", () => {
 });
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
 import { Brush, Evaluator, HOLLOW_SUBTRACTION } from 'three-bvh-csg';
 const scene = new THREE.Scene();
 
@@ -3328,6 +3328,7 @@ let differenceHoverFaceKey = null
 let differenceHoveredFaceHit = null
 const differenceSelectedControlPoints = new Set()
 const differenceSelectedFaces = new Map()
+const differenceSharedPointLinkEpsilon = 0.02
 let differenceFaceVertexDragActive = false
 let differenceFaceVertexDragMesh = null
 let differenceFaceVertexDragLocalNormal = null
@@ -4105,6 +4106,76 @@ function rebuildDifferenceControlPointsFromGeometry(mesh) {
   updateDifferenceControlPointMarkerTransform(mesh);
 }
 
+function addDifferenceSharedPointLink(a, b) {
+  if (!a?.userData?.differenceControlPoint || !b?.userData?.differenceControlPoint || a === b) { return; }
+  const linksA = Array.isArray(a.userData.sharedDifferencePoints) ? a.userData.sharedDifferencePoints : [];
+  if (!linksA.includes(b)) {
+    linksA.push(b);
+  }
+  a.userData.sharedDifferencePoints = linksA;
+
+  const linksB = Array.isArray(b.userData.sharedDifferencePoints) ? b.userData.sharedDifferencePoints : [];
+  if (!linksB.includes(a)) {
+    linksB.push(a);
+  }
+  b.userData.sharedDifferencePoints = linksB;
+}
+
+function findDifferenceControlPointByLocalPosition(mesh, localPos, eps = differenceSharedPointLinkEpsilon) {
+  if (!mesh || !localPos) { return null; }
+  let best = null;
+  let bestDist = Infinity;
+  mesh.children.forEach((child) => {
+    if (!child?.userData?.differenceControlPoint) { return; }
+    const d = child.position.distanceToSquared(localPos);
+    if (d < bestDist) {
+      best = child;
+      bestDist = d;
+    }
+  });
+  if (!best) { return null; }
+  return bestDist <= (eps * eps) ? best : null;
+}
+
+function linkDifferenceSharedBoundaryPoints(sourceMesh, newMesh, sourceFaceLocalPoints) {
+  if (!sourceMesh || !newMesh || !Array.isArray(sourceFaceLocalPoints) || sourceFaceLocalPoints.length < 3) { return 0; }
+  let linked = 0;
+  sourceFaceLocalPoints.forEach((lp) => {
+    const a = findDifferenceControlPointByLocalPosition(sourceMesh, lp, differenceSharedPointLinkEpsilon);
+    const b = findDifferenceControlPointByLocalPosition(newMesh, lp, differenceSharedPointLinkEpsilon);
+    if (!a || !b) { return; }
+    addDifferenceSharedPointLink(a, b);
+    linked += 1;
+  });
+  return linked;
+}
+
+function propagateDifferenceSharedPoints(points, dirtyMeshes = null) {
+  if (!Array.isArray(points) || points.length < 1) { return; }
+  const queue = points.filter((p) => p?.userData?.differenceControlPoint);
+  const visited = new Set();
+  const worldPos = new THREE.Vector3();
+  while (queue.length > 0) {
+    const point = queue.shift();
+    if (!point || visited.has(point.id)) { continue; }
+    visited.add(point.id);
+    const links = Array.isArray(point.userData?.sharedDifferencePoints) ? point.userData.sharedDifferencePoints : [];
+    if (links.length < 1) { continue; }
+    point.getWorldPosition(worldPos);
+    links.forEach((linkedPoint) => {
+      if (!linkedPoint?.userData?.differenceControlPoint || !linkedPoint.parent) { return; }
+      const local = worldPos.clone().applyMatrix4(new THREE.Matrix4().copy(linkedPoint.parent.matrixWorld).invert());
+      linkedPoint.position.copy(local);
+      if (dirtyMeshes) {
+        dirtyMeshes.add(linkedPoint.parent);
+      }
+      if (!visited.has(linkedPoint.id)) {
+        queue.push(linkedPoint);
+      }
+    });
+  }
+}
+
 function buildExtrudePrismGeometryFromFacePoints(mesh, facePoints, worldNormal, distance = 1) {
   if (!mesh || !Array.isArray(facePoints) || facePoints.length < 3 || !worldNormal) { return null; }
   const normalLocal = worldNormal.clone().applyQuaternion(mesh.quaternion.clone().invert()).normalize();
@@ -4158,8 +4229,13 @@ function buildExtrudePrismGeometryFromFacePoints(mesh, facePoints, worldNormal, 
   const uvs = new Float32Array(vertexCount * 2);
   geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
-  geom.computeVertexNormals();
-  return geom;
+  // 面境界で座標が同一の頂点を同一化して、押し出し形状の頂点連結を安定させる。
+  const welded = mergeVertices(geom, 1e-5);
+  welded.computeVertexNormals();
+  welded.computeBoundingBox?.();
+  welded.computeBoundingSphere?.();
+  geom.dispose?.();
+  return welded;
 }
 
 function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
@@ -4303,9 +4379,19 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
     return { mesh: null, error: 'prism_geometry_failed', facePointCount: localFacePoints.length };
   }
 
-  prismGeometry.computeVertexNormals();
-  prismGeometry.computeBoundingBox?.();
-  prismGeometry.computeBoundingSphere?.();
+  const removedFaceCount = removeDifferenceFaceTriangles(sourceMesh, facePointLocal, localNormal, sourceFacePoints);
+  if (removedFaceCount < 1) {
+    prismGeometry.dispose?.();
+    return { mesh: null, error: 'source_face_remove_failed', facePointCount: localFacePoints.length };
+  }
+
+  sourceMesh.userData = {
+    ...(sourceMesh.userData || {}),
+    differenceCornerVertexMap: null,
+  };
+  rebuildDifferenceControlPointsFromGeometry(sourceMesh);
+  syncDifferenceGeometryFromControlPoints(sourceMesh);
+
   const newMesh = createDifferenceSpaceMeshFromGeometry(prismGeometry, sourceMesh);
   if (!newMesh) {
     prismGeometry.dispose?.();
@@ -4317,8 +4403,8 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   };
   rebuildDifferenceControlPointsFromGeometry(newMesh);
   syncDifferenceGeometryFromControlPoints(newMesh);
+  linkDifferenceSharedBoundaryPoints(sourceMesh, newMesh, localFacePoints);
   selectDifferencePlane(newMesh);
-  removeDifferenceFaceTriangles(sourceMesh, facePointLocal, localNormal, sourceFacePoints);
   return { mesh: newMesh, error: null, facePointCount: localFacePoints.length };
 }
 
@@ -6617,6 +6703,10 @@ function updateDifferenceControlPointDrag() {
     entry.point.position.copy(next);
     dirtyMeshes.add(m);
   });
+  propagateDifferenceSharedPoints(
+    differenceControlPointDragPoint.map((entry) => entry.point),
+    dirtyMeshes,
+  );
   dirtyMeshes.forEach((m) => syncDifferenceGeometryFromControlPoints(m));
   refreshDifferencePreview();
 }
@@ -6631,6 +6721,7 @@ function updateDifferenceFaceVertexDrag() {
   const nowT = getAxisParamFromPointer(differenceFaceVertexDragStartPos, axisDir);
   const delta = nowT - differenceFaceVertexDragStartT;
   const dirtyMeshes = new Set();
+  const movedPoints = [];
   differenceFaceVertexDragMesh.forEach((entry) => {
     const worldToLocalQuat = entry.mesh.quaternion.clone().invert();
     const localAxis = entry.axisDir.clone().applyQuaternion(worldToLocalQuat).normalize();
@@ -6638,12 +6729,14 @@ function updateDifferenceFaceVertexDrag() {
     entry.points.forEach((p) => {
       const next = p.startPos.clone().add(localAxis.clone().multiplyScalar(delta));
       p.point.position.copy(next);
+      movedPoints.push(p.point);
     });
     if (pointRotateTarget === entry.mesh) {
       pointRotateCenter.copy(entry.faceOrigin.clone().add(entry.axisDir.clone().multiplyScalar(delta)));
     }
     dirtyMeshes.add(entry.mesh);
   });
+  propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
   dirtyMeshes.forEach((m) => {
     syncDifferenceGeometryFromControlPoints(m);
     updateDifferenceControlPointMarkerTransform(m);
