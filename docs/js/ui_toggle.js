@@ -230,6 +230,14 @@ const uiTree = {
                 'pillar': { 'Round_bar': '', 'H_beam': '' },
                 'rite': { 'tubular': '' },
             },
+            'Difference': {
+                'space': {
+                    'add': '',
+                    'move': '',
+                    'tube': '',
+                },
+                'excavation': '',
+            },
         },
         'custom': {
             'new': '',

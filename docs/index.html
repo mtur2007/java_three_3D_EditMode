@@ -292,7 +292,9 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.3/build/index.module.js",
+      "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.16/build/index.module.js"
     }
   }
   </script>
@@ -664,6 +666,51 @@
     color: #fff;
     cursor: pointer;
   }
+  #difference-panel {
+    position: fixed;
+    right: 20px;
+    top: 360px;
+    width: 250px;
+    padding: 12px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    z-index: 10003;
+    display: none;
+    pointer-events: auto;
+    border: 1px solid rgba(170, 200, 250, 0.3);
+    color: #1a2533;
+  }
+  #difference-panel .difference-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #difference-panel .difference-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  #difference-panel label {
+    font-size: 11px;
+    color: #2b4057;
+  }
+  #difference-panel select {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid #bcd5ee;
+    padding: 4px 6px;
+    font-size: 12px;
+    color: #1a2533;
+    background: #fff;
+  }
+  #difference-status {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #4a5f78;
+  }
 
   .edit-guide {
     display: grid;
@@ -974,6 +1021,25 @@
                     <div class="guide-meta">円形軌道（仮）</div>
                   </button>
                 </div>
+              </div>
+
+              <div id="difference-panel" role="region" aria-label="Difference設定">
+                <div class="difference-title">Difference Category</div>
+                <div class="difference-row">
+                  <label for="difference-shape">形状</label>
+                  <select id="difference-shape">
+                    <option value="tube">tube チューブ</option>
+                    <option value="box">box 長方形で接続</option>
+                  </select>
+                </div>
+                <div class="difference-row">
+                  <label for="difference-path">経路</label>
+                  <select id="difference-path">
+                    <option value="smooth">補完（smooth）</option>
+                    <option value="linear">直線（linear）</option>
+                  </select>
+                </div>
+                <p id="difference-status">spaceで平面を配置すると半透明プレビューを表示します。</p>
               </div>
 
             </div>
@@ -1373,6 +1439,12 @@ window.addEventListener('load', () => {
     'edit': '編集モード',
     'rail': 'レール編集',
     'creat': 'クリエイトモード',
+    'Difference': '差分くり抜きメニュー',
+    'space': '平面を配置して空間定義',
+    'add/2': 'space: 平面を追加',
+    'move/2': 'space: 面変形',
+    'tube': 'space: チューブ生成',
+    'excavation': '現在のプレビュー形状でくり抜き実行',
     'custom': 'カスタム編集',
 
     'view': 'プレビュー表示',
@@ -1411,7 +1483,7 @@ window.addEventListener('load', () => {
     'move': '移動',
     'construct': '構築',
     'new/2': '新規 (構造物)',
-    'move/2': '移動 (カスタム)',
+    'move/3': '移動 (カスタム)',
     'x_z/2': '平面(XZ軸) 移動 (カスタム)',
     'y/2': '垂直(Y軸) 移動 (カスタム)',
   };
