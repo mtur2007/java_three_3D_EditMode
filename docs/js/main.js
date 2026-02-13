@@ -4528,6 +4528,39 @@ function buildDifferenceCutterMesh(points, { shapeType = 'tube', pathType = 'smo
   return mesh;
 }
 
+function buildDifferenceCutterMeshFromSpaces() {
+  const spaces = differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.geometry);
+  if (spaces.length < 1) { return null; }
+
+  const geoms = [];
+  spaces.forEach((mesh) => {
+    const g = mesh.geometry.clone();
+    g.applyMatrix4(mesh.matrixWorld);
+    geoms.push(g);
+  });
+  if (geoms.length < 1) { return null; }
+
+  const merged = mergeGeometries(geoms, false);
+  geoms.forEach((g) => g.dispose?.());
+  if (!merged) { return null; }
+  merged.computeVertexNormals();
+  merged.computeBoundingBox?.();
+  merged.computeBoundingSphere?.();
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x2ed0c9,
+    transparent: true,
+    opacity: 0.5,
+    metalness: 0.1,
+    roughness: 0.42,
+    depthWrite: false,
+  });
+  const cutter = new THREE.Mesh(merged, material);
+  cutter.name = 'DifferencePreviewCutter';
+  cutter.renderOrder = 1200;
+  return cutter;
+}
+
 function updateDifferenceStatus(text) {
   if (!differenceStatus) { return; }
   differenceStatus.textContent = text;
@@ -4618,23 +4651,34 @@ function applyDifferenceToSinjyuku(cutterMesh) {
 }
 
 function runDifferenceOnSinjyukuFromSelectedPoints() {
+  const spaceCutter = buildDifferenceCutterMeshFromSpaces();
   const selectedPoints = getDifferenceSelectedPoints();
-  if (selectedPoints.length < 2) {
-    console.warn('Difference requires at least 2 selected points.');
-    updateDifferenceStatus('平面を1枚以上配置してから excavation を押してください。');
+  const pathCutter = (selectedPoints.length >= 2)
+    ? (differencePreviewTube || buildDifferenceCutterMesh(selectedPoints, {
+      shapeType: differenceShapeType,
+      pathType: differencePathType,
+    }))
+    : null;
+  const cutter = spaceCutter || pathCutter;
+  if (!cutter) {
+    console.warn('Failed to create Difference cutter.');
+    updateDifferenceStatus('空間を1つ以上作成してから excavation を押してください。');
     return false;
   }
 
-  const cutter = differencePreviewTube || buildDifferenceCutterMesh(selectedPoints, {
-    shapeType: differenceShapeType,
-    pathType: differencePathType,
-  });
-  if (!cutter) {
-    console.warn('Failed to create Difference cutter.');
-    updateDifferenceStatus('くり抜き形状を作成できませんでした。');
-    return false;
-  }
-  if (!differencePreviewTube) {
+  if (spaceCutter) {
+    if (differencePreviewTube?.parent) {
+      differencePreviewTube.parent.remove(differencePreviewTube);
+    }
+    if (differencePreviewTube?.geometry?.dispose) {
+      differencePreviewTube.geometry.dispose();
+    }
+    if (differencePreviewTube?.material?.dispose) {
+      differencePreviewTube.material.dispose();
+    }
+    differencePreviewTube = cutter;
+    scene.add(cutter);
+  } else if (!differencePreviewTube) {
     scene.add(cutter);
     differencePreviewTube = cutter;
   }
