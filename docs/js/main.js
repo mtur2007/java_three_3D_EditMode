@@ -3996,6 +3996,26 @@ function getDifferenceControlPointMapByCornerKey(mesh) {
 
 function getDifferenceFaceControlPoints(mesh, localNormal, facePointLocal = null) {
   if (!mesh || !localNormal) { return []; }
+
+  // クリック面の情報がある場合は、軸依存ではなく「平面距離」で面頂点を抽出する。
+  // これにより斜め面でも押し出し対象の頂点群を拾える。
+  if (facePointLocal) {
+    const n = localNormal.clone().normalize();
+    if (n.lengthSq() > 1e-8) {
+      const planeTol = 0.11;
+      const planePoints = mesh.children.filter((child) => {
+        if (!child?.userData?.differenceControlPoint) { return false; }
+        const p = child.position;
+        const d = p.clone().sub(facePointLocal).dot(n);
+        return Math.abs(d) <= planeTol;
+      });
+      if (planePoints.length >= 3) {
+        return planePoints;
+      }
+    }
+  }
+
+  // 既存互換: 軸平行面向けの簡易抽出
   const axis = Math.abs(localNormal.x) > 0.9
     ? 'x'
     : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
@@ -4159,6 +4179,70 @@ function formatDifferenceExtrudeFailureMessage(result, hit) {
   return `面押し出しに失敗: ${detail.join(' / ')}。対象面を選び直してください。`;
 }
 
+function removeDifferenceFaceTriangles(mesh, facePointLocal, localNormal, faceControlPoints = null, tol = 0.06) {
+  const geometry = mesh?.geometry;
+  const pos = geometry?.attributes?.position;
+  if (!geometry || !pos || !facePointLocal || !localNormal) { return 0; }
+  const n = localNormal.clone().normalize();
+  if (n.lengthSq() < 1e-8) { return 0; }
+
+  const indexAttr = geometry.getIndex();
+  const triCount = indexAttr
+    ? Math.floor(indexAttr.count / 3)
+    : Math.floor(pos.count / 3);
+  if (triCount < 1) { return 0; }
+
+  const kept = [];
+  let removed = 0;
+  const faceVertexSet = new Set();
+  if (Array.isArray(faceControlPoints)) {
+    faceControlPoints.forEach((cp) => {
+      const ids = cp?.userData?.differenceVertexIndices;
+      if (!Array.isArray(ids)) { return; }
+      ids.forEach((i) => {
+        if (Number.isInteger(i)) { faceVertexSet.add(i); }
+      });
+    });
+  }
+  const readVertex = (i, out) => out.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+
+  for (let t = 0; t < triCount; t += 1) {
+    const ia = indexAttr ? indexAttr.getX(t * 3 + 0) : (t * 3 + 0);
+    const ib = indexAttr ? indexAttr.getX(t * 3 + 1) : (t * 3 + 1);
+    const ic = indexAttr ? indexAttr.getX(t * 3 + 2) : (t * 3 + 2);
+    const byVertexSet = faceVertexSet.size > 0
+      && faceVertexSet.has(ia)
+      && faceVertexSet.has(ib)
+      && faceVertexSet.has(ic);
+    if (byVertexSet) {
+      removed += 1;
+      continue;
+    }
+    readVertex(ia, a);
+    readVertex(ib, b);
+    readVertex(ic, c);
+    const da = Math.abs(a.clone().sub(facePointLocal).dot(n));
+    const db = Math.abs(b.clone().sub(facePointLocal).dot(n));
+    const dc = Math.abs(c.clone().sub(facePointLocal).dot(n));
+    const onFace = da <= tol && db <= tol && dc <= tol;
+    if (onFace) {
+      removed += 1;
+      continue;
+    }
+    kept.push(ia, ib, ic);
+  }
+
+  if (removed < 1) { return 0; }
+  geometry.setIndex(kept);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  return removed;
+}
+
 function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   const sourceMesh = hit?.object;
   const localNormal = getLocalFaceNormalFromHit(hit);
@@ -4195,6 +4279,7 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   rebuildDifferenceControlPointsFromGeometry(newMesh);
   syncDifferenceGeometryFromControlPoints(newMesh);
   selectDifferencePlane(newMesh);
+  removeDifferenceFaceTriangles(sourceMesh, facePointLocal, localNormal, sourceFacePoints);
   return { mesh: newMesh, error: null, facePointCount: localFacePoints.length };
 }
 
