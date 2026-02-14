@@ -68,6 +68,7 @@ log_hidden.addEventListener("touchstart", () => {
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
 import { Brush, Evaluator, HOLLOW_SUBTRACTION } from 'three-bvh-csg';
+import { encode, decode } from 'https://cdn.jsdelivr.net/npm/@msgpack/msgpack@3.0.0/dist.esm/index.mjs';
 const scene = new THREE.Scene();
 
 const canvas = document.getElementById('three-canvas');
@@ -2423,6 +2424,350 @@ function downloadStructureData() {
 const saveStructureButton = document.getElementById('save-structure-data');
 if (saveStructureButton) {
   saveStructureButton.addEventListener('click', downloadStructureData);
+}
+
+const UI_STATE_STORAGE_KEY = 'train_editmode_ui_state_v1';
+
+const u8view = (typed) => new Uint8Array(typed.buffer, typed.byteOffset, typed.byteLength);
+
+function maxIndexValue(indices) {
+  if (!Array.isArray(indices) || indices.length < 1) { return -1; }
+  let m = -1;
+  for (let i = 0; i < indices.length; i += 1) {
+    const v = Number(indices[i]) || 0;
+    if (v > m) { m = v; }
+  }
+  return m;
+}
+
+function packState(state) {
+  const packed = structuredClone(state);
+  const spaces = Array.isArray(packed?.differenceSpaces) ? packed.differenceSpaces : [];
+  spaces.forEach((ds) => {
+    const geom = ds?.geometry;
+    if (!geom || !Array.isArray(geom.position)) { return; }
+    const posF32 = Float32Array.from(geom.position);
+    const rawIndex = Array.isArray(geom.index) ? geom.index : [];
+    const idxMax = maxIndexValue(rawIndex);
+    const idxTyped = (idxMax >= 0 && idxMax <= 65535)
+      ? Uint16Array.from(rawIndex)
+      : Uint32Array.from(rawIndex);
+    ds.geometry = {
+      position: { dtype: 'f32', itemSize: 3, data: u8view(posF32) },
+      index: { dtype: (idxTyped instanceof Uint16Array) ? 'u16' : 'u32', data: u8view(idxTyped) },
+    };
+  });
+  return encode(packed);
+}
+
+function fromBin(binU8, dtype) {
+  const src = Array.isArray(binU8) ? Uint8Array.from(binU8) : binU8;
+  if (!src || typeof src !== 'object' || !('buffer' in src) || !('byteOffset' in src) || !('byteLength' in src)) {
+    throw new Error('invalid binary payload');
+  }
+  const toAlignedView = (bytesPerElement, Ctor) => {
+    const byteLen = src.byteLength;
+    if (byteLen % bytesPerElement !== 0) {
+      throw new Error(`invalid ${dtype} byteLength=${byteLen}`);
+    }
+    // MessagePack decode の戻りは byteOffset が未アラインな場合があるため、
+    // 必要時のみコピーして安全に TypedArray を生成する。
+    if (src.byteOffset % bytesPerElement !== 0) {
+      const copy = new Uint8Array(byteLen);
+      copy.set(new Uint8Array(src.buffer, src.byteOffset, byteLen));
+      return new Ctor(copy.buffer);
+    }
+    return new Ctor(src.buffer, src.byteOffset, byteLen / bytesPerElement);
+  };
+  if (dtype === 'f32') { return toAlignedView(4, Float32Array); }
+  if (dtype === 'u16') { return toAlignedView(2, Uint16Array); }
+  if (dtype === 'u32') { return toAlignedView(4, Uint32Array); }
+  throw new Error('unknown dtype');
+}
+
+function unpackState(bytes) {
+  const state = decode(bytes);
+  const spaces = Array.isArray(state?.differenceSpaces) ? state.differenceSpaces : [];
+  spaces.forEach((ds) => {
+    const gp = ds?.geometry?.position;
+    const gi = ds?.geometry?.index;
+    if (!gp?.data || !gp?.dtype) { return; }
+    const pos = fromBin(gp.data, gp.dtype);
+    const idx = (gi?.data && gi?.dtype) ? fromBin(gi.data, gi.dtype) : new Uint32Array();
+    ds.geometry = {
+      position: Array.from(pos),
+      index: Array.from(idx),
+    };
+  });
+  return state;
+}
+
+function serializeDifferenceSpaceMesh(mesh) {
+  if (!mesh?.geometry?.attributes?.position) { return null; }
+  const positionAttr = mesh.geometry.attributes.position;
+  const indexAttr = mesh.geometry.getIndex();
+  return {
+    position: [mesh.position.x, mesh.position.y, mesh.position.z],
+    quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
+    scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+    geometry: {
+      position: Array.from(positionAttr.array),
+      index: indexAttr ? Array.from(indexAttr.array) : null,
+    },
+  };
+}
+
+function buildCreateModePayload() {
+  const uiStateRaw = localStorage.getItem(UI_STATE_STORAGE_KEY);
+  let uiState = null;
+  try {
+    uiState = uiStateRaw ? JSON.parse(uiStateRaw) : null;
+  } catch (err) {
+    uiState = null;
+  }
+
+  const spaces = differenceSpacePlanes
+    .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .map((mesh) => serializeDifferenceSpaceMesh(mesh))
+    .filter(Boolean);
+
+  return {
+    meta: {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      app: 'Train_EditMode_demo',
+    },
+    mode: {
+      editObject,
+      objectEditMode,
+      searchObject: search_object,
+      moveDirectionY: move_direction_y,
+      differenceSpaceModeActive,
+      differenceSpaceTransformMode,
+      differenceShapeType,
+      differencePathType,
+    },
+    uiState,
+    differenceSpaces: spaces,
+  };
+}
+
+function downloadCreateModeData() {
+  const payload = buildCreateModePayload();
+  const msgpackBytes = packState(payload);
+  const blob = new Blob([msgpackBytes], { type: 'application/x-msgpack' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  link.download = `create_mode_state_${stamp}.msgpack`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  alert('create_mode_state.msgpack を保存しました。');
+}
+
+const saveCreateModeButton = document.getElementById('save-create-mode-data');
+if (saveCreateModeButton) {
+  saveCreateModeButton.addEventListener('click', downloadCreateModeData);
+}
+
+const loadMapDataButton = document.getElementById('load-map-data');
+const loadMapDataInput = document.getElementById('load-map-data-input');
+
+function clearDifferenceSpacesForImport() {
+  clearDifferencePreviewTube();
+  clearDifferenceFaceHighlight();
+  clearDifferenceFaceSelection();
+  clearDifferenceControlPointSelection();
+  differenceSpacePlanes.forEach((mesh) => {
+    if (!mesh) { return; }
+    mesh.children.forEach((child) => {
+      if (child?.userData?.differenceControlPoint) {
+        child.geometry?.dispose?.();
+        child.material?.dispose?.();
+      }
+    });
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    mesh.geometry?.dispose?.();
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((m) => m?.dispose?.());
+    } else {
+      mesh.material?.dispose?.();
+    }
+  });
+  differenceSpacePlanes.length = 0;
+  differenceSelectedPlane = null;
+}
+
+function buildGeometryFromSerializedSpace(rawSpace) {
+  const posArr = rawSpace?.geometry?.position;
+  const idxArr = rawSpace?.geometry?.index;
+  if (!Array.isArray(posArr) || posArr.length < 9 || posArr.length % 3 !== 0) { return null; }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+  const uv = new Float32Array((posArr.length / 3) * 2);
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  if (Array.isArray(idxArr) && idxArr.length >= 3) {
+    geometry.setIndex(idxArr);
+  }
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  return geometry;
+}
+
+function relinkImportedDifferenceSharedPoints(eps = differenceSharedPointLinkEpsilon) {
+  const points = [];
+  differenceSpacePlanes.forEach((mesh) => {
+    mesh?.children?.forEach((child) => {
+      if (!child?.userData?.differenceControlPoint || !child.parent) { return; }
+      points.push(child);
+    });
+  });
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const aw = a.getWorldPosition(new THREE.Vector3());
+    for (let j = i + 1; j < points.length; j += 1) {
+      const b = points[j];
+      if (a.parent === b.parent) { continue; }
+      const bw = b.getWorldPosition(new THREE.Vector3());
+      if (aw.distanceToSquared(bw) <= eps * eps) {
+        addDifferenceSharedPointLink(a, b);
+      }
+    }
+  }
+}
+
+function applyCreateModePayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('map_data の形式が不正です。');
+  }
+  const spaces = Array.isArray(payload.differenceSpaces) ? payload.differenceSpaces : [];
+  clearDifferenceSpacesForImport();
+  spaces.forEach((rawSpace) => {
+    const geometry = buildGeometryFromSerializedSpace(rawSpace);
+    if (!geometry) { return; }
+    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
+    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
+    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
+    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
+    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
+    mesh.updateMatrixWorld(true);
+    rebuildDifferenceControlPointsFromGeometry(mesh);
+    syncDifferenceGeometryFromControlPoints(mesh);
+  });
+  relinkImportedDifferenceSharedPoints();
+
+  const mode = payload.mode && typeof payload.mode === 'object' ? payload.mode : {};
+  editObject = typeof mode.editObject === 'string' ? mode.editObject : editObject;
+  objectEditMode = typeof mode.objectEditMode === 'string' ? mode.objectEditMode : objectEditMode;
+  search_object = Boolean(mode.searchObject);
+  move_direction_y = Boolean(mode.moveDirectionY);
+  differenceSpaceModeActive = Boolean(mode.differenceSpaceModeActive);
+  differenceSpaceTransformMode = typeof mode.differenceSpaceTransformMode === 'string'
+    ? mode.differenceSpaceTransformMode
+    : differenceSpaceTransformMode;
+  differenceShapeType = typeof mode.differenceShapeType === 'string' ? mode.differenceShapeType : differenceShapeType;
+  differencePathType = typeof mode.differencePathType === 'string' ? mode.differencePathType : differencePathType;
+  if (differenceShapeSelect) {
+    differenceShapeSelect.value = differenceShapeType;
+  }
+  if (differencePathSelect) {
+    differencePathSelect.value = differencePathType;
+  }
+  targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
+  setMeshListOpacity(targetObjects, 1);
+  refreshDifferencePreview();
+  updateDifferenceStatus(`map_data 読込完了: 空間 ${differenceSpacePlanes.length} 件`);
+
+  if (payload.uiState && typeof payload.uiState === 'object') {
+    try {
+      localStorage.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(payload.uiState));
+    } catch (err) {
+      console.warn('failed to store uiState', err);
+    }
+  }
+}
+
+function readMapDataFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = reader.result;
+        if (!(data instanceof ArrayBuffer)) {
+          reject(new Error('ファイル形式が不正です。'));
+          return;
+        }
+        const bytes = new Uint8Array(data);
+        const name = String(file?.name || '').toLowerCase();
+        const explicitJson = name.endsWith('.json');
+        const explicitMsgPack = name.endsWith('.msgpack') || name.endsWith('.mpk');
+
+        const tryMsgPack = () => unpackState(bytes);
+        const tryJson = () => {
+          const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+          return JSON.parse(text);
+        };
+
+        if (explicitMsgPack) {
+          resolve(tryMsgPack());
+          return;
+        }
+        if (explicitJson) {
+          resolve(tryJson());
+          return;
+        }
+
+        // 拡張子不明時は MessagePack -> JSON の順で試す
+        try {
+          resolve(tryMsgPack());
+          return;
+        } catch (msgpackErr) {
+          try {
+            resolve(tryJson());
+            return;
+          } catch (jsonErr) {
+            const detail = [
+              `msgpack: ${msgpackErr?.message || msgpackErr}`,
+              `json: ${jsonErr?.message || jsonErr}`,
+            ].join(' | ');
+            reject(new Error(`MessagePack / JSON の解析に失敗しました。${detail}`));
+            return;
+          }
+        }
+      } catch (err) {
+        reject(new Error(`MessagePack / JSON の解析に失敗しました。${err?.message || err}`));
+      }
+    };
+    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました。'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+if (loadMapDataButton && loadMapDataInput) {
+  loadMapDataButton.addEventListener('click', () => {
+    loadMapDataInput.value = '';
+    loadMapDataInput.click();
+  });
+  loadMapDataInput.addEventListener('change', async (event) => {
+    const file = event.target?.files?.[0];
+    if (!file) { return; }
+    try {
+      const payload = await readMapDataFile(file);
+      applyCreateModePayload(payload);
+      alert('map_data を読み込みました。');
+    } catch (err) {
+      console.warn(err);
+      alert(err?.message || 'map_data の読み込みに失敗しました。');
+    }
+  });
 }
 
 await loadStructureData(structureDataUrl);

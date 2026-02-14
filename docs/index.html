@@ -925,12 +925,15 @@
 
               <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
 
-              <div id="save-buttons" style="position: absolute; left: 20px; top: 20px; display: flex; gap: 8px; z-index: 10;">
+              <div id="save-buttons" style="position: absolute; left: 20px; top: 20px; display: flex; flex-wrap: nowrap; gap: 8px; z-index: 10;">
                 <button id="save-track-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">軌道保存</button>
                 <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
+                <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
+                <button id="load-map-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ読込</button>
+                <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json" style="display: none;" />
               </div>
 
-              <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 130px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
+              <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 420px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
               
               <button id="show-instructions-btn">操作説明</button>
 

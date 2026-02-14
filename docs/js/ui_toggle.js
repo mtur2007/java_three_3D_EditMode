@@ -5,6 +5,7 @@ const UI_COLOR_DEFAULT = '';
 const UI_COLOR_ACTIVE = '#2b4f8a';   // 親（経路）ボタン
 const UI_COLOR_SELECTED = '#3f7cff'; // 押下ボタン
 const UI_TEXT_ACTIVE = '#ffffff';
+const UI_STATE_STORAGE_KEY = 'train_editmode_ui_state_v1';
 
 function compactVisibleButtons() {
     const buttons = Array.from(UiGroup.querySelectorAll('button'));
@@ -343,6 +344,55 @@ UiGroup.querySelectorAll('button').forEach(b => {
   })
 paintUiSelection(['see'], 'see');
 
+function showRootButtons(rootKeys) {
+  UiGroup.querySelectorAll('button').forEach((b) => {
+    if (rootKeys.includes(b.id)) {
+      b.hidden = false;
+    }
+  });
+}
+
+function saveUiState(indexPath) {
+  try {
+    if (!Array.isArray(indexPath)) { return; }
+    const payload = {
+      indexPath: indexPath.filter((v) => Number.isInteger(v)),
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.warn('failed to save UI state', err);
+  }
+}
+
+function loadUiState() {
+  try {
+    const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
+    if (!raw) { return null; }
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.indexPath)) { return null; }
+    const path = parsed.indexPath.filter((v) => Number.isInteger(v));
+    return path.length > 0 ? path : null;
+  } catch (err) {
+    console.warn('failed to load UI state', err);
+    return null;
+  }
+}
+
+function applyUiState(indexPath, rootKeys) {
+  if (!Array.isArray(indexPath) || indexPath.length < 1) { return false; }
+  const ok = indexPath.every((v) => Number.isInteger(v));
+  if (!ok) { return false; }
+  try {
+    getValueByIndex(rename_uiTree, UiGroup, indexPath);
+    showRootButtons(rootKeys);
+    return true;
+  } catch (err) {
+    console.warn('failed to apply UI state', err);
+    return false;
+  }
+}
+
 UiGroup.addEventListener('click', (event) => {
   // クリックされた要素から一番近い button を探す
   const btn = event.target.closest('button');
@@ -355,13 +405,10 @@ UiGroup.addEventListener('click', (event) => {
 //   UIevent(id)
 
   getValueByIndex(rename_uiTree,UiGroup,Allkeys[id])
+  saveUiState(Allkeys[id]);
   // もし data-id を使いたければ:
   // console.log('data-id:', btn.dataset.id);
-  UiGroup.querySelectorAll('button').forEach(b => {
-    if (rootKeys.includes(b.id)) {
-      b.hidden = false; // ルートは常時表示
-    }
-  })
+  showRootButtons(rootKeys);
 });
 
 UiGroup.addEventListener('touchstart', (event) => {
@@ -376,12 +423,14 @@ UiGroup.addEventListener('touchstart', (event) => {
   //   UIevent(id)
   
     getValueByIndex(rename_uiTree,UiGroup,Allkeys[id])
+    saveUiState(Allkeys[id]);
     // もし data-id を使いたければ:
     // console.log('data-id:', btn.dataset.id);
-    UiGroup.querySelectorAll('button').forEach(b => {
-      if (rootKeys.includes(b.id)) {
-        b.hidden = false; // ルートは常時表示
-      }
-    })
+    showRootButtons(rootKeys);
   });
+
+const restoredPath = loadUiState();
+if (!applyUiState(restoredPath, rootKeys)) {
+  saveUiState(Allkeys['see'] || [0]);
+}
   
