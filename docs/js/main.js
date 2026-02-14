@@ -208,12 +208,17 @@ const threeUi = document.getElementById('three-ui');
   const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
   const constructionGenerateButton = document.getElementById('construction-generate-button');
   const constructionCategoryStatus = document.getElementById('construction-category-status');
+  const railConstructionPanel = document.getElementById('rail-construction-panel');
+  const railConstructionCards = Array.from(document.querySelectorAll('[data-rail-construction-category]'));
+  const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
+  const railConstructionStatus = document.getElementById('rail-construction-status');
 
   let differenceSpaceModeActive = false;
   let differenceShapeType = differenceShapeSelect?.value || 'tube';
   let differencePathType = differencePathSelect?.value || 'smooth';
   let differenceSpaceTransformMode = 'none';
   let selectedConstructionProfile = 'round';
+  let selectedRailConstructionCategory = 'bridge';
 
   function setConstructionCategoryPanelVisible(visible) {
     if (!constructionCategoryPanel) { return; }
@@ -233,6 +238,84 @@ const threeUi = document.getElementById('three-ui');
     if (constructionCategoryStatus) {
       constructionCategoryStatus.textContent = `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`;
     }
+  }
+
+  function setRailConstructionPanelVisible(visible) {
+    if (!railConstructionPanel) { return; }
+    railConstructionPanel.style.display = visible ? 'block' : 'none';
+  }
+
+  function setRailConstructionCategory(category) {
+    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'rib_bridge', 'tunnel_rect'];
+    const next = allow.includes(category) ? category : 'bridge';
+    selectedRailConstructionCategory = next;
+    railConstructionCards.forEach((card) => {
+      const isSelected = card.dataset.railConstructionCategory === next;
+      card.classList.toggle('is-selected', isSelected);
+      card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+    if (railConstructionStatus) {
+      railConstructionStatus.textContent = `選択中: ${next}。ピンを選択して「選択カテゴリで生成」。`;
+    }
+  }
+
+  function getConstructionPinsPayload() {
+    return constructionSelectedPins.map((pin) => ({
+      x: pin.position.x,
+      y: pin.position.y,
+      z: pin.position.z,
+      trackName: pin.userData?.trackName ?? null,
+    }));
+  }
+
+  function runRailConstructionByCategory(category) {
+    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'rib_bridge', 'tunnel_rect'].includes(category)
+      ? category
+      : 'bridge';
+    const minPins = kind === 'pillar' ? 1 : 2;
+    if (constructionSelectedPins.length < minPins) {
+      const msg = kind === 'pillar'
+        ? 'pillar は最低1つのピン選択が必要です。'
+        : `${kind} は最低2つのピン選択が必要です。`;
+      console.warn(msg);
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = msg;
+      }
+      return false;
+    }
+    const pins = getConstructionPinsPayload();
+    if (kind === 'pillar') {
+      logPillarSideJudgement();
+      TSys.buildStructureFromPins('pillar', pins, railTrackCurveMap, {
+        baseInterval: 8,
+        avoidRadius: 0.7,
+        searchRadius: 3,
+        samplePrecision: 0.1,
+        maxOffset: 3,
+        baseOffset: 0,
+        offsetStep: 0.2,
+      });
+    } else if (kind === 'rib_bridge') {
+      const edges = getEdgeTrackNamesForConstruction(0.5);
+      TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
+        edgeTrackNames: { right: edges.right, left: edges.left },
+      });
+    } else if (kind === 'tunnel_rect') {
+      TSys.buildStructureFromPins('tunnel_rect', pins, railTrackCurveMap, {
+        innerWidth: 1.7,
+        innerHeight: 2,
+        wallThickness: 0.15,
+        segmentSpacing: 1.2,
+        yOffset: -0.1,
+        color: 0x8b8f94,
+      });
+    } else {
+      TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
+    }
+    if (railConstructionStatus) {
+      railConstructionStatus.textContent = `生成完了: ${kind} / pins=${pins.length}`;
+    }
+    return true;
   }
 
   // 初期表示: プレビューでは three-ui を隠してプレビュー用パネルを表示
@@ -2933,6 +3016,11 @@ constructionCategoryCards.forEach((card) => {
     setConstructionCategory(card.dataset.constructionProfile || 'round');
   });
 });
+railConstructionCards.forEach((card) => {
+  card.addEventListener('click', () => {
+    setRailConstructionCategory(card.dataset.railConstructionCategory || 'bridge');
+  });
+});
 if (constructionGenerateButton) {
   constructionGenerateButton.addEventListener('click', () => {
     if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'CONSTRUCT') {
@@ -2954,7 +3042,13 @@ if (constructionGenerateButton) {
     }
   });
 }
+if (railConstructionGenerateButton) {
+  railConstructionGenerateButton.addEventListener('click', () => {
+    runRailConstructionByCategory(selectedRailConstructionCategory);
+  });
+}
 setConstructionCategory(selectedConstructionProfile);
+setRailConstructionCategory(selectedRailConstructionCategory);
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
@@ -8224,6 +8318,7 @@ export function UIevent (uiID, toggle){
     }
     railModeActive = false;
     toggleRailTube(false);
+    setRailConstructionPanelVisible(false);
 
   }} else if ( uiID === 'new' ){ if ( toggle === 'active' ){
     console.log( 'new _active' )
@@ -8306,122 +8401,43 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'construction' ){ if ( toggle === 'active' ){
   console.log( 'construction _active' )
   constructionModeActive = true;
+  setRailConstructionPanelVisible(true);
+  setRailConstructionCategory(selectedRailConstructionCategory);
   updateStructurePinnedVisibility();
   } else {
   console.log( 'construction _inactive' )
   constructionModeActive = false;
+  setRailConstructionPanelVisible(false);
   clearConstructionSelection();
   updateStructurePinnedVisibility();
   }} else if ( uiID === 'bridge' ){ if ( toggle === 'active' ){
   console.log( 'bridge _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('bridge requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('bridge', pins, railTrackCurveMap);
-  }
+  setRailConstructionCategory('bridge');
+  runRailConstructionByCategory('bridge');
   }} else if ( uiID === 'elevated' ){ if ( toggle === 'active' ){
   console.log( 'elevated _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('elevated requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('elevated', pins, railTrackCurveMap);
-  }
+  setRailConstructionCategory('elevated');
+  runRailConstructionByCategory('elevated');
   }} else if ( uiID === 'wall' ){ if ( toggle === 'active' ){
   console.log( 'wall _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('wall requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('wall', pins, railTrackCurveMap);
-  }
+  setRailConstructionCategory('wall');
+  runRailConstructionByCategory('wall');
   }} else if ( uiID === 'floor' ){ if ( toggle === 'active' ){
   console.log( 'floor _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('floor requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('floor', pins, railTrackCurveMap);
-  }
+  setRailConstructionCategory('floor');
+  runRailConstructionByCategory('floor');
   }} else if ( uiID === 'pillar' ){ if ( toggle === 'active' ){
   console.log( 'pillar _active' )
-  logPillarSideJudgement();
-  if (constructionSelectedPins.length < 1) {
-    console.warn('pillar requires selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('pillar', pins, railTrackCurveMap, {
-      baseInterval: 8,
-      avoidRadius: 0.7,
-      searchRadius: 3,
-      samplePrecision: 0.1,
-      maxOffset: 3,
-      baseOffset: 0,
-      offsetStep: 0.2,
-    });
-  }
+  setRailConstructionCategory('pillar');
+  runRailConstructionByCategory('pillar');
   }} else if ( uiID === 'rib_bridge' ){ if ( toggle === 'active' ){
   console.log( 'rib_bridge _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('rib_bridge requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    const edges = getEdgeTrackNamesForConstruction(0.5);
-    TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
-      edgeTrackNames: { right: edges.right, left: edges.left },
-    });
-  }
+  setRailConstructionCategory('rib_bridge');
+  runRailConstructionByCategory('rib_bridge');
   }} else if ( uiID === 'tunnel_rect' ){ if ( toggle === 'active' ){
   console.log( 'tunnel_rect _active' )
-  if (constructionSelectedPins.length < 2) {
-    console.warn('tunnel_rect requires at least 2 selected pins.');
-  } else {
-    const pins = constructionSelectedPins.map((pin) => ({
-      x: pin.position.x,
-      y: pin.position.y,
-      z: pin.position.z,
-      trackName: pin.userData?.trackName ?? null,
-    }));
-    TSys.buildStructureFromPins('tunnel_rect', pins, railTrackCurveMap, {
-      innerWidth: 1.7,
-      innerHeight: 2,
-      wallThickness: 0.15,
-      segmentSpacing: 1.2,
-      yOffset: -0.1,
-      color: 0x8b8f94,
-    });
-  }
+  setRailConstructionCategory('tunnel_rect');
+  runRailConstructionByCategory('tunnel_rect');
   }} else if ( uiID === 'move/2_legacy' ){ if ( toggle === 'active' ){
   console.log( 'move/2_legacy _active' )
   } else {

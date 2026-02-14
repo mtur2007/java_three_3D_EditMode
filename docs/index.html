@@ -785,6 +785,80 @@
     line-height: 1.4;
     color: #4a5f78;
   }
+  #rail-construction-panel {
+    position: fixed;
+    right: 20px;
+    top: 520px;
+    width: 320px;
+    padding: 12px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    z-index: 10003;
+    display: none;
+    pointer-events: auto;
+    border: 1px solid rgba(170, 200, 250, 0.3);
+    color: #1a2533;
+  }
+  #rail-construction-panel .rail-construction-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #rail-construction-panel .rail-construction-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  #rail-construction-panel .rail-construction-card {
+    appearance: none;
+    border: 1px solid rgba(90, 120, 170, 0.35);
+    border-radius: 10px;
+    background: #f9fbff;
+    padding: 6px;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    align-items: center;
+  }
+  #rail-construction-panel .rail-construction-card.is-selected {
+    border-color: #2f74e2;
+    box-shadow: 0 0 0 2px rgba(47, 116, 226, 0.2) inset;
+    background: #eef5ff;
+  }
+  #rail-construction-panel .rail-construction-card img {
+    width: 100%;
+    height: 44px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #f2f7ff, #f8fbff);
+    border: 1px solid rgba(130, 160, 210, 0.25);
+  }
+  #rail-construction-panel .rail-construction-card span {
+    font-size: 9px;
+    line-height: 1.2;
+    color: #2c405a;
+  }
+  #rail-construction-generate-button {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(160, 194, 252, 0.45);
+    background: linear-gradient(135deg, #2a84ff, #246fd9);
+    color: #fff;
+    cursor: pointer;
+    padding: 7px 8px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  #rail-construction-status {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #4a5f78;
+  }
 
   .edit-guide {
     display: grid;
@@ -1059,6 +1133,42 @@
                 </div>
                 <button id="construction-generate-button" type="button">選択カテゴリで生成</button>
                 <p id="construction-category-status">カテゴリを選択し、点を2つ以上選択して生成します。</p>
+              </div>
+
+              <div id="rail-construction-panel" role="region" aria-label="rail construction カテゴリ">
+                <div class="rail-construction-title">Rail Construction Category</div>
+                <div class="rail-construction-grid">
+                  <button class="rail-construction-card is-selected" data-rail-construction-category="bridge" type="button" aria-pressed="true">
+                    <img alt="bridge" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M10 46 L110 46' stroke='%234b6584' stroke-width='6'/%3E%3Cpath d='M20 46 C40 20, 80 20, 100 46' fill='none' stroke='%23618ad1' stroke-width='6'/%3E%3C/svg%3E">
+                    <span>bridge</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="elevated" type="button" aria-pressed="false">
+                    <img alt="elevated" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='14' y='18' width='92' height='10' fill='%235d7ea8'/%3E%3Crect x='22' y='28' width='10' height='24' fill='%2388a6c9'/%3E%3Crect x='88' y='28' width='10' height='24' fill='%2388a6c9'/%3E%3C/svg%3E">
+                    <span>elevated</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="wall" type="button" aria-pressed="false">
+                    <img alt="wall" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='20' y='16' width='80' height='40' fill='%238ca9c9'/%3E%3Cline x1='20' y1='30' x2='100' y2='30' stroke='%236783a7'/%3E%3Cline x1='20' y1='44' x2='100' y2='44' stroke='%236783a7'/%3E%3C/svg%3E">
+                    <span>wall</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="floor" type="button" aria-pressed="false">
+                    <img alt="floor" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpolygon points='16,42 60,22 104,42 60,58' fill='%2388a7cb'/%3E%3C/svg%3E">
+                    <span>floor</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="pillar" type="button" aria-pressed="false">
+                    <img alt="pillar" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='52' y='16' width='16' height='40' fill='%237f9ec1'/%3E%3Crect x='46' y='12' width='28' height='6' fill='%236884a8'/%3E%3Crect x='46' y='56' width='28' height='6' fill='%236884a8'/%3E%3C/svg%3E">
+                    <span>pillar</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="rib_bridge" type="button" aria-pressed="false">
+                    <img alt="rib_bridge" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='10' y1='46' x2='110' y2='46' stroke='%23506c8e' stroke-width='6'/%3E%3Cline x1='24' y1='46' x2='40' y2='24' stroke='%2378a6e6'/%3E%3Cline x1='48' y1='46' x2='60' y2='20' stroke='%2378a6e6'/%3E%3Cline x1='72' y1='46' x2='80' y2='24' stroke='%2378a6e6'/%3E%3Cline x1='96' y1='46' x2='100' y2='28' stroke='%2378a6e6'/%3E%3C/svg%3E">
+                    <span>rib_bridge</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="tunnel_rect" type="button" aria-pressed="false">
+                    <img alt="tunnel_rect" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M24 52 L24 20 L96 20 L96 52' fill='none' stroke='%2358789f' stroke-width='7'/%3E%3C/svg%3E">
+                    <span>tunnel_rect</span>
+                  </button>
+                </div>
+                <button id="rail-construction-generate-button" type="button">選択カテゴリで生成</button>
+                <p id="rail-construction-status">ピンを選択し、カテゴリを選んで生成します。</p>
               </div>
 
               <div id="guide-window" role="region" aria-label="配置ガイド">
