@@ -711,6 +711,80 @@
     line-height: 1.4;
     color: #4a5f78;
   }
+  #construction-category-panel {
+    position: fixed;
+    right: 20px;
+    top: 220px;
+    width: 280px;
+    padding: 12px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    z-index: 10003;
+    display: none;
+    pointer-events: auto;
+    border: 1px solid rgba(170, 200, 250, 0.3);
+    color: #1a2533;
+  }
+  #construction-category-panel .construction-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #construction-category-panel .construction-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  #construction-category-panel .construction-card {
+    appearance: none;
+    border: 1px solid rgba(90, 120, 170, 0.35);
+    border-radius: 10px;
+    background: #f9fbff;
+    padding: 6px;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+  }
+  #construction-category-panel .construction-card.is-selected {
+    border-color: #2f74e2;
+    box-shadow: 0 0 0 2px rgba(47, 116, 226, 0.2) inset;
+    background: #eef5ff;
+  }
+  #construction-category-panel .construction-card img {
+    width: 100%;
+    height: 56px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #f2f7ff, #f8fbff);
+    border: 1px solid rgba(130, 160, 210, 0.25);
+  }
+  #construction-category-panel .construction-card span {
+    font-size: 10px;
+    line-height: 1.2;
+    color: #2c405a;
+  }
+  #construction-generate-button {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(160, 194, 252, 0.45);
+    background: linear-gradient(135deg, #2a84ff, #246fd9);
+    color: #fff;
+    cursor: pointer;
+    padding: 7px 8px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  #construction-category-status {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #4a5f78;
+  }
 
   .edit-guide {
     display: grid;
@@ -926,6 +1000,8 @@
               <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
 
               <div id="save-buttons" style="position: absolute; left: 20px; top: 20px; display: flex; flex-wrap: nowrap; gap: 8px; z-index: 10;">
+                <button id="undo-action" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);" title="元に戻す (Ctrl/Cmd+Z)" disabled>↩︎</button>
+                <button id="redo-action" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);" title="やり直し (Ctrl/Cmd+Shift+Z)" disabled>↪︎</button>
                 <button id="save-track-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">軌道保存</button>
                 <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
                 <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
@@ -963,6 +1039,26 @@
                 </div>
                 <button id="rotation-apply" style="margin-top: 8px; width: 100%; padding: 6px 8px;">適用</button>
                 <pre id="rotation-selection-info" style="margin-top: 8px; max-height: 180px; overflow: auto; padding: 6px; border-radius: 6px; background: rgba(20,20,20,0.06); font-size: 10px; line-height: 1.45; white-space: pre-wrap;">選択点: 2点以上で情報を表示</pre>
+              </div>
+
+              <div id="construction-category-panel" role="region" aria-label="construction カテゴリ">
+                <div class="construction-title">Construction Category</div>
+                <div class="construction-grid">
+                  <button class="construction-card is-selected" data-construction-profile="round" type="button" aria-pressed="true">
+                    <img alt="丸鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Ccircle cx='60' cy='36' r='20' fill='%23a3b4cf' stroke='%235a6f95' stroke-width='6'/%3E%3C/svg%3E">
+                    <span>丸鋼</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="h_beam" type="button" aria-pressed="false">
+                    <img alt="H形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='20' y='14' width='80' height='12' fill='%23859bb8'/%3E%3Crect x='53' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='20' y='46' width='80' height='12' fill='%23859bb8'/%3E%3C/svg%3E">
+                    <span>H形鋼</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="tubular" type="button" aria-pressed="false">
+                    <img alt="ライト管" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='14' y='28' width='92' height='16' rx='8' fill='%23f8fbff' stroke='%239bb8d6' stroke-width='4'/%3E%3Crect x='96' y='26' width='10' height='20' fill='%23d9ebff'/%3E%3C/svg%3E">
+                    <span>ライト管</span>
+                  </button>
+                </div>
+                <button id="construction-generate-button" type="button">選択カテゴリで生成</button>
+                <p id="construction-category-status">カテゴリを選択し、点を2つ以上選択して生成します。</p>
               </div>
 
               <div id="guide-window" role="region" aria-label="配置ガイド">
@@ -1092,6 +1188,7 @@
             <li><strong>rail → structure → construction</strong>: ピンから bridge / elevated / wall / floor / pillar / rib_bridge / tunnel_rect を生成します。</li>
             <li><strong>creat → view</strong>: クリエイト対象の表示/非表示を確認します。</li>
             <li><strong>creat → add_point</strong>: 点を追加して形状の基礎を作ります。</li>
+            <li><strong>add_point → x_z_move</strong>: 追加基準面を平面（XZ）方向に移動します。</li>
             <li><strong>add_point → y_add</strong>: 追加基準面の高さ（Y）を調整します。</li>
             <li><strong>add_point → template</strong>: テンプレートガイドを使って配置します。</li>
             <li><strong>add_point → guide → add</strong>: ガイド面を追加します。</li>
@@ -1123,6 +1220,7 @@
           <ul>
             <li><strong>creat → view</strong>: クリエイト系の表示切替。</li>
             <li><strong>creat → add_point</strong>: 点の追加モード。タップで点を生成し、軌道として結びます。</li>
+            <li><strong>add_point → x_z_move</strong>: 追加基準面を平面（XZ）方向に移動する補助モード。</li>
             <li><strong>add_point → y_add</strong>: 高さ方向（Y）だけを移動する補助モード。</li>
             <li><strong>add_point → template</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
             <li><strong>add_point → guide → add</strong>: ガイド棚を表示。S/L/U/直線のガイド軌道を配置できます。</li>
@@ -1452,6 +1550,7 @@ window.addEventListener('load', () => {
 
     'view': 'プレビュー表示',
     'add_point': 'ポイント追加',
+    'x_z_move': '生成基準面の平面移動',
     'y_add': '生成時の高さの変更',
     'template': '生成サポーターの追加',
     'guide': 'ガイドメニュー',

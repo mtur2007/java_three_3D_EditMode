@@ -220,6 +220,7 @@ const uiTree = {
         'creat': {
             'view': '',
             'add_point': {
+                'x_z_move': '',
                 'y_add': '',
                 'template': '',
                 'guide': { 'add': '', 'change_angle': '' },

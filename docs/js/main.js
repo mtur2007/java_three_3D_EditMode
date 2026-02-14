@@ -204,11 +204,36 @@ const threeUi = document.getElementById('three-ui');
   const differenceShapeSelect = document.getElementById('difference-shape');
   const differencePathSelect = document.getElementById('difference-path');
   const differenceStatus = document.getElementById('difference-status');
+  const constructionCategoryPanel = document.getElementById('construction-category-panel');
+  const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
+  const constructionGenerateButton = document.getElementById('construction-generate-button');
+  const constructionCategoryStatus = document.getElementById('construction-category-status');
 
   let differenceSpaceModeActive = false;
   let differenceShapeType = differenceShapeSelect?.value || 'tube';
   let differencePathType = differencePathSelect?.value || 'smooth';
   let differenceSpaceTransformMode = 'none';
+  let selectedConstructionProfile = 'round';
+
+  function setConstructionCategoryPanelVisible(visible) {
+    if (!constructionCategoryPanel) { return; }
+    constructionCategoryPanel.style.display = visible ? 'block' : 'none';
+  }
+
+  function setConstructionCategory(profile) {
+    const next = (profile === 'h_beam' || profile === 'tubular') ? profile : 'round';
+    selectedConstructionProfile = next;
+    constructionCategoryCards.forEach((card) => {
+      const isSelected = card.dataset.constructionProfile === next;
+      card.classList.toggle('is-selected', isSelected);
+      card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+    steelFrameMode.setSegmentProfile(next);
+    const label = next === 'h_beam' ? 'H形鋼' : (next === 'tubular' ? 'ライト管' : '丸鋼');
+    if (constructionCategoryStatus) {
+      constructionCategoryStatus.textContent = `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`;
+    }
+  }
 
   // 初期表示: プレビューでは three-ui を隠してプレビュー用パネルを表示
   if (threeUi) {
@@ -2572,9 +2597,17 @@ const saveCreateModeButton = document.getElementById('save-create-mode-data');
 if (saveCreateModeButton) {
   saveCreateModeButton.addEventListener('click', downloadCreateModeData);
 }
+const undoActionButton = document.getElementById('undo-action');
+const redoActionButton = document.getElementById('redo-action');
 
 const loadMapDataButton = document.getElementById('load-map-data');
 const loadMapDataInput = document.getElementById('load-map-data-input');
+if (undoActionButton) {
+  undoActionButton.addEventListener('click', undoHistoryByContext);
+}
+if (redoActionButton) {
+  redoActionButton.addEventListener('click', redoHistoryByContext);
+}
 
 function clearDifferenceSpacesForImport() {
   clearDifferencePreviewTube();
@@ -2646,6 +2679,8 @@ function applyCreateModePayload(payload) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('map_data の形式が不正です。');
   }
+  clearCreateHistory();
+  clearDifferenceHistory();
   const spaces = Array.isArray(payload.differenceSpaces) ? payload.differenceSpaces : [];
   clearDifferenceSpacesForImport();
   spaces.forEach((rawSpace) => {
@@ -2893,6 +2928,33 @@ function findCurveRange(curve, targetA, targetB, { axis = 'z', resolution = 1000
 const cube_geometry = new THREE.BoxGeometry();
 const cube_material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const steelFrameMode = createSteelFrameMode(scene, cube_geometry, cube_material);
+constructionCategoryCards.forEach((card) => {
+  card.addEventListener('click', () => {
+    setConstructionCategory(card.dataset.constructionProfile || 'round');
+  });
+});
+if (constructionGenerateButton) {
+  constructionGenerateButton.addEventListener('click', () => {
+    if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'CONSTRUCT') {
+      if (constructionCategoryStatus) {
+        constructionCategoryStatus.textContent = 'construction モードを有効にしてください。';
+      }
+      return;
+    }
+    setConstructionCategory(selectedConstructionProfile);
+    const record = steelFrameMode.generateSteelFrame();
+    if (!record) {
+      if (constructionCategoryStatus) {
+        constructionCategoryStatus.textContent = '生成に必要な点が足りません（2点以上が必要）。';
+      }
+      return;
+    }
+    if (constructionCategoryStatus) {
+      constructionCategoryStatus.textContent = `生成完了: ${record.profile} / 点${record.pointCount} / メッシュ${record.meshCount}`;
+    }
+  });
+}
+setConstructionCategory(selectedConstructionProfile);
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
@@ -3612,12 +3674,15 @@ function showPointRotationGuideLine(mesh) {
   GuideLine.visible = true;
 }
 
+const ADD_POINT_GRID_SIZE = 20;
+const ADD_POINT_GRID_DIVISIONS = 40;
+
 const GuideGrid = new THREE.GridHelper(5, 10, 0x8888aa, 0x88aa88);
 GuideGrid.name = "GuideGrid";
 GuideGrid.position.set(0,0,0);
 scene.add(GuideGrid);
 
-const AddPointGuideGrid = new THREE.GridHelper(5, 10, 0x88aa88, 0x88aa88);
+const AddPointGuideGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, 0x88aa88, 0x88aa88);
 AddPointGuideGrid.name = 'AddPointGuideGrid';
 AddPointGuideGrid.position.set(0,0,0);
 scene.add(AddPointGuideGrid);
@@ -3639,11 +3704,12 @@ GuideGrid_Center_x.visible = false
 GuideGrid_Center_z.visible = false
 
 const addPointGridHandle = new THREE.Mesh(
-  new THREE.PlaneGeometry(5, 5),
+  new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
   new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
 );
 addPointGridHandle.name = 'AddPointGridHandle';
 addPointGridHandle.rotation.x = -Math.PI / 2;
+addPointGridHandle.position.set(0, 0, 0);
 scene.add(addPointGridHandle);
 const addPointGridBaseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
@@ -3702,10 +3768,330 @@ const guideAddGrids = []
 const guideAddGridPicks = []
 let changeAngleGridTarget = null
 let addPointGridY = 0
+let addPointGridInitialized = false
 const GUIDE_ADD_GRID_COLOR = 0x88aa88;
 const GUIDE_ADD_GRID_SELECTED_COLOR = 0x00ff00;
 const searchGridVisuals = [];
 let searchSelectedGrid = null;
+const HISTORY_LIMIT = 100;
+const HISTORY_EPS = 1e-5;
+const createUndoStack = [];
+const createRedoStack = [];
+const differenceUndoStack = [];
+const differenceRedoStack = [];
+let historyApplying = false;
+let moveHistoryStart = null;
+let differenceHistoryApplying = false;
+let differenceHistoryStartSnapshot = null;
+
+function getActiveHistoryContext() {
+  try {
+    if (editObject === 'DIFFERENCE_SPACE' || differenceSpaceModeActive) {
+      return 'difference';
+    }
+    return 'create';
+  } catch (err) {
+    // let 宣言前(TDZ)の初期化順でも安全に create 側を返す
+    return 'create';
+  }
+}
+
+function updateUndoRedoButtons() {
+  const context = getActiveHistoryContext();
+  const undoStack = context === 'difference' ? differenceUndoStack : createUndoStack;
+  const redoStack = context === 'difference' ? differenceRedoStack : createRedoStack;
+  if (undoActionButton) {
+    undoActionButton.disabled = undoStack.length === 0;
+  }
+  if (redoActionButton) {
+    redoActionButton.disabled = redoStack.length === 0;
+  }
+}
+
+function vecMoved(a, b, eps = HISTORY_EPS) {
+  if (!a || !b) { return false; }
+  return Math.abs(a.x - b.x) > eps
+    || Math.abs(a.y - b.y) > eps
+    || Math.abs(a.z - b.z) > eps;
+}
+
+function refreshCreateTargetsForSearch() {
+  if (editObject !== 'STEEL_FRAME') { return; }
+  if (objectEditMode === 'CREATE_NEW') {
+    targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
+  } else if (objectEditMode === 'MOVE_EXISTING') {
+    targetObjects = steelFrameMode.getAllPointMeshes();
+  }
+}
+
+function syncGuideCurveFromPointMesh(mesh) {
+  if (!mesh?.userData?.guideCurve || typeof mesh.userData.guideControlIndex !== 'number') { return; }
+  const curve = mesh.userData.guideCurve;
+  const idx = mesh.userData.guideControlIndex;
+  if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+    curve.userData.controlPoints[idx] = mesh.position.clone();
+    updateGuideCurve(curve);
+  }
+}
+
+function syncGridFromHandle() {
+  if (!addPointGridHandle || !AddPointGuideGrid) { return; }
+  addPointGridY = addPointGridHandle.position.y;
+  AddPointGuideGrid.position.copy(addPointGridHandle.position);
+}
+
+function pushCreateHistory(action) {
+  if (historyApplying || !action) { return; }
+  createUndoStack.push(action);
+  if (createUndoStack.length > HISTORY_LIMIT) {
+    createUndoStack.shift();
+  }
+  createRedoStack.length = 0;
+  updateUndoRedoButtons();
+}
+
+function clearCreateHistory() {
+  createUndoStack.length = 0;
+  createRedoStack.length = 0;
+  moveHistoryStart = null;
+  updateUndoRedoButtons();
+}
+
+function captureDifferenceSnapshot() {
+  return differenceSpacePlanes
+    .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .map((mesh) => serializeDifferenceSpaceMesh(mesh))
+    .filter(Boolean);
+}
+
+function isSameDifferenceSnapshot(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function applyDifferenceSnapshot(snapshot) {
+  clearDifferenceSpacesForImport();
+  const list = Array.isArray(snapshot) ? snapshot : [];
+  list.forEach((rawSpace) => {
+    const geometry = buildGeometryFromSerializedSpace(rawSpace);
+    if (!geometry) { return; }
+    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
+    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
+    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
+    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
+    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
+    mesh.updateMatrixWorld(true);
+    rebuildDifferenceControlPointsFromGeometry(mesh);
+    syncDifferenceGeometryFromControlPoints(mesh);
+  });
+  relinkImportedDifferenceSharedPoints();
+  targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
+  setMeshListOpacity(targetObjects, 1);
+  refreshDifferencePreview();
+  updateDifferenceStatus(`Difference履歴を適用: 空間 ${differenceSpacePlanes.length} 件`);
+}
+
+function pushDifferenceHistory(action) {
+  if (historyApplying || differenceHistoryApplying || !action) { return; }
+  differenceUndoStack.push(action);
+  if (differenceUndoStack.length > HISTORY_LIMIT) {
+    differenceUndoStack.shift();
+  }
+  differenceRedoStack.length = 0;
+  updateUndoRedoButtons();
+}
+
+function clearDifferenceHistory() {
+  differenceUndoStack.length = 0;
+  differenceRedoStack.length = 0;
+  differenceHistoryStartSnapshot = null;
+  updateUndoRedoButtons();
+}
+
+function beginDifferenceHistorySession() {
+  if (historyApplying || differenceHistoryApplying) { return; }
+  if (differenceHistoryStartSnapshot) { return; }
+  differenceHistoryStartSnapshot = captureDifferenceSnapshot();
+}
+
+function commitDifferenceHistoryIfNeeded() {
+  if (!differenceHistoryStartSnapshot) { return; }
+  const before = differenceHistoryStartSnapshot;
+  const after = captureDifferenceSnapshot();
+  differenceHistoryStartSnapshot = null;
+  if (isSameDifferenceSnapshot(before, after)) { return; }
+  pushDifferenceHistory({
+    type: 'difference_snapshot',
+    before,
+    after,
+  });
+}
+
+function applyDifferenceHistory(action, mode) {
+  if (!action || action.type !== 'difference_snapshot') { return; }
+  differenceHistoryApplying = true;
+  try {
+    if (mode === 'undo') {
+      applyDifferenceSnapshot(action.before);
+    } else {
+      applyDifferenceSnapshot(action.after);
+    }
+  } finally {
+    differenceHistoryApplying = false;
+  }
+}
+
+function undoDifferenceHistory() {
+  if (differenceUndoStack.length === 0) { return; }
+  const action = differenceUndoStack.pop();
+  applyDifferenceHistory(action, 'undo');
+  differenceRedoStack.push(action);
+  updateUndoRedoButtons();
+}
+
+function redoDifferenceHistory() {
+  if (differenceRedoStack.length === 0) { return; }
+  const action = differenceRedoStack.pop();
+  applyDifferenceHistory(action, 'redo');
+  differenceUndoStack.push(action);
+  updateUndoRedoButtons();
+}
+
+function undoHistoryByContext() {
+  if (getActiveHistoryContext() === 'difference') {
+    undoDifferenceHistory();
+  } else {
+    undoCreateHistory();
+  }
+}
+
+function redoHistoryByContext() {
+  if (getActiveHistoryContext() === 'difference') {
+    redoDifferenceHistory();
+  } else {
+    redoCreateHistory();
+  }
+}
+
+function applyCreateHistory(action, mode) {
+  if (!action) { return; }
+  historyApplying = true;
+  try {
+    if (action.type === 'add_points') {
+      if (mode === 'undo') {
+        action.items.forEach((item) => {
+          steelFrameMode.removePointMesh(item.mesh);
+        });
+      } else {
+        action.items.forEach((item) => {
+          steelFrameMode.addExistingPoint(item.mesh, item.lineIndex);
+        });
+      }
+      refreshCreateTargetsForSearch();
+      drawingObject();
+      return;
+    }
+    if (action.type === 'move_meshes') {
+      action.items.forEach((item) => {
+        const next = mode === 'undo' ? item.before : item.after;
+        item.mesh.position.copy(next);
+        syncGuideCurveFromPointMesh(item.mesh);
+      });
+      if (action.includesGridHandle) {
+        syncGridFromHandle();
+      }
+      drawingObject();
+      return;
+    }
+    if (action.type === 'add_guide_grid') {
+      const { grid, pick } = action;
+      if (mode === 'undo') {
+        const gIdx = guideAddGrids.indexOf(grid);
+        if (gIdx >= 0) {
+          guideAddGrids.splice(gIdx, 1);
+        }
+        const pIdx = guideAddGridPicks.indexOf(pick);
+        if (pIdx >= 0) {
+          guideAddGridPicks.splice(pIdx, 1);
+        }
+        if (grid?.parent) {
+          grid.parent.remove(grid);
+        }
+        if (pick?.parent) {
+          pick.parent.remove(pick);
+        }
+      } else {
+        if (grid && !grid.parent) {
+          scene.add(grid);
+        }
+        if (pick && !pick.parent) {
+          scene.add(pick);
+        }
+        if (grid && !guideAddGrids.includes(grid)) {
+          guideAddGrids.push(grid);
+        }
+        if (pick && !guideAddGridPicks.includes(pick)) {
+          guideAddGridPicks.push(pick);
+        }
+      }
+      changeAngleGridTarget = guideAddGrids.length > 0 ? guideAddGrids[guideAddGrids.length - 1] : null;
+      refreshCreateTargetsForSearch();
+      drawingObject();
+    }
+  } finally {
+    historyApplying = false;
+  }
+}
+
+function undoCreateHistory() {
+  if (createUndoStack.length === 0) { return; }
+  const action = createUndoStack.pop();
+  applyCreateHistory(action, 'undo');
+  createRedoStack.push(action);
+  updateUndoRedoButtons();
+}
+
+function redoCreateHistory() {
+  if (createRedoStack.length === 0) { return; }
+  const action = createRedoStack.pop();
+  applyCreateHistory(action, 'redo');
+  createUndoStack.push(action);
+  updateUndoRedoButtons();
+}
+
+function captureMoveHistoryStart() {
+  if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'MOVE_EXISTING' || !choice_object) {
+    return null;
+  }
+  const items = (moveDragStartPositions.length > 0)
+    ? moveDragStartPositions.map(({ mesh, pos }) => ({ mesh, before: pos.clone(), after: null }))
+    : [{ mesh: choice_object, before: choice_object.position.clone(), after: null }];
+  return {
+    type: 'move_meshes',
+    items,
+    includesGridHandle: items.some((it) => it.mesh === addPointGridHandle),
+  };
+}
+
+function commitMoveHistoryIfNeeded() {
+  if (!moveHistoryStart || !Array.isArray(moveHistoryStart.items)) {
+    moveHistoryStart = null;
+    return;
+  }
+  const items = moveHistoryStart.items
+    .map((it) => ({ ...it, after: it.mesh?.position?.clone?.() || null }))
+    .filter((it) => it.after && vecMoved(it.before, it.after));
+  if (items.length > 0) {
+    pushCreateHistory({
+      type: 'move_meshes',
+      items,
+      includesGridHandle: items.some((it) => it.mesh === addPointGridHandle),
+    });
+  }
+  moveHistoryStart = null;
+}
+updateUndoRedoButtons();
 
 function clearSearchGridVisuals() {
   for (let i = searchGridVisuals.length - 1; i >= 0; i -= 1) {
@@ -5054,16 +5440,6 @@ function getIntersectObjects(){
 
 let TargetDiff = [0,0]
 
-function coord_DisplayTo3DAtCenter(axis) {
-  const prev = { x: mouse.x, y: mouse.y };
-  mouse.x = 0;
-  mouse.y = 0;
-  const point = coord_DisplayTo3D(axis);
-  mouse.x = prev.x;
-  mouse.y = prev.y;
-  return point;
-}
-
 function setGuideGridColor(color) {
   if (!GuideGrid || !GuideGrid.material) { return; }
   if (Array.isArray(GuideGrid.material)) {
@@ -5957,6 +6333,7 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (differenceControlPointDragActive) {
+    commitDifferenceHistoryIfNeeded();
     differenceControlPointDragActive = false;
     differenceControlPointDragPoint = null;
     differenceControlPointDragMesh = null;
@@ -5965,6 +6342,7 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (differenceFaceVertexDragActive) {
+    commitDifferenceHistoryIfNeeded();
     differenceFaceVertexDragActive = false;
     differenceFaceVertexDragMesh = null;
     differenceFaceVertexDragLocalNormal = null;
@@ -5972,11 +6350,17 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (pointRotateMoveDragging) {
+    if (pointRotateTarget?.userData?.differenceSpacePlane) {
+      commitDifferenceHistoryIfNeeded();
+    }
     pointRotateMoveDragging = false;
     efficacy = true;
     return;
   }
   if (pointRotateDragging) {
+    if (pointRotateTarget?.userData?.differenceSpacePlane) {
+      commitDifferenceHistoryIfNeeded();
+    }
     pointRotateDragging = false;
     efficacy = true;
     return;
@@ -5990,6 +6374,7 @@ async function handleMouseUp(mobile = false) {
 
   if (dragging === true) {
     // ドラッグ中なら必ずここで終了処理
+    commitMoveHistoryIfNeeded();
     dragging = false;
     efficacy = true;
     if (objectEditMode === 'MOVE_EXISTING') {
@@ -6378,14 +6763,14 @@ async function handleMouseDown() {
       setAddPointGuideGridVisibleFromUI(true);
       setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
       // 追加: 現在位置を複製グリッドとして保存
-      const newGrid = new THREE.GridHelper(5, 10, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
+      const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
       newGrid.name = 'AddPointGuideGridClone';
       newGrid.position.copy(AddPointGuideGrid.position);
       newGrid.quaternion.copy(AddPointGuideGrid.quaternion);
       scene.add(newGrid);
       guideAddGrids.push(newGrid);
       const pick = new THREE.Mesh(
-        new THREE.PlaneGeometry(5, 5),
+        new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
         new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
       );
       pick.name = 'GuideAddGridPick';
@@ -6396,6 +6781,7 @@ async function handleMouseDown() {
       scene.add(pick);
       guideAddGridPicks.push(pick);
       changeAngleGridTarget = newGrid;
+      pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
       if (movePlaneMode === 'change_angle') {
         movePlaneAnchor.copy(AddPointGuideGrid.position);
         updateMovePlaneNormal();
@@ -6428,6 +6814,7 @@ async function handleMouseDown() {
         curve.userData = { ...(curve.userData || {}), guideLine: line };
       }
       createGuideRailPickMesh(curve);
+      const addedPointItems = [];
       if (editObject === 'STEEL_FRAME' && curve?.userData?.controlPoints) {
         curve.userData.controlPoints.forEach((p, idx) => {
           const mesh = steelFrameMode.addPoint(p);
@@ -6438,8 +6825,15 @@ async function handleMouseDown() {
               guideControlIndex: idx,
               planeRef: basisPlaneRef || null,
             };
+            addedPointItems.push({
+              mesh,
+              lineIndex: mesh?.userData?.steelFrameLine ?? 0,
+            });
           }
         });
+      }
+      if (addedPointItems.length > 0) {
+        pushCreateHistory({ type: 'add_points', items: addedPointItems });
       }
       if (editObject === 'STEEL_FRAME') {
         targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
@@ -6456,6 +6850,7 @@ async function handleMouseDown() {
         faceHit = hits.find((h) => h?.object?.userData?.differenceSpacePlane && h?.face) || null;
       }
       if (faceHit?.object?.userData?.differenceSpacePlane && faceHit?.face) {
+        beginDifferenceHistorySession();
         const extrudeResult = extrudeDifferenceFaceToNewSpace(faceHit, 1);
         const expanded = extrudeResult?.mesh || null;
         if (expanded) {
@@ -6469,8 +6864,10 @@ async function handleMouseDown() {
           updateDifferenceStatus('面を押し出して空間を拡張しました。');
           differenceHoveredFaceHit = null;
           refreshDifferencePreview();
+          commitDifferenceHistoryIfNeeded();
           return;
         }
+        differenceHistoryStartSnapshot = null;
         updateDifferenceStatus(formatDifferenceExtrudeFailureMessage(extrudeResult, faceHit));
         return;
       }
@@ -6537,14 +6934,22 @@ async function handleMouseDown() {
       if (mesh && gridHitRef) {
         mesh.userData = { ...(mesh.userData || {}), planeRef: gridHitRef };
       }
+      if (mesh) {
+        pushCreateHistory({
+          type: 'add_points',
+          items: [{ mesh, lineIndex: mesh?.userData?.steelFrameLine ?? 0 }],
+        });
+      }
       targetObjects = steelFrameMode.getCurrentPointMeshes().concat(guideRailPickMeshes);
     } else if (editObject === 'DIFFERENCE_SPACE') {
+      beginDifferenceHistorySession();
       const plane = createDifferenceSpacePlane(point);
       addDifferenceControlPoints(plane);
       selectDifferencePlane(plane);
       targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
       setMeshListOpacity(targetObjects, 1);
       refreshDifferencePreview();
+      commitDifferenceHistoryIfNeeded();
 
     } else if (editObject === 'ORIGINAL'){
       
@@ -6982,6 +7387,7 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
   const localNormal = getLocalFaceNormalFromHit(hit);
   const worldNormal = getWorldFaceNormalFromHit(hit);
   if (!mesh?.userData?.differenceSpacePlane || !localNormal || !worldNormal) { return false; }
+  beginDifferenceHistorySession();
   const axis = Math.abs(localNormal.x) > 0.9
     ? 'x'
     : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
@@ -7035,6 +7441,7 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
 function beginDifferenceControlPointDrag(point, selectedPoints = null) {
   const mesh = point?.userData?.parentDifferenceSpacePlane || point?.parent || null;
   if (!point?.userData?.differenceControlPoint || !mesh?.userData?.differenceSpacePlane) { return false; }
+  beginDifferenceHistorySession();
   const gizmoAxisWorld = pointRotateDirection?.clone?.().normalize?.() || new THREE.Vector3();
   const fallbackAxisWorld = point.position.clone().applyQuaternion(mesh.quaternion).normalize();
   const axisWorld = gizmoAxisWorld.lengthSq() > 1e-8 ? gizmoAxisWorld : fallbackAxisWorld;
@@ -7139,6 +7546,9 @@ function updateDifferenceFaceVertexDrag() {
 }
 
 function beginPointRotateDrag(axisMesh) {
+  if (pointRotateTarget?.userData?.differenceSpacePlane) {
+    beginDifferenceHistorySession();
+  }
   pointRotateAxisLocal = axisMesh?.userData?.axis?.clone?.().normalize?.() || new THREE.Vector3(0, 1, 0);
   if (pointRotateAxisLocal.y === 1) {
     pointRotateAxis.copy(new THREE.Vector3(0, 1, 0));
@@ -7182,6 +7592,9 @@ function getAxisParamFromPointer(axisOrigin, axisDir) {
 
 function beginPointRotateMoveDrag() {
   if (!pointRotateTarget) { return; }
+  if (pointRotateTarget?.userData?.differenceSpacePlane) {
+    beginDifferenceHistorySession();
+  }
   const axisDir = pointRotateDirection.clone().normalize();
   if (axisDir.lengthSq() < 1e-8) { return; }
   pointRotateMoveStartCenter.copy(pointRotateCenter);
@@ -7271,6 +7684,8 @@ function clearPointRotateState() {
   shouldToggle = false;
   moveDragStartPositions = [];
   moveDragAnchorStart = null;
+  moveHistoryStart = null;
+  differenceHistoryStartSnapshot = null;
   pointRotateTarget = null;
   pointRotateAxisLocal = null;
   pointRotateBasisQuat.identity();
@@ -8076,10 +8491,12 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     addPointGridActive = true
-    addPointGridY = addPointGridY || 0
-    const gridPos = coord_DisplayTo3DAtCenter({ y: addPointGridY });
-    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
-    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    if (!addPointGridInitialized) {
+      addPointGridHandle.position.set(0, 0, 0);
+      addPointGridInitialized = true;
+    }
+    addPointGridY = addPointGridHandle.position.y
+    AddPointGuideGrid.position.copy(addPointGridHandle.position);
     setAddPointGuideGridVisibleFromUI(true);
     search_point();
     guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
@@ -8127,10 +8544,12 @@ export function UIevent (uiID, toggle){
     search_object = true;
     // 平面指定でガイド用グリッドを表示
     addPointGridActive = true;
-    addPointGridY = addPointGridY || 0;
-    const gridPos = coord_DisplayTo3DAtCenter({ y: addPointGridY });
-    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
-    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    if (!addPointGridInitialized) {
+      addPointGridHandle.position.set(0, 0, 0);
+      addPointGridInitialized = true;
+    }
+    addPointGridY = addPointGridHandle.position.y;
+    AddPointGuideGrid.position.copy(addPointGridHandle.position);
     setAddPointGuideGridVisibleFromUI(true);
   } else {
   console.log( 'add _inactive' )
@@ -8142,6 +8561,41 @@ export function UIevent (uiID, toggle){
     // add を閉じたら add_point の状態を再適用する
     UIevent('add_point', 'active');
 
+  }} else if ( uiID === 'x_z_move' ){ if ( toggle === 'active' ){
+  console.log( 'x_z_move _active' )
+    editObject = 'STEEL_FRAME'
+    objectEditMode = 'MOVE_EXISTING'
+    move_direction_y = false
+    search_object = true
+    addPointGridActive = true
+    steelFrameMode.setAllowPointAppend(false)
+    if (!addPointGridInitialized) {
+      addPointGridHandle.position.set(0, 0, 0);
+      addPointGridInitialized = true;
+    }
+    addPointGridY = addPointGridHandle.position.y;
+    addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
+    AddPointGuideGrid.position.copy(addPointGridHandle.position);
+    targetObjects = [addPointGridHandle]
+    setMeshListOpacity(targetObjects, 1)
+    search_point()
+  } else {
+  console.log( 'x_z_move _inactive' )
+    search_object = false
+    steelFrameMode.setAllowPointAppend(false)
+    if (editObject === 'STEEL_FRAME') {
+      editObject = 'STEEL_FRAME'
+      steelFrameMode.setAllowPointAppend(true)
+      objectEditMode = 'CREATE_NEW'
+      search_object = false
+      targetObjects = steelFrameMode.getCurrentPointMeshes()
+      setMeshListOpacity(targetObjects, 1)
+      steelFrameMode.setActive(true)
+      addPointGridActive = true
+      addPointGridY = addPointGridHandle.position.y
+      setAddPointGuideGridVisibleFromUI(true);
+    }
+
   }} else if ( uiID === 'y_add' ){ if ( toggle === 'active' ){
   console.log( 'y_add _active' )
     editObject = 'STEEL_FRAME'
@@ -8150,13 +8604,12 @@ export function UIevent (uiID, toggle){
     search_object = true
     addPointGridActive = true
     steelFrameMode.setAllowPointAppend(false)
-    const gridPos = coord_DisplayTo3DAtCenter({
-      y: addPointGridY,
-      x: addPointGridHandle.position.x || camera.position.x,
-      z: addPointGridHandle.position.z || camera.position.z,
-    });
-    addPointGridHandle.position.set(gridPos.x, addPointGridY, gridPos.z);
-    AddPointGuideGrid.position.set(gridPos.x, addPointGridY, gridPos.z);
+    if (!addPointGridInitialized) {
+      addPointGridHandle.position.set(0, 0, 0);
+      addPointGridInitialized = true;
+    }
+    addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
+    AddPointGuideGrid.position.copy(addPointGridHandle.position);
     // setAddPointGuideGridVisibleFromUI(true);
     targetObjects = [addPointGridHandle]
     setMeshListOpacity(targetObjects, 1)
@@ -8377,11 +8830,14 @@ export function UIevent (uiID, toggle){
 
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
+    setConstructionCategoryPanelVisible(true);
+    setConstructionCategory(selectedConstructionProfile);
   } else {
   console.log( 'construction/2 _inactive' )
     // steelFrameMode.clearSelection()
     search_object = false
     move_direction_y = false
+    setConstructionCategoryPanelVisible(false);
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
@@ -8395,17 +8851,17 @@ export function UIevent (uiID, toggle){
   console.log( 'rite _inactive' )
   }} else if ( uiID === 'Round_bar' ){ if ( toggle === 'active' ){
   console.log( 'Round_bar _active' )
-    steelFrameMode.setSegmentProfile('round')
+    setConstructionCategory('round')
   } else {
   console.log( 'Round_bar _inactive' )
   }} else if ( uiID === 'H_beam' ){ if ( toggle === 'active' ){
   console.log( 'H_beam _active' )
-    steelFrameMode.setSegmentProfile('h_beam')
+    setConstructionCategory('h_beam')
   } else {
   console.log( 'H_beam _inactive' )
   }} else if ( uiID === 'tubular' ){ if ( toggle === 'active' ){
   console.log( 'tubular _active' )
-    steelFrameMode.setSegmentProfile('tubular')
+    setConstructionCategory('tubular')
   } else {
   console.log( 'tubular _inactive' )
   }} else if ( uiID === 'Difference' ){ if ( toggle === 'active' ){
@@ -8682,6 +9138,7 @@ export function UIevent (uiID, toggle){
     search_object = false
 
   }}
+  updateUndoRedoButtons();
 }
 
 // 視点操作
@@ -8867,6 +9324,7 @@ document.addEventListener('mousemove', (e) => {
         }
 
         dragging = true;
+        moveHistoryStart = captureMoveHistoryStart();
         efficacy = false;
         moveClickPending = false;
         search_object = false;
@@ -8949,6 +9407,7 @@ document.addEventListener('touchmove', (e) => {
         }
 
         dragging = true;
+        moveHistoryStart = captureMoveHistoryStart();
         efficacy = false;
         search_object = false;
         GuideLine.visible = true;
@@ -9104,6 +9563,24 @@ document.addEventListener('keydown', (e) => {
   // プレビュー時はキャンバス上にポインタがなければ無視
   if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
   keys[e.key.toLowerCase()] = true;
+});
+document.addEventListener('keydown', (e) => {
+  const keyLower = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && keyLower === 'z') {
+    const activeTag = document.activeElement?.tagName?.toLowerCase?.() || '';
+    if (activeTag === 'input' || activeTag === 'textarea') { return; }
+    e.preventDefault();
+    if (e.shiftKey) {
+      redoHistoryByContext();
+    } else {
+      undoHistoryByContext();
+    }
+  } else if ((e.ctrlKey || e.metaKey) && keyLower === 'y') {
+    const activeTag = document.activeElement?.tagName?.toLowerCase?.() || '';
+    if (activeTag === 'input' || activeTag === 'textarea') { return; }
+    e.preventDefault();
+    redoHistoryByContext();
+  }
 });
 document.addEventListener('keyup', (e) => {
   if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;

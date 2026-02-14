@@ -247,6 +247,52 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return mesh;
   }
 
+  function addExistingPoint(mesh, lineIndex = currentLineIndex) {
+    if (!mesh) { return false; }
+    const safeLine = Number.isInteger(lineIndex) && lineIndex >= 0 ? lineIndex : currentLineIndex;
+    while (lines.length <= safeLine) {
+      lines.push([]);
+    }
+    const points = lines[safeLine];
+    if (!points.includes(mesh)) {
+      points.push(mesh);
+    }
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      steelFramePoint: true,
+      steelFrameLine: safeLine,
+    };
+    mesh.visible = active;
+    if (!mesh.parent) {
+      scene.add(mesh);
+    }
+    generated = false;
+    return true;
+  }
+
+  function removePointMesh(mesh) {
+    if (!mesh) { return false; }
+    let removed = false;
+    lines.forEach((points) => {
+      const idx = points.indexOf(mesh);
+      if (idx >= 0) {
+        points.splice(idx, 1);
+        removed = true;
+      }
+    });
+    const selectedIdx = selectedPoints.indexOf(mesh);
+    if (selectedIdx >= 0) {
+      selectedPoints.splice(selectedIdx, 1);
+    }
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    if (removed) {
+      generated = false;
+    }
+    return removed;
+  }
+
   function clearSelection() {
     selectedPoints.forEach((mesh) => setPointColor(mesh, pointColor));
     selectedPoints.length = 0;
@@ -363,6 +409,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     getSelectedPointOrder,
     isSelectedPoint,
     restorePointColor,
+    addExistingPoint,
+    removePointMesh,
     setActive,
     setSegmentProfile,
     setPointsFromTargets,
