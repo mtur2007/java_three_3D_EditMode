@@ -4332,11 +4332,14 @@ const differenceSpacePlanes = []
 let differenceSelectedPlane = null
 let differenceFaceHighlight = null
 const differenceSelectedFaceHighlights = []
+const differenceSelectedEdgeHighlights = []
 let differenceHoverFaceKey = null
 let differenceHoveredFaceHit = null
 const differenceSelectedControlPoints = new Set()
 const differenceSelectedFaces = new Map()
+const differenceSelectedEdges = new Map()
 const differenceSharedPointLinkEpsilon = 0.02
+const differenceAutoMergeDistance = 0.08
 let differenceFaceVertexDragActive = false
 let differenceFaceVertexDragMesh = null
 let differenceFaceVertexDragLocalNormal = null
@@ -4357,6 +4360,7 @@ let differenceMoveShouldToggle = false
 let differenceMoveHitKind = 'none'
 let differenceMoveHitControlPoint = null
 let differenceMoveHitFace = null
+let differenceMoveHitEdge = null
 const differenceCsgEvaluator = new Evaluator()
 const differenceCsgOperation = HOLLOW_SUBTRACTION
 let addPointGridActive = false
@@ -5483,6 +5487,83 @@ function addDifferenceSharedPointLink(a, b) {
   }
 }
 
+function showDifferenceMergeNoticeAt(worldPos, text = '結合しました') {
+  const sprite = buildSimpleLabelSprite(text, '#1f4ecf');
+  if (!sprite) { return; }
+  sprite.position.copy(worldPos);
+  sprite.position.y += 0.24;
+  sprite.renderOrder = 2600;
+  scene.add(sprite);
+  window.setTimeout(() => {
+    if (sprite.parent) {
+      sprite.parent.remove(sprite);
+    }
+    if (sprite.material?.map?.dispose) {
+      sprite.material.map.dispose();
+    }
+    if (sprite.material?.dispose) {
+      sprite.material.dispose();
+    }
+  }, 1400);
+}
+
+function autoMergeNearbyDifferencePoints(changedPoints = [], threshold = differenceAutoMergeDistance) {
+  const candidatePoints = (Array.isArray(changedPoints) && changedPoints.length > 0)
+    ? changedPoints
+    : differenceSpacePlanes.flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || []);
+  const sources = candidatePoints.filter((point) => point?.userData?.differenceControlPoint && point?.parent);
+  if (sources.length < 1) { return 0; }
+
+  const allPoints = differenceSpacePlanes.flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || [])
+    .filter((point) => point?.parent);
+  if (allPoints.length < 2) { return 0; }
+
+  const thresholdSq = Math.max(1e-8, threshold * threshold);
+  const visitedPairs = new Set();
+  const dirtyMeshes = new Set();
+  const touchedPoints = new Set();
+  const wa = new THREE.Vector3();
+  const wb = new THREE.Vector3();
+  let mergedCount = 0;
+
+  sources.forEach((a) => {
+    if (!a?.parent) { return; }
+    a.getWorldPosition(wa);
+    allPoints.forEach((b) => {
+      if (!b?.parent || a === b) { return; }
+      const idA = Math.min(a.id, b.id);
+      const idB = Math.max(a.id, b.id);
+      const pairKey = `${idA}:${idB}`;
+      if (visitedPairs.has(pairKey)) { return; }
+      visitedPairs.add(pairKey);
+      b.getWorldPosition(wb);
+      if (wa.distanceToSquared(wb) > thresholdSq) { return; }
+
+      const mergedWorld = wa.clone().add(wb).multiplyScalar(0.5);
+      const invA = new THREE.Matrix4().copy(a.parent.matrixWorld).invert();
+      const invB = new THREE.Matrix4().copy(b.parent.matrixWorld).invert();
+      a.position.copy(mergedWorld.clone().applyMatrix4(invA));
+      b.position.copy(mergedWorld.clone().applyMatrix4(invB));
+      addDifferenceSharedPointLink(a, b);
+
+      touchedPoints.add(a);
+      touchedPoints.add(b);
+      dirtyMeshes.add(a.parent);
+      dirtyMeshes.add(b.parent);
+      mergedCount += 1;
+    });
+  });
+
+  if (mergedCount < 1) { return 0; }
+  propagateDifferenceSharedPoints(Array.from(touchedPoints), dirtyMeshes);
+  dirtyMeshes.forEach((mesh) => syncDifferenceGeometryFromControlPoints(mesh));
+  touchedPoints.forEach((point) => {
+    const pos = point.getWorldPosition(new THREE.Vector3());
+    showDifferenceMergeNoticeAt(pos, '結合しました');
+  });
+  return mergedCount;
+}
+
 function findDifferenceControlPointByLocalPosition(mesh, localPos, eps = differenceSharedPointLinkEpsilon) {
   if (!mesh || !localPos) { return null; }
   let best = null;
@@ -5766,6 +5847,10 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   rebuildDifferenceControlPointsFromGeometry(newMesh);
   syncDifferenceGeometryFromControlPoints(newMesh);
   linkDifferenceSharedBoundaryPoints(sourceMesh, newMesh, localFacePoints);
+  autoMergeNearbyDifferencePoints([
+    ...sourceMesh.children.filter((child) => child?.userData?.differenceControlPoint),
+    ...newMesh.children.filter((child) => child?.userData?.differenceControlPoint),
+  ]);
   selectDifferencePlane(newMesh);
   return { mesh: newMesh, error: null, facePointCount: localFacePoints.length };
 }
@@ -6101,6 +6186,14 @@ function resetChoiceObjectColor(mesh) {
   if (!mesh) { return; }
   if (mesh?.userData?.differenceSpacePlane) {
     setDifferencePlaneVisual(mesh, mesh === differenceSelectedPlane);
+    return;
+  }
+  if (mesh?.userData?.differenceControlPoint) {
+    if (isDifferenceControlPointSelected(mesh)) {
+      setDifferenceControlPointVisual(mesh, 0x7be6ff);
+    } else {
+      setDifferenceControlPointVisual(mesh);
+    }
     return;
   }
   if (editObject === 'STEEL_FRAME' && steelFrameMode?.isSelectedPoint && steelFrameMode.isSelectedPoint(mesh)) {
@@ -6964,6 +7057,11 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (differenceControlPointDragActive) {
+    const draggedPoints = Array.isArray(differenceControlPointDragPoint)
+      ? differenceControlPointDragPoint.map((entry) => entry?.point).filter(Boolean)
+      : [];
+    autoMergeNearbyDifferencePoints(draggedPoints);
+    refreshDifferencePreview();
     commitDifferenceHistoryIfNeeded();
     differenceControlPointDragActive = false;
     differenceControlPointDragPoint = null;
@@ -6973,6 +7071,11 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (differenceFaceVertexDragActive) {
+    const movedPoints = Array.isArray(differenceFaceVertexDragMesh)
+      ? differenceFaceVertexDragMesh.flatMap((entry) => entry?.points?.map?.((p) => p.point) || [])
+      : [];
+    autoMergeNearbyDifferencePoints(movedPoints);
+    refreshDifferencePreview();
     commitDifferenceHistoryIfNeeded();
     differenceFaceVertexDragActive = false;
     differenceFaceVertexDragMesh = null;
@@ -7086,7 +7189,7 @@ async function handleMouseUp(mobile = false) {
 
         // if (editObject === 'ORIGINAL'){}
         choice_object.position.set(point.x,point.y,point.z)
-        choice_object.material.color.set(0xff0000) // Reset color to red
+        resetChoiceObjectColor(choice_object);
       }
 
       GuideLine.visible = false;
@@ -7579,6 +7682,7 @@ async function handleMouseDown() {
       beginDifferenceHistorySession();
       const plane = createDifferenceSpacePlane(point);
       addDifferenceControlPoints(plane);
+      autoMergeNearbyDifferencePoints(plane.children.filter((child) => child?.userData?.differenceControlPoint));
       selectDifferencePlane(plane);
       targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
       setMeshListOpacity(targetObjects, 1);
