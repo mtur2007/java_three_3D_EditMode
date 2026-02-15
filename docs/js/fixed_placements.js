@@ -149,9 +149,16 @@ export function applyFixedPlacements({
 
   // right_height, left_height, beamLength, beam_height
   const Poles = TSys.createCatenaryPole(0, 3.2, 1.4, 2.3, 5);
-  for (let i = 0; i < Poles.children.length; i++) {
-    Poles.children[i].rotation.y += pole_angle[i];
-    Poles.children[i].position.set(pole_line[i].x, pole_line[i].y, pole_line[i].z);
+  const poleCount = Math.min(
+    Poles.children.length,
+    Array.isArray(pole_line) ? pole_line.length : 0,
+    Array.isArray(pole_angle) ? pole_angle.length : 0,
+  );
+  for (let i = 0; i < poleCount; i++) {
+    const point = pole_line[i];
+    if (!point) { continue; }
+    Poles.children[i].rotation.y += pole_angle[i] ?? 0;
+    Poles.children[i].position.set(point.x, point.y, point.z);
   }
   scene.add(Poles);
 
@@ -176,8 +183,9 @@ export function applyFixedPlacements({
     const pole = LoadModels[3];
     for (let i = 0; i < margin.length; i++) {
       const clone_pole = pole.clone();
-      clone_pole.rotation.y += margin_angle[i] + 90 * Math.PI / 180;
+      clone_pole.rotation.y += (margin_angle[i] ?? 0) + 90 * Math.PI / 180;
       const i_margin = margin[i];
+      if (!i_margin) { continue; }
       clone_pole.position.set(i_margin.x, i_margin.y + 1.1, i_margin.z);
       scene.add(clone_pole);
     }

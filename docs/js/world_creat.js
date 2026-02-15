@@ -6,7 +6,11 @@ import { TrainSystem } from './train_system.js';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/DRACOLoader.js';
 
-export async function WorldCreat(scene,train_width,car_Spacing){
+export async function WorldCreat(scene, train_width, car_Spacing, options = {}){
+const {
+  showMapGlb = true,
+  onlyRailAndGround = false,
+} = options;
 
 // ライト作成
 const dirLight = new THREE.DirectionalLight(0xffeeee, 3
@@ -30,7 +34,15 @@ dirLight.castShadow = true;           // ライトがシャドウを投げる
 dirLight.shadow.mapSize.set(4000, 4000); // 必要に応じて解像度を下げる
 dirLight.shadow.radius = 4;           // ソフトネス（three r0.150+ で有効）
 dirLight.shadow.bias = -0.0005;       // 影のアーティファクト（自動調整必要）
-dirLight.shadow.normalBias = 0.5;    // 法線オフセット（改善される場合あり）
+dirLight.shadow.normalBias = 0.05;    // 大きすぎると影が浮くため控えめに
+// 影の切れ対策として、初期の投影範囲を広めに固定
+dirLight.shadow.camera.left = -600;
+dirLight.shadow.camera.right = 600;
+dirLight.shadow.camera.top = 600;
+dirLight.shadow.camera.bottom = -600;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 3000;
+dirLight.shadow.camera.updateProjectionMatrix();
 
 // 4) マトリクスを強制更新（これで即時反映）
 dirLight.updateMatrixWorld(true);
@@ -46,28 +58,47 @@ ground.receiveShadow = true; // 影を受ける
 ground.name = 'GroundPlane';
 scene.add(ground);
 
+if (onlyRailAndGround) {
+  console.info('[world_creat] onlyRailAndGround=true: 地面以外のワールド生成をスキップ');
+  return [null, null, null, null];
+}
+
 
 // ----------------- シャドウの自動最適化（モデルに合わせてシャドウカメラを調整） -----------------
 // モデル読み込み後に呼ぶ関数（root は読み込んだ Group）
 function fitDirectionalLightShadowForObject(rootObj, light) {
   const box = new THREE.Box3().setFromObject(rootObj);
+  if (box.isEmpty()) { return; }
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
 
-  // シャドウカメラをモデルにフィットさせる（余白 factor を入れる）
-  const factor = 1.25;
-  const halfWidth = Math.max(size.x, size.z) * factor * 0.5;
-  // light.position.set(center.x + size.x * 0.5, center.y + Math.max(size.y, 50), center.z + size.z * 0.5); // ライト位置を調整
-  // light.target.position.copy(center);
-  // scene.add(light.target);
+  // シャドウカメラをモデルにフィットさせる（余白込み）
+  // 途中で切れにくいよう、最小範囲を確保する。
+  const factor = 2.0;
+  const halfWidth = Math.max(600, Math.max(size.x, size.z) * factor * 0.5);
+
+  // 影が切れる主因は「targetが原点のまま」で投影中心がずれること。
+  // 向きは維持しつつ、targetをモデル中心へ移動する。
+  const currentDirection = light.position.clone().sub(light.target.position);
+  if (currentDirection.lengthSq() < 1e-6) {
+    currentDirection.set(1, 1, 1);
+  }
+  const distance = Math.max(300, currentDirection.length());
+  currentDirection.normalize();
+  light.target.position.copy(center);
+  light.position.copy(center).add(currentDirection.multiplyScalar(distance));
+  light.target.updateMatrixWorld(true);
+  light.updateMatrixWorld(true);
 
   light.shadow.camera.left = -halfWidth;
   light.shadow.camera.right = halfWidth;
   light.shadow.camera.top = halfWidth;
   light.shadow.camera.bottom = -halfWidth;
 
-  light.shadow.camera.near = 0.5;
-  light.shadow.camera.far = Math.max(500, size.y * 10);
+  // 高低差とライト距離を十分に取る。far不足でも影が途中で切れる。
+  const verticalMargin = Math.max(200, size.y * 3);
+  light.shadow.camera.near = 1;
+  light.shadow.camera.far = Math.max(3000, distance + size.y + verticalMargin);
   // light.shadow.mapSize.set(2048, 2048); // 必要に応じて解像度を下げる
   // light.shadow.mapSize.set(4000, 4000); // 必要に応じて解像度を下げる
   light.shadow.bias = -0.0005;
@@ -261,14 +292,19 @@ await loadModelToScene('poll.glb', { autoCenter: true, autoScaleMax: 10000, scal
 
 // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
-loadModelToScene('map.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
-  .then((root) => {
-    console.log('GLB loaded and added to scene:', root);
-  })
-  .catch((err) => {
-    console.error('モデルの読み込みで失敗:', err);
-    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
-  });
+if (showMapGlb) {
+  loadModelToScene('map.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
+    .then((root) => {
+      root.name = 'base_map';
+      console.log('GLB loaded and added to scene:', root);
+    })
+    .catch((err) => {
+      console.error('モデルの読み込みで失敗:', err);
+      alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+    });
+} else {
+  console.info('[world_creat] showMapGlb=false: map.glb の読み込みをスキップ');
+}
 
 // creat モード用の都市マップ（map.glb と同じ読み込み方法）
 loadModelToScene('sinjyuku.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
@@ -731,22 +767,6 @@ function createDoubleArcPoints(params1, params2) {
   ArchBridge.add(Bridge_beam)
   return ArchBridge
 }
-const ArchBridge = createDoubleArcPoints(arcA, arcB)
-const scale = 0.325
-const position_scale = scale/0.45
-ArchBridge.position.set(-4.25,-17.8,-117)
-ArchBridge.rotation.y = 1.750662913747207//79.66 * Math.PI / 180
-console.log(ArchBridge)
-for (let i = 0; i < ArchBridge.children.length; i++){
-  const mesh_group = ArchBridge.children[i]
-    for (let j = 0; i < mesh_group.children.length; i++){
-    const mesh = mesh_group.children[i]
-    mesh.receiveShadow = true
-    mesh.castShadow = true;
-  }
-}
-scene.add(ArchBridge)
-
 console.log('return',car)
 return car
 }

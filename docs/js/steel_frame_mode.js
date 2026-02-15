@@ -13,6 +13,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   let active = false;
   let generated = false;
   let allowPointAppend = false;
+  const createPointScale = 0.5;
   let forcedCreatEnvMap = null;
 
   const envLoader = new THREE.TextureLoader();
@@ -235,6 +236,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const currentPoints = lines[currentLineIndex];
     const mesh = new THREE.Mesh(cubeGeometry, cubeMaterial.clone());
     mesh.position.copy(point);
+    mesh.scale.setScalar(createPointScale);
     mesh.userData = {
       ...(mesh.userData || {}),
       steelFramePoint: true,

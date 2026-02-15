@@ -551,6 +551,206 @@ export class TrainSystem {
     return mesh;
     }
 
+  setShadowRecursive(object3d, cast = true, receive = true) {
+    if (!object3d) { return; }
+    object3d.traverse((node) => {
+      if (!node?.isMesh) { return; }
+      node.castShadow = cast;
+      node.receiveShadow = receive;
+    });
+  }
+
+  createDoubleArcBridge(params1, params2, { bridgeDepth = 3 } = {}) {
+    const bridge = new THREE.Group();
+    const bridgeBeam = new THREE.Group();
+
+    const rangeRad1 = (params1.rangeDeg * Math.PI) / 180;
+    const segments1 = params1.stepDeg;
+    const halfRangeX1 = params1.radius * Math.sin(rangeRad1 / 2);
+    const xStart1 = -halfRangeX1;
+    const xEnd1 = halfRangeX1;
+    const stepX1 = (xEnd1 - xStart1) / segments1;
+
+    const rangeRad2 = (params2.rangeDeg * Math.PI) / 180;
+    const segments2 = params2.stepDeg;
+    const halfRangeX2 = params2.radius * Math.sin(rangeRad2 / 2);
+    const xStart2 = -halfRangeX2;
+    const xEnd2 = halfRangeX2;
+    const stepX2 = (xEnd2 - xStart2) / segments2;
+
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.8,
+      roughness: 0.5,
+      envMapIntensity: 1.0,
+      side: THREE.FrontSide,
+    });
+
+    const x1 = xStart1 + (1 * stepX1);
+    const y1 = Math.sqrt(params1.radius ** 2 - x1 ** 2) + params1.centerOffset.y;
+    const x2 = xStart1 + (2 * stepX1);
+
+    const x1b = xStart2 + (1 * stepX2);
+    const y1b = Math.sqrt(params2.radius ** 2 - x1b ** 2) + params2.centerOffset.y;
+
+    const x2b = xStart2 + (2 * stepX2);
+    const y2b = Math.sqrt(params2.radius ** 2 - x2b ** 2) + params2.centerOffset.y;
+
+    const beamX = x2;
+    const beamY = y2b;
+
+    bridge.add(this.createBoxBetweenPoints3D(
+      new THREE.Vector3(x1, y1, 0),
+      new THREE.Vector3(x1, y1b, 0),
+      0.3, 0.3, material
+    ));
+
+    for (let i = 1; i < Math.max(segments1, segments2) - 1; i += 1) {
+      const px1 = xStart1 + (i * stepX1);
+      const py1 = Math.sqrt(params1.radius ** 2 - px1 ** 2) + params1.centerOffset.y;
+      const px2 = xStart1 + ((i + 1) * stepX1);
+      const py2 = Math.sqrt(params1.radius ** 2 - px2 ** 2) + params1.centerOffset.y;
+
+      bridge.add(this.createBoxBetweenPoints3D(
+        new THREE.Vector3(px2, py2, 0),
+        new THREE.Vector3(px1, py1, 0),
+        0.3, 0.3, material
+      ));
+
+      const px1b = xStart2 + (i * stepX2);
+      const py1b = Math.sqrt(params2.radius ** 2 - px1b ** 2) + params2.centerOffset.y;
+      const px2b = xStart2 + ((i + 1) * stepX2);
+      const py2b = Math.sqrt(params2.radius ** 2 - px2b ** 2) + params2.centerOffset.y;
+
+      bridge.add(this.createBoxBetweenPoints3D(
+        new THREE.Vector3(px1, py1b, 0),
+        new THREE.Vector3(px2, py2b, 0),
+        0.3, 0.3, material
+      ));
+
+      if (i < (Math.max(segments1, segments2) - 1) / 2) {
+        bridge.add(this.createBoxBetweenPoints3D(
+          new THREE.Vector3(px1, py1, 0),
+          new THREE.Vector3(px2, py2b, 0),
+          0.2, 0.2, material
+        ));
+        if (i > 2) {
+          bridgeBeam.add(this.createBoxBetweenPoints3D(
+            new THREE.Vector3(px1, py1, 0),
+            new THREE.Vector3(px2, py2, bridgeDepth * 0.5),
+            0.1, 0.1, material
+          ));
+          bridgeBeam.add(this.createBoxBetweenPoints3D(
+            new THREE.Vector3(px1, py1, bridgeDepth),
+            new THREE.Vector3(px2, py2, bridgeDepth * 0.5),
+            0.1, 0.1, material
+          ));
+        }
+      } else {
+        bridge.add(this.createBoxBetweenPoints3D(
+          new THREE.Vector3(px2, py2, 0),
+          new THREE.Vector3(px1, py1b, 0),
+          0.2, 0.2, material
+        ));
+        if (i < Math.max(segments1, segments2) - 3) {
+          bridgeBeam.add(this.createBoxBetweenPoints3D(
+            new THREE.Vector3(px1, py1, bridgeDepth * 0.5),
+            new THREE.Vector3(px2, py2, 0),
+            0.1, 0.1, material
+          ));
+          bridgeBeam.add(this.createBoxBetweenPoints3D(
+            new THREE.Vector3(px1, py1, bridgeDepth * 0.5),
+            new THREE.Vector3(px2, py2, bridgeDepth),
+            0.1, 0.1, material
+          ));
+        }
+      }
+
+      bridge.add(this.createBoxBetweenPoints3D(
+        new THREE.Vector3(px2, py2, 0),
+        new THREE.Vector3(px2, py2b, 0),
+        0.2, 0.2, material
+      ));
+
+      if (i > 2 && i < Math.max(segments1, segments2) - 3) {
+        bridgeBeam.add(this.createBoxBetweenPoints3D(
+          new THREE.Vector3(px1, py1, bridgeDepth),
+          new THREE.Vector3(px1, py1, 0),
+          0.1, 0.1, material
+        ));
+      }
+
+      bridge.add(this.createBoxBetweenPoints3D(
+        new THREE.Vector3(px2, py2, 0),
+        new THREE.Vector3(px2, beamY, 0),
+        0.2, 0.2, material
+      ));
+
+      if (i === Math.max(segments1, segments2) - 4) {
+        bridgeBeam.add(this.createBoxBetweenPoints3D(
+          new THREE.Vector3(px2, py2, bridgeDepth),
+          new THREE.Vector3(px2, py2, 0),
+          0.2, 0.2, material
+        ));
+      }
+
+      if (i === Math.max(segments1, segments2) - 2) {
+        bridge.add(this.createBoxBetweenPoints3D(
+          new THREE.Vector3(beamX, beamY, 0),
+          new THREE.Vector3(px1, py1b, 0),
+          0.3, 0.3, material
+        ));
+      }
+    }
+
+    const bridge2 = bridge.clone();
+    bridge2.position.z += bridgeDepth;
+    const archBridge = new THREE.Group();
+    archBridge.add(bridge);
+    archBridge.add(bridge2);
+    archBridge.add(bridgeBeam);
+    return archBridge;
+  }
+
+  createDefaultArchBridge({
+    position = new THREE.Vector3(-4.25, -17.8, -117),
+    rotationY = 1.750662913747207,
+    addToScene = true,
+    castShadow = true,
+    receiveShadow = true,
+  } = {}) {
+    const arcA = {
+      radius: 29,
+      rangeDeg: 65,
+      stepDeg: 16,
+      thickness: 0.4,
+      depth: 0.5,
+      color: 0x996633,
+      centerOffset: new THREE.Vector3(5, 0, 0),
+      rotationOffset: 90 * Math.PI / 180,
+    };
+
+    const arcB = {
+      radius: 25.2,
+      rangeDeg: 85,
+      stepDeg: 16,
+      thickness: 0.4,
+      depth: 0.5,
+      color: 0x336699,
+      centerOffset: new THREE.Vector3(5, 3, 0),
+      rotationOffset: 90 * Math.PI / 180,
+    };
+
+    const archBridge = this.createDoubleArcBridge(arcA, arcB);
+    archBridge.position.copy(position);
+    archBridge.rotation.y = rotationY;
+    this.setShadowRecursive(archBridge, castShadow, receiveShadow);
+    if (addToScene) {
+      this.scene.add(archBridge);
+    }
+    return archBridge;
+  }
+
   // --- 鉄橋用ユーティリティ ---
   // 柱
   createBridgePillar(x, z, height = 5) {
@@ -620,31 +820,65 @@ export class TrainSystem {
     width = 0.5,
     thickness = 0.2,
     color = 0x888888,
-    steps = 600,
+    segmentLength = 1.2,
   } = {}) {
-    const halfWidth = width * 0.5;
-    const halfThickness = thickness * 0.5;
-    const shape = new THREE.Shape([
-      new THREE.Vector2(-halfThickness, -halfWidth),
-      new THREE.Vector2(halfThickness, -halfWidth),
-      new THREE.Vector2(halfThickness, halfWidth),
-      new THREE.Vector2(-halfThickness, halfWidth),
-      new THREE.Vector2(-halfThickness, -halfWidth),
-    ]);
-    const geometry = new THREE.ExtrudeGeometry(shape, {
-      steps,
-      bevelEnabled: false,
-      extrudePath: curve,
-    });
     const material = new THREE.MeshStandardMaterial({
       color,
       side: THREE.FrontSide,
     });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.scene.add(mesh);
-    return mesh;
+    const points = this.getPointsEveryM(curve, segmentLength);
+    if (!Array.isArray(points) || points.length < 2) { return null; }
+
+    const group = new THREE.Group();
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const dx = p1.x - p0.x;
+      const dz = p1.z - p0.z;
+      const horizontalDist = Math.hypot(dx, dz);
+      // 水平成分が極小の区間は、床板が縦向きに見える原因になるためスキップ。
+      if (horizontalDist < 1e-3) { continue; }
+      const segment = this.createBoxBetweenPoints3D(p0, p1, thickness, width, material);
+      segment.castShadow = true;
+      segment.receiveShadow = true;
+      group.add(segment);
+    }
+    if (group.children.length === 0) { return null; }
+    this.scene.add(group);
+    return group;
+  }
+
+  createCatenaryPolesAlongCurve(curve, {
+    interval = 14,
+    leftHeight = 3.2,
+    rightHeight = 3.2,
+    beamLength = 2.6,
+    beamHeight = 3.2,
+    yOffset = 0,
+    yawOffset = 0,
+  } = {}) {
+    if (!curve || typeof curve.getLength !== 'function') { return 0; }
+    const length = curve.getLength();
+    if (!Number.isFinite(length) || length <= 0) { return 0; }
+    const count = Math.max(1, Math.round(length / Math.max(1, interval)));
+    let placed = 0;
+    for (let i = 0; i <= count; i += 1) {
+      const t = count > 0 ? i / count : 0;
+      const point = curve.getPointAt(t).clone();
+      const tangent = curve.getTangentAt(t).clone().setY(0);
+      if (tangent.lengthSq() <= 1e-8) {
+        tangent.set(0, 0, 1);
+      } else {
+        tangent.normalize();
+      }
+      const pole = this.createCatenaryPole(leftHeight, rightHeight, beamLength, beamHeight, 1);
+      pole.position.set(point.x, point.y + yOffset, point.z);
+      pole.rotation.y += Math.atan2(tangent.x, tangent.z) + yawOffset;
+      this.setShadowRecursive(pole, true, true);
+      this.scene.add(pole);
+      placed += 1;
+    }
+    return placed;
   }
 
   createRibbedSideBridge(curve, {
@@ -1105,6 +1339,22 @@ export class TrainSystem {
     if (type === 'floor') {
       trackGroups.forEach((group) => {
         this.createFloorAlongCurve(group.curve, { width: 1.5, thickness: 0.2 });
+      });
+      return true;
+    }
+
+    if (type === 'catenary_pole') {
+      const catenaryOptions = {
+        interval: options.interval ?? 14,
+        leftHeight: options.leftHeight ?? 3.2,
+        rightHeight: options.rightHeight ?? 3.2,
+        beamLength: options.beamLength ?? 2.6,
+        beamHeight: options.beamHeight ?? 3.2,
+        yOffset: options.yOffset ?? 0,
+        yawOffset: options.yawOffset ?? 0,
+      };
+      trackGroups.forEach((group) => {
+        this.createCatenaryPolesAlongCurve(group.curve, catenaryOptions);
       });
       return true;
     }

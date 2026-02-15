@@ -989,6 +989,48 @@
     opacity: 0.9;
     color: var(--text-sub);
   }
+  .mode-video-guide {
+    margin: 14px 0 20px;
+    padding: 12px;
+    border: 1px solid rgba(90, 120, 170, 0.26);
+    border-radius: 10px;
+    background: rgba(235, 244, 255, 0.6);
+  }
+  .mode-video-guide h3 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+  }
+  .mode-video-headings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .mode-video-heading {
+    border: 1px solid #9cb4d3;
+    background: #f3f8ff;
+    color: #1f3350;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .mode-video-heading.is-active {
+    background: #2f7fff;
+    border-color: #2f7fff;
+    color: #fff;
+  }
+  #mode-video-player {
+    width: 100%;
+    max-width: 960px;
+    border-radius: 10px;
+    background: #000;
+  }
+  #mode-video-status {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #445c7a;
+  }
 
   @media (max-width: 900px) {
     .glass-panel {
@@ -1099,20 +1141,20 @@
               </div>
 
               <div id="rotation-panel" role="region" aria-label="回転パネル" style="position: fixed; right: 20px; top: 120px; width: 220px; padding: 12px; background: rgba(255,255,255,0.92); border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.25); z-index: 10002; display: none; pointer-events: auto;">
-                <div style="font-size: 12px; font-weight: 700; margin-bottom: 8px;">Rotation</div>
+                <div id="rotation-panel-title" style="font-size: 12px; font-weight: 700; margin-bottom: 8px;">Rotation</div>
                 <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
-                  <label style="font-size: 11px; color: #b23b3b;">X (deg)
-                    <input id="rotation-input-x" type="number" step="1" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
+                  <label id="rotation-label-x" style="font-size: 11px; color: #b23b3b;">X (deg)
+                    <input id="rotation-input-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
                   </label>
-                  <label style="font-size: 11px; color: #2f8f57;">Y (deg)
-                    <input id="rotation-input-y" type="number" step="1" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
+                  <label id="rotation-label-y" style="font-size: 11px; color: #2f8f57;">Y (deg)
+                    <input id="rotation-input-y" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
                   </label>
-                  <label style="font-size: 11px; color: #2f6fb8;">Z (deg)
-                    <input id="rotation-input-z" type="number" step="1" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
+                  <label id="rotation-label-z" style="font-size: 11px; color: #2f6fb8;">Z (deg)
+                    <input id="rotation-input-z" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
                   </label>
                 </div>
                 <button id="rotation-apply" style="margin-top: 8px; width: 100%; padding: 6px 8px;">適用</button>
-                <pre id="rotation-selection-info" style="margin-top: 8px; max-height: 180px; overflow: auto; padding: 6px; border-radius: 6px; background: rgba(20,20,20,0.06); font-size: 10px; line-height: 1.45; white-space: pre-wrap;">選択点: 2点以上で情報を表示</pre>
+                <pre id="rotation-selection-info" style="margin-top: 8px; max-height: 180px; overflow: auto; padding: 6px; border-radius: 6px; background: rgba(14,20,30,0.78); color: #eef4ff; border: 1px solid rgba(150,180,230,0.3); font-size: 10px; line-height: 1.45; white-space: pre-wrap;">選択点: 2点以上で情報を表示</pre>
               </div>
 
               <div id="construction-category-panel" role="region" aria-label="construction カテゴリ">
@@ -1157,6 +1199,10 @@
                   <button class="rail-construction-card" data-rail-construction-category="pillar" type="button" aria-pressed="false">
                     <img alt="pillar" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='52' y='16' width='16' height='40' fill='%237f9ec1'/%3E%3Crect x='46' y='12' width='28' height='6' fill='%236884a8'/%3E%3Crect x='46' y='56' width='28' height='6' fill='%236884a8'/%3E%3C/svg%3E">
                     <span>pillar</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="catenary_pole" type="button" aria-pressed="false">
+                    <img alt="catenary_pole" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='20' y1='52' x2='100' y2='52' stroke='%23506c8e' stroke-width='5'/%3E%3Crect x='32' y='16' width='8' height='36' fill='%236f8fb3'/%3E%3Crect x='80' y='16' width='8' height='36' fill='%236f8fb3'/%3E%3Cline x1='36' y1='20' x2='84' y2='20' stroke='%234f6e90' stroke-width='4'/%3E%3C/svg%3E">
+                    <span>catenary_pole</span>
                   </button>
                   <button class="rail-construction-card" data-rail-construction-category="rib_bridge" type="button" aria-pressed="false">
                     <img alt="rib_bridge" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='10' y1='46' x2='110' y2='46' stroke='%23506c8e' stroke-width='6'/%3E%3Cline x1='24' y1='46' x2='40' y2='24' stroke='%2378a6e6'/%3E%3Cline x1='48' y1='46' x2='60' y2='20' stroke='%2378a6e6'/%3E%3Cline x1='72' y1='46' x2='80' y2='24' stroke='%2378a6e6'/%3E%3Cline x1='96' y1='46' x2='100' y2='28' stroke='%2378a6e6'/%3E%3C/svg%3E">
@@ -1283,6 +1329,18 @@
       <h1>編集モードの説明</h1>
       
       <p>このモードでは、線路の形状の編集、構造物の配置から作成まで行えます。<br>以下は <strong>edit</strong> と <strong>creat</strong> で分けた説明です。</p>
+      <div id="mode-video-guide" class="mode-video-guide">
+        <h3>モード別デモ動画（見出しクリックで再生）</h3>
+        <div class="mode-video-headings" role="tablist" aria-label="モード動画の見出し">
+          <button class="mode-video-heading is-active" type="button" role="tab" aria-selected="true" data-video-src="videos/mode_see.mp4">see</button>
+          <button class="mode-video-heading" type="button" role="tab" aria-selected="false" data-video-src="videos/mode_edit.mp4">edit</button>
+          <button class="mode-video-heading" type="button" role="tab" aria-selected="false" data-video-src="videos/mode_rail.mp4">rail</button>
+          <button class="mode-video-heading" type="button" role="tab" aria-selected="false" data-video-src="videos/mode_creat.mp4">creat</button>
+          <button class="mode-video-heading" type="button" role="tab" aria-selected="false" data-video-src="videos/mode_custom.mp4">custom</button>
+        </div>
+        <video id="mode-video-player" controls playsinline preload="metadata"></video>
+        <p id="mode-video-status">見出しをクリックすると動画を再生します。</p>
+      </div>
 
       <div class="edit-guide">
         <div class="guide-block">
@@ -1631,6 +1689,58 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 
 <script>
+document.addEventListener('DOMContentLoaded', () => {
+  const guide = document.getElementById('mode-video-guide');
+  const player = document.getElementById('mode-video-player');
+  const status = document.getElementById('mode-video-status');
+  if (!guide || !player) { return; }
+
+  const tabs = Array.from(guide.querySelectorAll('.mode-video-heading'));
+  if (tabs.length === 0) { return; }
+
+  const activateTab = (target) => {
+    tabs.forEach((tab) => {
+      const isActive = tab === target;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  };
+
+  const playByTab = async (tab, { autoplay = true } = {}) => {
+    if (!tab) { return; }
+    activateTab(tab);
+    const src = tab.dataset.videoSrc || '';
+    const label = (tab.textContent || '').trim();
+    if (!src) {
+      if (status) { status.textContent = `「${label}」の動画パスが未設定です。`; }
+      player.removeAttribute('src');
+      player.load();
+      return;
+    }
+    if (player.getAttribute('src') !== src) {
+      player.setAttribute('src', src);
+      player.load();
+    }
+    if (status) { status.textContent = `再生中: ${label}`; }
+    if (!autoplay) { return; }
+    try {
+      await player.play();
+    } catch (_e) {
+      if (status) { status.textContent = `「${label}」を選択しました。再生ボタンを押してください。`; }
+    }
+  };
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      playByTab(tab, { autoplay: true });
+    });
+  });
+
+  playByTab(tabs[0], { autoplay: false });
+});
+</script>
+
+<script>
 window.addEventListener('load', () => {
   const group = document.getElementById('UiGroup');
   if (!group) return;
@@ -1683,6 +1793,7 @@ window.addEventListener('load', () => {
     'wall': '壁',
     'floor': '床',
     'pillar': '柱',
+    'catenary_pole': '架線柱',
     'rib_bridge': 'リブ橋',
     'tunnel_rect': '矩形トンネル',
 

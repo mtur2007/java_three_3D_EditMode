@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 const TRACK_DATA_URL = 'map_data/track_points.json';
 const TRACK_DATA_VERSION = 1;
+export const ENABLE_MANUAL_DIORAMA_SPACE = false;
+export const USE_SAVED_DATA_ONLY = true;
 const REQUIRED_TRACK_KEYS = [
   'Points_0',
   'Points_1',
@@ -34,6 +36,10 @@ function pointsToPlain(list) {
   return list.map((point) => ({ x: point.x, y: point.y, z: point.z }));
 }
 
+function clonePointList(list) {
+  return list.map((point) => ({ x: point.x, y: point.y, z: point.z }));
+}
+
 async function loadTrackData(url) {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) {
@@ -52,11 +58,22 @@ function normalizeTrackData(rawData) {
     throw new Error('track_points.json に tracks がありません。');
   }
 
+  const defaultFallback = [
+    { x: -20, y: 1, z: 0 },
+    { x: 20, y: 1, z: 0 },
+  ];
+  const points0Raw = rawTracks.Points_0;
+  const baseFallback = (Array.isArray(points0Raw) && points0Raw.every(isPlainPoint) && points0Raw.length >= 2)
+    ? clonePointList(points0Raw)
+    : defaultFallback;
+
   const tracks = {};
   REQUIRED_TRACK_KEYS.forEach((name) => {
     const rawList = rawTracks[name];
-    if (!Array.isArray(rawList) || !rawList.every(isPlainPoint)) {
-      throw new Error('track_points.json に不足または不正な点群があります: ' + name);
+    if (!Array.isArray(rawList) || !rawList.every(isPlainPoint) || rawList.length < 2) {
+      console.warn(`[track_setup] 不足/不正な点群を補完しました: ${name}`);
+      tracks[name] = pointsToVector3(baseFallback);
+      return;
     }
     tracks[name] = pointsToVector3(rawList);
   });

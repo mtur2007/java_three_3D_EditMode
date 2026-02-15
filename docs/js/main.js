@@ -192,6 +192,10 @@ const threeUi = document.getElementById('three-ui');
   const instructionsPanel = document.getElementById('instructions-panel');
   const guideWindow = document.getElementById('guide-window');
   const rotationPanel = document.getElementById('rotation-panel');
+  const rotationPanelTitle = document.getElementById('rotation-panel-title');
+  const rotationLabelX = document.getElementById('rotation-label-x');
+  const rotationLabelY = document.getElementById('rotation-label-y');
+  const rotationLabelZ = document.getElementById('rotation-label-z');
   const rotationInputX = document.getElementById('rotation-input-x');
   const rotationInputY = document.getElementById('rotation-input-y');
   const rotationInputZ = document.getElementById('rotation-input-z');
@@ -212,13 +216,110 @@ const threeUi = document.getElementById('three-ui');
   const railConstructionCards = Array.from(document.querySelectorAll('[data-rail-construction-category]'));
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
+  let uiHiddenByHotkey = false;
+  let panelClampQueued = false;
+
+  function clampPanelToViewport(panel, margin = 12) {
+    if (!panel) { return; }
+    const style = window.getComputedStyle(panel);
+    if (style.display === 'none' || style.visibility === 'hidden') { return; }
+    if (style.position !== 'fixed') { return; }
+
+    const maxHeight = Math.max(140, window.innerHeight - (margin * 2));
+    panel.style.maxHeight = `${maxHeight}px`;
+    panel.style.overflowY = 'auto';
+
+    const rect = panel.getBoundingClientRect();
+    let nextTop = rect.top;
+    const overflowBottom = rect.bottom - (window.innerHeight - margin);
+    if (overflowBottom > 0) {
+      nextTop -= overflowBottom;
+    }
+    if (nextTop < margin) {
+      nextTop = margin;
+    }
+    panel.style.top = `${Math.round(nextTop)}px`;
+    if (panel.style.bottom && panel.style.bottom !== 'auto') {
+      panel.style.bottom = 'auto';
+    }
+  }
+
+  function clampUiPanelsToViewport() {
+    [
+      instructionsPanel,
+      rotationPanel,
+      differencePanel,
+      constructionCategoryPanel,
+      railConstructionPanel,
+      guideWindow,
+    ].forEach((panel) => clampPanelToViewport(panel));
+  }
+
+  function scheduleClampUiPanels() {
+    if (panelClampQueued) { return; }
+    panelClampQueued = true;
+    requestAnimationFrame(() => {
+      panelClampQueued = false;
+      clampUiPanelsToViewport();
+    });
+  }
+
+  window.addEventListener('resize', scheduleClampUiPanels);
+
+  function setUiVisibleByHotkey(visible) {
+    const uiGroup = document.getElementById('UiGroup');
+    if (uiGroup) {
+      if (visible) {
+        uiGroup.style.border = uiGroup.dataset.prevBorderByHotkey ?? '';
+        uiGroup.style.borderRadius = uiGroup.dataset.prevBorderRadiusByHotkey ?? '';
+        uiGroup.style.background = uiGroup.dataset.prevBackgroundByHotkey ?? '';
+        uiGroup.style.backdropFilter = uiGroup.dataset.prevBackdropFilterByHotkey ?? '';
+      } else {
+        if (uiGroup.dataset.prevBorderByHotkey == null) {
+          uiGroup.dataset.prevBorderByHotkey = uiGroup.style.border || '';
+          uiGroup.dataset.prevBorderRadiusByHotkey = uiGroup.style.borderRadius || '';
+          uiGroup.dataset.prevBackgroundByHotkey = uiGroup.style.background || '';
+          uiGroup.dataset.prevBackdropFilterByHotkey = uiGroup.style.backdropFilter || '';
+        }
+        uiGroup.style.border = 'none';
+        uiGroup.style.borderRadius = '0';
+        uiGroup.style.background = 'transparent';
+        uiGroup.style.backdropFilter = 'none';
+      }
+    }
+
+    const targets = Array.from(document.querySelectorAll(
+      '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller, #log, #toggle-daynight, #UiGroup > button, #frontViewButtons > button, #save-buttons > button, #show-instructions-btn'
+    ));
+    targets.forEach((el) => {
+      if (!el) { return; }
+      if (visible) {
+        const prev = el.dataset.prevDisplayByHotkey;
+        el.style.display = prev != null ? prev : '';
+      } else {
+        if (el.dataset.prevDisplayByHotkey == null) {
+          el.dataset.prevDisplayByHotkey = el.style.display || '';
+        }
+        el.style.display = 'none';
+      }
+    });
+  }
 
   let differenceSpaceModeActive = false;
   let differenceShapeType = differenceShapeSelect?.value || 'tube';
   let differencePathType = differencePathSelect?.value || 'smooth';
   let differenceSpaceTransformMode = 'none';
-  let selectedConstructionProfile = 'round';
-  let selectedRailConstructionCategory = 'bridge';
+  let movePointPanelActive = false;
+  let selectedConstructionProfile = null;
+  let selectedRailConstructionCategory = null;
+  const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
+
+  function blockManualDioramaSpaceMode() {
+    // Difference は手動ジオラマ空間の有効/無効に依存させない。
+    // 既存呼び出し箇所との互換のため関数は残し、常にブロックしない。
+    void manualDioramaSpaceEnabled;
+    return false;
+  }
 
   function setConstructionCategoryPanelVisible(visible) {
     if (!constructionCategoryPanel) { return; }
@@ -226,17 +327,21 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setConstructionCategory(profile) {
-    const next = (profile === 'h_beam' || profile === 'tubular') ? profile : 'round';
+    const next = (profile === 'round' || profile === 'h_beam' || profile === 'tubular') ? profile : null;
     selectedConstructionProfile = next;
     constructionCategoryCards.forEach((card) => {
       const isSelected = card.dataset.constructionProfile === next;
       card.classList.toggle('is-selected', isSelected);
       card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
-    steelFrameMode.setSegmentProfile(next);
-    const label = next === 'h_beam' ? 'H形鋼' : (next === 'tubular' ? 'ライト管' : '丸鋼');
+    if (next) {
+      steelFrameMode.setSegmentProfile(next);
+    }
+    const label = next === 'h_beam' ? 'H形鋼' : (next === 'tubular' ? 'ライト管' : (next === 'round' ? '丸鋼' : ''));
     if (constructionCategoryStatus) {
-      constructionCategoryStatus.textContent = `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`;
+      constructionCategoryStatus.textContent = next
+        ? `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`
+        : '選択中: 未選択。カテゴリを選んで「選択カテゴリで生成」。';
     }
   }
 
@@ -246,8 +351,8 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setRailConstructionCategory(category) {
-    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'rib_bridge', 'tunnel_rect'];
-    const next = allow.includes(category) ? category : 'bridge';
+    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect'];
+    const next = allow.includes(category) ? category : null;
     selectedRailConstructionCategory = next;
     railConstructionCards.forEach((card) => {
       const isSelected = card.dataset.railConstructionCategory === next;
@@ -255,7 +360,9 @@ const threeUi = document.getElementById('three-ui');
       card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
     if (railConstructionStatus) {
-      railConstructionStatus.textContent = `選択中: ${next}。ピンを選択して「選択カテゴリで生成」。`;
+      railConstructionStatus.textContent = next
+        ? `選択中: ${next}。ピンを選択して「選択カテゴリで生成」。`
+        : '選択中: 未選択。カテゴリを選んで「選択カテゴリで生成」。';
     }
   }
 
@@ -268,14 +375,110 @@ const threeUi = document.getElementById('three-ui');
     }));
   }
 
+  function getBridgeSourcePins() {
+    if (Array.isArray(constructionSelectedPins) && constructionSelectedPins.length > 0) {
+      return constructionSelectedPins;
+    }
+    if (Array.isArray(structurePinnedPins) && structurePinnedPins.length > 0) {
+      return structurePinnedPins;
+    }
+    return [];
+  }
+
+  function getBridgeDirectionFromSelectedTrackCurves() {
+    const trackCurves = getSelectedTrackCurvesForConstruction();
+    if (!Array.isArray(trackCurves) || trackCurves.length < 2) {
+      return null;
+    }
+    const dirs = [];
+    const sampleT = 0.02;
+    trackCurves.forEach((entry) => {
+      const curve = entry?.curve;
+      if (!curve || typeof curve.getPointAt !== 'function') { return; }
+      const p0 = curve.getPointAt(0).clone();
+      const p1 = curve.getPointAt(sampleT).clone();
+      const dir = p1.sub(p0).setY(0);
+      if (dir.lengthSq() <= 1e-8) { return; }
+      dir.normalize();
+      dirs.push(dir);
+    });
+    if (dirs.length < 2) { return null; }
+    const ref = dirs[0].clone();
+    const merged = new THREE.Vector3();
+    dirs.forEach((dir) => {
+      if (ref.dot(dir) < 0) {
+        merged.add(dir.clone().multiplyScalar(-1));
+      } else {
+        merged.add(dir);
+      }
+    });
+    if (merged.lengthSq() <= 1e-8) { return null; }
+    return merged.normalize();
+  }
+
+  function getBridgePlacementFromSelectedPins() {
+    const sourcePins = getBridgeSourcePins();
+    if (sourcePins.length < 1) {
+      return null;
+    }
+    const points = sourcePins.map((pin) => pin.position.clone());
+    const center = points.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / points.length);
+
+    // 2路線以上のピン選択時は、路線カーブの接線方向平均で橋の向きを決める。
+    // それ以外は従来どおり最も離れた2点方向を使用する。
+    let dir = getBridgeDirectionFromSelectedTrackCurves();
+    if (!dir) {
+      let start = points[0];
+      let end = points[0];
+      let bestDistSq = -1;
+      for (let i = 0; i < points.length; i += 1) {
+        for (let j = i + 1; j < points.length; j += 1) {
+          const d = points[i].distanceToSquared(points[j]);
+          if (d > bestDistSq) {
+            bestDistSq = d;
+            start = points[i];
+            end = points[j];
+          }
+        }
+      }
+      dir = end.clone().sub(start).setY(0);
+    }
+
+    const BRIDGE_YAW_OFFSET = Math.PI / 2;
+    let rotationY = 1.750662913747207; // fallback
+    if (dir.lengthSq() > 1e-8) {
+      rotationY = Math.atan2(dir.x, dir.z) + BRIDGE_YAW_OFFSET;
+    }
+    // アーチ形状のローカル原点が高めにあるため、線路高さに合わせて下方向へ補正。
+    center.y -= 24.8;
+    return { position: center, rotationY };
+  }
+
+  function alignObjectXZCenterToWorldTarget(object3d, targetPosition) {
+    if (!object3d || !targetPosition) { return; }
+    object3d.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(object3d);
+    if (box.isEmpty()) { return; }
+    const center = box.getCenter(new THREE.Vector3());
+    object3d.position.x += (targetPosition.x - center.x);
+    object3d.position.z += (targetPosition.z - center.z);
+    object3d.updateMatrixWorld(true);
+  }
+
   function runRailConstructionByCategory(category) {
-    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'rib_bridge', 'tunnel_rect'].includes(category)
+    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect'].includes(category)
       ? category
       : 'bridge';
-    const minPins = kind === 'pillar' ? 1 : 2;
-    if (constructionSelectedPins.length < minPins) {
-      const msg = kind === 'pillar'
+    const bridgeSourcePins = getBridgeSourcePins();
+    const minPins = kind === 'bridge' ? 1 : (kind === 'pillar' ? 1 : 2);
+    const activePinCount = kind === 'bridge' ? bridgeSourcePins.length : constructionSelectedPins.length;
+    if (activePinCount < minPins) {
+      const msg = kind === 'bridge'
+        ? 'bridge は最低1つのピン選択が必要です。'
+        : kind === 'pillar'
         ? 'pillar は最低1つのピン選択が必要です。'
+        : kind === 'catenary_pole'
+        ? 'catenary_pole は最低2つのピン選択が必要です。'
         : `${kind} は最低2つのピン選択が必要です。`;
       console.warn(msg);
       if (railConstructionStatus) {
@@ -284,7 +487,24 @@ const threeUi = document.getElementById('three-ui');
       return false;
     }
     const pins = getConstructionPinsPayload();
-    if (kind === 'pillar') {
+    if (kind === 'bridge') {
+      const placement = getBridgePlacementFromSelectedPins();
+      if (!placement) {
+        if (railConstructionStatus) {
+          railConstructionStatus.textContent = 'bridge 生成に必要なピンがありません。';
+        }
+        return false;
+      }
+      const bridgeObj = TSys.createDefaultArchBridge({
+        position: placement.position,
+        rotationY: placement.rotationY,
+        addToScene: true,
+        castShadow: true,
+        receiveShadow: true,
+      });
+      // 橋モデルのローカル原点が端寄りのため、生成後に実形状中心をピン中心へ合わせる。
+      alignObjectXZCenterToWorldTarget(bridgeObj, placement.position);
+    } else if (kind === 'pillar') {
       logPillarSideJudgement();
       TSys.buildStructureFromPins('pillar', pins, railTrackCurveMap, {
         baseInterval: 8,
@@ -294,6 +514,16 @@ const threeUi = document.getElementById('three-ui');
         maxOffset: 3,
         baseOffset: 0,
         offsetStep: 0.2,
+      });
+    } else if (kind === 'catenary_pole') {
+      TSys.buildStructureFromPins('catenary_pole', pins, railTrackCurveMap, {
+        interval: 14,
+        leftHeight: 3.2,
+        rightHeight: 3.2,
+        beamLength: 2.6,
+        beamHeight: 3.2,
+        yOffset: 0,
+        yawOffset: 0,
       });
     } else if (kind === 'rib_bridge') {
       const edges = getEdgeTrackNamesForConstruction(0.5);
@@ -364,7 +594,185 @@ const threeUi = document.getElementById('three-ui');
     });
   }
 
+  function setRotationPanelMode(mode = 'rotation') {
+    const isMovePoint = mode === 'move_point';
+    if (rotationPanelTitle) {
+      rotationPanelTitle.textContent = isMovePoint ? 'Move Point' : 'Rotation';
+    }
+    if (rotationLabelX) {
+      rotationLabelX.childNodes[0].nodeValue = isMovePoint ? 'X ' : 'X (deg)';
+    }
+    if (rotationLabelY) {
+      rotationLabelY.childNodes[0].nodeValue = isMovePoint ? 'Y ' : 'Y (deg)';
+    }
+    if (rotationLabelZ) {
+      rotationLabelZ.childNodes[0].nodeValue = isMovePoint ? 'Z ' : 'Z (deg)';
+    }
+    if (rotationApplyBtn) {
+      rotationApplyBtn.textContent = isMovePoint ? '座標適用' : '適用';
+    }
+  }
+
+  function setRotationPanelVisible(visible) {
+    if (!rotationPanel) { return; }
+    rotationPanel.style.display = visible ? 'block' : 'none';
+    if (visible) {
+      scheduleClampUiPanels();
+    }
+  }
+
+  function getMovePointPanelTargets() {
+    if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'MOVE_EXISTING') {
+      return [];
+    }
+    const selected = steelFrameMode?.getSelectedPointMeshes?.() || [];
+    if (selected.length > 0) {
+      return selected.filter((mesh) => Boolean(mesh?.userData?.steelFramePoint));
+    }
+    if (choice_object?.userData?.steelFramePoint) {
+      return [choice_object];
+    }
+    return [];
+  }
+
+  function parseMovePointAxisInput(raw) {
+    const text = String(raw ?? '').trim();
+    if (!text) { return null; }
+    const delta = text.match(/^\+=\s*([+-]?(?:\d+\.?\d*|\.\d+))$/);
+    if (delta) {
+      return { mode: 'delta', value: parseFloat(delta[1]) };
+    }
+    const absolute = text.match(/^[+-]?(?:\d+\.?\d*|\.\d+)$/);
+    if (absolute) {
+      return { mode: 'absolute', value: parseFloat(text) };
+    }
+    return { mode: 'invalid', raw: text };
+  }
+
+  function getAxisDisplayForTargets(targets, axis) {
+    if (!Array.isArray(targets) || targets.length === 0) { return '-'; }
+    if (targets.length === 1) {
+      return Number(targets[0].position[axis]).toFixed(3);
+    }
+    return 'each';
+  }
+
+  function updateMovePointPanelUI({ clearInputs = false } = {}) {
+    if (!movePointPanelActive) { return; }
+    setRotationPanelMode('move_point');
+    setRotationPanelVisible(true);
+    const targets = getMovePointPanelTargets();
+
+    const xDisplay = getAxisDisplayForTargets(targets, 'x');
+    const yDisplay = getAxisDisplayForTargets(targets, 'y');
+    const zDisplay = getAxisDisplayForTargets(targets, 'z');
+    if (rotationInputX) {
+      if (clearInputs) { rotationInputX.value = ''; }
+      rotationInputX.placeholder = xDisplay;
+    }
+    if (rotationInputY) {
+      if (clearInputs) { rotationInputY.value = ''; }
+      rotationInputY.placeholder = yDisplay;
+    }
+    if (rotationInputZ) {
+      if (clearInputs) { rotationInputZ.value = ''; }
+      rotationInputZ.placeholder = zDisplay;
+    }
+
+    if (rotationSelectionInfo) {
+      if (targets.length === 0) {
+        rotationSelectionInfo.textContent = '選択点: なし\n点をクリックで選択してください。';
+      } else if (targets.length === 1) {
+        const p = targets[0].position;
+        rotationSelectionInfo.textContent = [
+          '選択点: 1',
+          `id: ${targets[0].id}`,
+          `x: ${p.x.toFixed(3)}`,
+          `y: ${p.y.toFixed(3)}`,
+          `z: ${p.z.toFixed(3)}`,
+          '入力: 数値=絶対座標 / +=数値=相対移動',
+        ].join('\n');
+      } else {
+        rotationSelectionInfo.textContent = [
+          `選択点: ${targets.length}`,
+          `x: ${xDisplay}`,
+          `y: ${yDisplay}`,
+          `z: ${zDisplay}`,
+          'グループ入力:',
+          '数値 -> その軸を全点に一律適用',
+          '+=数値 -> 各点の現在値から加算',
+        ].join('\n');
+      }
+    }
+  }
+
+  function applyMovePointFromPanel() {
+    const targets = getMovePointPanelTargets();
+    if (targets.length === 0) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '選択点がありません。点をクリックで選択してください。';
+      }
+      return;
+    }
+
+    const inputX = parseMovePointAxisInput(rotationInputX?.value ?? '');
+    const inputY = parseMovePointAxisInput(rotationInputY?.value ?? '');
+    const inputZ = parseMovePointAxisInput(rotationInputZ?.value ?? '');
+    const inputs = { x: inputX, y: inputY, z: inputZ };
+    const invalidAxis = Object.entries(inputs).find(([, parsed]) => parsed?.mode === 'invalid');
+    if (invalidAxis) {
+      const axis = invalidAxis[0].toUpperCase();
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = `${axis} の入力が不正です。数値 または +=数値 で入力してください。`;
+      }
+      return;
+    }
+
+    if (!inputX && !inputY && !inputZ) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '入力が空です。数値 または +=数値 を入力してください。';
+      }
+      return;
+    }
+
+    const beforeItems = targets.map((mesh) => ({ mesh, before: mesh.position.clone(), after: null }));
+    targets.forEach((mesh) => {
+      ['x', 'y', 'z'].forEach((axis) => {
+        const parsed = inputs[axis];
+        if (!parsed) { return; }
+        if (parsed.mode === 'delta') {
+          mesh.position[axis] += parsed.value;
+        } else if (parsed.mode === 'absolute') {
+          mesh.position[axis] = parsed.value;
+        }
+      });
+      syncGuideCurveFromPointMesh(mesh);
+    });
+
+    const movedItems = beforeItems
+      .map((item) => ({ ...item, after: item.mesh.position.clone() }))
+      .filter((item) => vecMoved(item.before, item.after));
+    if (movedItems.length > 0) {
+      pushCreateHistory({
+        type: 'move_meshes',
+        items: movedItems,
+        includesGridHandle: movedItems.some((item) => item.mesh === addPointGridHandle),
+      });
+    }
+
+    drawingObject();
+    updateMovePointPanelUI({ clearInputs: true });
+  }
+
   function applyRotationFromPanel() {
+    if (movePointPanelActive
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'MOVE_EXISTING'
+      && !pointRotateModeActive
+      && movePlaneMode !== 'change_angle') {
+      applyMovePointFromPanel();
+      return;
+    }
     if (pointRotateModeActive && pointRotateTarget) {
       const degToRad = Math.PI / 180;
       const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
@@ -514,6 +922,7 @@ const threeUi = document.getElementById('three-ui');
   let guidePlacementActive = false;
   let guideRailHover = null;
   let guideHoverPin = null;
+  const GUIDE_TUBE_RADIUS = 0.225;
 
   function buildGuideCurve(template, basePoint, basisQuat = null) {
     const buildLinearClosedCurve = (points) => {
@@ -583,7 +992,7 @@ const threeUi = document.getElementById('three-ui');
   const guideRailPickMeshes = [];
 
   function createGuideRailPickMesh(curve) {
-    const tube = new THREE.TubeGeometry(curve, 60, 0.45, 10, curve?.closed === true);
+    const tube = new THREE.TubeGeometry(curve, 60, GUIDE_TUBE_RADIUS, 10, curve?.closed === true);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x6d86ff,
       transparent: true,
@@ -621,7 +1030,7 @@ const threeUi = document.getElementById('three-ui');
 
     const pick = curve.userData.guidePickMesh;
     if (pick) {
-      const newGeom = new THREE.TubeGeometry(curve, 60, 0.45, 10, curve?.closed === true);
+      const newGeom = new THREE.TubeGeometry(curve, 60, GUIDE_TUBE_RADIUS, 10, curve?.closed === true);
       if (pick.geometry) pick.geometry.dispose();
       pick.geometry = newGeom;
     }
@@ -796,11 +1205,18 @@ renderer.toneMappingExposure = 1;
 // 駅(ホームドア)を生成
 const train_width = 6.8
 const car_Spacing = 0.15
+const SHOW_MAP_GLB = false;
+const SHOW_TRAINS = false;
+const SHOW_ELEVATORS = false;
+const ONLY_RAIL_AND_GROUND = true;
 
 console.log('WorldCreat')
 
 import { WorldCreat } from './world_creat.js';
-let LoadModels = await WorldCreat(scene, train_width, car_Spacing);
+let LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
+  showMapGlb: SHOW_MAP_GLB,
+  onlyRailAndGround: ONLY_RAIL_AND_GROUND,
+});
 let geo = LoadModels[0]
 
 console.log('cars : ',LoadModels)
@@ -813,7 +1229,7 @@ const dirLight = scene.getObjectByName('dirLight');
 
 import { TrainSystem } from './train_system.js';
 import { createSteelFrameMode } from './steel_frame_mode.js';
-import { initTrackSetup } from './track_setup.js';
+import { initTrackSetup, ENABLE_MANUAL_DIORAMA_SPACE, USE_SAVED_DATA_ONLY } from './track_setup.js';
 import { applyFixedPlacements } from './fixed_placements.js';
 const TSys = new TrainSystem(scene,dirLight);
 
@@ -1158,41 +1574,62 @@ const bodyBack = new THREE.MeshStandardMaterial({
   side: THREE.FrontSide,
 });
 
-const elevatorA1 = TSys.createElevator(-2.7, 6.62, 36, 1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
-scene.add(elevatorA1);
-const elevatorA2 = TSys.createElevator(-2.7, 9.9, 37.2, 1, -1, glass_material, metal_material, bodyFront, bodyBack);
-scene.add(elevatorA2);
+let ElevatorDoorGroup_A1 = null;
+let ElevatorDoorGroup_A2 = null;
+let ElevatorDoorGroup_C1 = null;
+let ElevatorDoorGroup_C2 = null;
+let ElevatorDoorGroup_B1 = null;
+let ElevatorDoorGroup_B2 = null;
+let ElevatorDoorGroup_D1 = null;
+let ElevatorDoorGroup_D2 = null;
+let ElevatorBodyGroup = null;
+let ElevatorDoorGroup_Ab1 = null;
+let ElevatorDoorGroup_Ab2 = null;
+let ElevatorDoorGroup_Cb1 = null;
+let ElevatorDoorGroup_Cb2 = null;
+let ElevatorDoorGroup_Bb1 = null;
+let ElevatorDoorGroup_Bb2 = null;
+let ElevatorDoorGroup_Db1 = null;
+let ElevatorDoorGroup_Db2 = null;
+let ElevatorBodyGroup_B = null;
 
-const ElevatorDoorGroup_A1 = elevatorA1.children[1].children[0]
-const ElevatorDoorGroup_A2 = elevatorA1.children[1].children[1]
-const ElevatorDoorGroup_C1 = elevatorA1.children[2].children[0]
-const ElevatorDoorGroup_C2 = elevatorA1.children[2].children[1]
-const ElevatorDoorGroup_B1 = elevatorA2.children[1].children[0]
-const ElevatorDoorGroup_B2 = elevatorA2.children[1].children[1]
-const ElevatorDoorGroup_D1 = elevatorA2.children[2].children[0]
-const ElevatorDoorGroup_D2 = elevatorA2.children[2].children[1]
-ElevatorDoorGroup_D1.position.y = -3.28
-ElevatorDoorGroup_D2.position.y = -3.28
-const ElevatorBodyGroup = elevatorA1.children[3]
+if (SHOW_ELEVATORS) {
+  const elevatorA1 = TSys.createElevator(-2.7, 6.62, 36, 1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
+  scene.add(elevatorA1);
+  const elevatorA2 = TSys.createElevator(-2.7, 9.9, 37.2, 1, -1, glass_material, metal_material, bodyFront, bodyBack);
+  scene.add(elevatorA2);
 
-const elevatorB1 = TSys.createElevator(2.7, 6.62, 36, -1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
-scene.add(elevatorB1);
-const elevatorB2 = TSys.createElevator(2.7, 9.9, 37.2, -1, -1 ,glass_material, metal_material, bodyFront, bodyBack,);
-scene.add(elevatorB2);
+  ElevatorDoorGroup_A1 = elevatorA1.children[1].children[0]
+  ElevatorDoorGroup_A2 = elevatorA1.children[1].children[1]
+  ElevatorDoorGroup_C1 = elevatorA1.children[2].children[0]
+  ElevatorDoorGroup_C2 = elevatorA1.children[2].children[1]
+  ElevatorDoorGroup_B1 = elevatorA2.children[1].children[0]
+  ElevatorDoorGroup_B2 = elevatorA2.children[1].children[1]
+  ElevatorDoorGroup_D1 = elevatorA2.children[2].children[0]
+  ElevatorDoorGroup_D2 = elevatorA2.children[2].children[1]
+  ElevatorDoorGroup_D1.position.y = -3.28
+  ElevatorDoorGroup_D2.position.y = -3.28
+  ElevatorBodyGroup = elevatorA1.children[3]
 
-const ElevatorDoorGroup_Ab1 = elevatorB1.children[1].children[0]
-const ElevatorDoorGroup_Ab2 = elevatorB1.children[1].children[1]
-const ElevatorDoorGroup_Cb1 = elevatorB1.children[2].children[0]
-const ElevatorDoorGroup_Cb2 = elevatorB1.children[2].children[1]
-const ElevatorDoorGroup_Bb1 = elevatorB2.children[1].children[0]
-const ElevatorDoorGroup_Bb2 = elevatorB2.children[1].children[1]
-const ElevatorDoorGroup_Db1 = elevatorB2.children[2].children[0]
-const ElevatorDoorGroup_Db2 = elevatorB2.children[2].children[1]
-const ElevatorBodyGroup_B = elevatorB1.children[3]
+  const elevatorB1 = TSys.createElevator(2.7, 6.62, 36, -1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
+  scene.add(elevatorB1);
+  const elevatorB2 = TSys.createElevator(2.7, 9.9, 37.2, -1, -1 ,glass_material, metal_material, bodyFront, bodyBack,);
+  scene.add(elevatorB2);
 
-ElevatorDoorGroup_Cb1.position.y = +3.28
-ElevatorDoorGroup_Cb2.position.y = +3.28
-ElevatorBodyGroup_B.position.y = +3.28
+  ElevatorDoorGroup_Ab1 = elevatorB1.children[1].children[0]
+  ElevatorDoorGroup_Ab2 = elevatorB1.children[1].children[1]
+  ElevatorDoorGroup_Cb1 = elevatorB1.children[2].children[0]
+  ElevatorDoorGroup_Cb2 = elevatorB1.children[2].children[1]
+  ElevatorDoorGroup_Bb1 = elevatorB2.children[1].children[0]
+  ElevatorDoorGroup_Bb2 = elevatorB2.children[1].children[1]
+  ElevatorDoorGroup_Db1 = elevatorB2.children[2].children[0]
+  ElevatorDoorGroup_Db2 = elevatorB2.children[2].children[1]
+  ElevatorBodyGroup_B = elevatorB1.children[3]
+
+  ElevatorDoorGroup_Cb1.position.y = +3.28
+  ElevatorDoorGroup_Cb2.position.y = +3.28
+  ElevatorBodyGroup_B.position.y = +3.28
+}
 
 // グループ全体を移動
 // 一定時間待つ関数
@@ -1287,6 +1724,7 @@ function getSleepTime(i, range_num, steps) {
 
 // 無限ループで繰り返し（止めたいなら条件を追加）
 async function startLoop() {
+  if (!SHOW_ELEVATORS) { return; }
   while (true) {
     elevator_door_open(
       ElevatorDoorGroup_A1,
@@ -1468,6 +1906,12 @@ function TrainSettings(
   textureMiddle = {},
   textureTail = {}
 ) {
+  if (!SHOW_TRAINS) {
+    const emptyTrainGroup = new THREE.Group();
+    emptyTrainGroup.userData.cars = [];
+    emptyTrainGroup.visible = false;
+    return emptyTrainGroup;
+  }
   // const geo = new THREE.BoxGeometry(1, 1, length);
   // const geo = scene.getObjectById('train')//new THREE.BoxGeometry(1, 1, length);
   // console.log(geo)
@@ -1613,6 +2057,12 @@ function Sin_TrainSettings(
   textureMiddle = {},
   textureTail = {}
 ) {
+  if (!SHOW_TRAINS) {
+    const emptyTrainGroup = new THREE.Group();
+    emptyTrainGroup.userData.cars = [];
+    emptyTrainGroup.visible = false;
+    return emptyTrainGroup;
+  }
   // const geo = new THREE.BoxGeometry(1, 1, length);
   // const geo = scene.getObjectById('train')//new THREE.BoxGeometry(1, 1, length);
   // console.log(geo)
@@ -3013,12 +3463,12 @@ const cube_material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const steelFrameMode = createSteelFrameMode(scene, cube_geometry, cube_material);
 constructionCategoryCards.forEach((card) => {
   card.addEventListener('click', () => {
-    setConstructionCategory(card.dataset.constructionProfile || 'round');
+    setConstructionCategory(card.dataset.constructionProfile);
   });
 });
 railConstructionCards.forEach((card) => {
   card.addEventListener('click', () => {
-    setRailConstructionCategory(card.dataset.railConstructionCategory || 'bridge');
+    setRailConstructionCategory(card.dataset.railConstructionCategory);
   });
 });
 if (constructionGenerateButton) {
@@ -3029,7 +3479,12 @@ if (constructionGenerateButton) {
       }
       return;
     }
-    setConstructionCategory(selectedConstructionProfile);
+    if (!selectedConstructionProfile) {
+      if (constructionCategoryStatus) {
+        constructionCategoryStatus.textContent = 'カテゴリを選択してください。';
+      }
+      return;
+    }
     const record = steelFrameMode.generateSteelFrame();
     if (!record) {
       if (constructionCategoryStatus) {
@@ -3044,50 +3499,70 @@ if (constructionGenerateButton) {
 }
 if (railConstructionGenerateButton) {
   railConstructionGenerateButton.addEventListener('click', () => {
+    if (!selectedRailConstructionCategory) {
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = 'カテゴリを選択してください。';
+      }
+      return;
+    }
     runRailConstructionByCategory(selectedRailConstructionCategory);
   });
 }
-setConstructionCategory(selectedConstructionProfile);
-setRailConstructionCategory(selectedRailConstructionCategory);
+setConstructionCategory(null);
+setRailConstructionCategory(null);
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
 
-const {
-  door_interval,
-  track1_doors,
-  track2_doors,
-  track3_doors,
-  track4_doors,
-} = applyFixedPlacements({
-  TSys,
-  line_1,
-  line_2,
-  line_3,
-  line_4,
-  Points_0,
-  Points_1,
-  Points_2,
-  Points_3,
-  JK_upbound,
-  JY_upbound,
-  JY_downbound,
-  JK_downbound,
-  J_UJT_upbound,
-  J_UJT_downbound,
-  sinkansen_upbound,
-  sinkansen_downbound,
-  marunouchi,
-  train_width,
-  car_Spacing,
-  y,
-  LoadModels,
-  scene,
-  findCurveRange,
-  targetObjects,
-  resetMeshListOpacity,
-  setMeshListOpacity,
-});
+let door_interval = train_width + car_Spacing;
+let track1_doors = new THREE.Group();
+let track2_doors = new THREE.Group();
+let track3_doors = new THREE.Group();
+let track4_doors = new THREE.Group();
+
+if (!USE_SAVED_DATA_ONLY) {
+  ({
+    door_interval,
+    track1_doors,
+    track2_doors,
+    track3_doors,
+    track4_doors,
+  } = applyFixedPlacements({
+    TSys,
+    line_1,
+    line_2,
+    line_3,
+    line_4,
+    Points_0,
+    Points_1,
+    Points_2,
+    Points_3,
+    JK_upbound,
+    JY_upbound,
+    JY_downbound,
+    JK_downbound,
+    J_UJT_upbound,
+    J_UJT_downbound,
+    sinkansen_upbound,
+    sinkansen_downbound,
+    marunouchi,
+    train_width,
+    car_Spacing,
+    y,
+    LoadModels,
+    scene,
+    findCurveRange,
+    targetObjects,
+    resetMeshListOpacity,
+    setMeshListOpacity,
+  }));
+} else {
+  console.info('[main] USE_SAVED_DATA_ONLY=true: applyFixedPlacements をスキップ');
+  railTrackDefs.forEach((track) => {
+    if (!track?.curve) { return; }
+    TSys.createRail(track.curve);
+  });
+}
 // const board_length_1 = tunnel_1.getLength(line_4)/quantity;
 // const board_length_2 = tunnel_2.getLength(line_4)/quantity;
 // const points_1 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_1, board_length_1), 1);
@@ -3233,6 +3708,30 @@ const Train_c = TrainSettings(
   1,
 );
 
+const allTrains = [
+  exhibition_tyuou,
+  exhibition_soubu,
+  Train_1,
+  Train_2,
+  Train_3,
+  Train_4,
+  Train_5,
+  Train_6,
+  Train_7,
+  Train_8,
+  Train_9,
+  Train_a,
+  Train_b,
+  Train_c,
+];
+if (!SHOW_TRAINS) {
+  allTrains.forEach((train) => {
+    if (train) {
+      train.visible = false;
+    }
+  });
+}
+
 
 const reversedCurve_3 = new THREE.CatmullRomCurve3(
   line_3.getPoints(100).reverse()
@@ -3261,6 +3760,7 @@ let button = document.getElementById("toggle-crossover");
 let run_quattro = 0
 // クアトロ交差を実行する関数
 async function startQuadrupleCrossDemo() {
+  if (!SHOW_TRAINS) { return; }
   
   run_quattro += 1
   const run_number = run_quattro
@@ -3331,22 +3831,24 @@ async function startQuadrupleCrossDemo() {
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
-runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
-runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
-runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
+if (SHOW_TRAINS) {
+  runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
+  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
+  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
+  runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
 
-runTrain(Train_5, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_6, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_5, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_6, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-runTrain(Train_7, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_8, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_7, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_8, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-runTrain(Train_9, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_a, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_9, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_a, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-runTrain(Train_b, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-runTrain(Train_c, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_b, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+  runTrain(Train_c, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+}
 
 // runTrain(, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654}, true)
 
@@ -3792,7 +4294,7 @@ GuideGrid_Center_z.position.set(0,0,0);
 scene.add(GuideGrid_Center_z)
 
 GuideLine.visible = false
-GuideGrid.visible = true
+GuideGrid.visible = false
 AddPointGuideGrid.visible = false
 GuideGrid_Center_x.visible = false
 GuideGrid_Center_z.visible = false
@@ -3824,6 +4326,7 @@ let group_EditNow = 'None'
 let createModeWorldFocused = false
 const createModeHiddenObjects = new Map()
 let sinjyukuCity = null
+let baseMapRoot = null
 let differencePreviewTube = null
 const differenceSpacePlanes = []
 let differenceSelectedPlane = null
@@ -4339,6 +4842,23 @@ function setCreateModeWorldFocus(enable) {
       root.visible = false;
     });
 
+    if (!baseMapRoot) {
+      baseMapRoot = scene.getObjectByName('base_map');
+    }
+    if (baseMapRoot) {
+      if (!createModeHiddenObjects.has(baseMapRoot)) {
+        createModeHiddenObjects.set(baseMapRoot, baseMapRoot.visible);
+      }
+      baseMapRoot.visible = false;
+    }
+    Trains.forEach((trainGroup) => {
+      if (!trainGroup) { return; }
+      if (!createModeHiddenObjects.has(trainGroup)) {
+        createModeHiddenObjects.set(trainGroup, trainGroup.visible);
+      }
+      trainGroup.visible = false;
+    });
+
     suspendRunTrainAnimations = true;
     createModeWorldFocused = true;
     return;
@@ -4452,7 +4972,7 @@ function resetDifferenceControlPointsHighlight(mesh) {
   if (!mesh) { return; }
   mesh.children.forEach((child) => {
     if (!child?.userData?.differenceControlPoint || !child?.material?.color) { return; }
-    child.material.color.set(0xff6b6b);
+    setDifferenceControlPointVisual(child);
   });
   for (const point of Array.from(differenceSelectedControlPoints)) {
     if (!point || point.parent !== mesh) { continue; }
@@ -4464,14 +4984,23 @@ function isDifferenceControlPointSelected(point) {
   return differenceSelectedControlPoints.has(point);
 }
 
-function setDifferenceControlPointVisual(point, color = 0xff6b6b) {
+function isGroupedDifferenceControlPoint(point) {
+  const links = point?.userData?.sharedDifferencePoints;
+  return Array.isArray(links) && links.length > 0;
+}
+
+function getDifferenceControlPointBaseColor(point) {
+  return isGroupedDifferenceControlPoint(point) ? 0x3f7cff : 0xff6b6b;
+}
+
+function setDifferenceControlPointVisual(point, color = null) {
   if (!point?.material?.color) { return; }
-  point.material.color.set(color);
+  point.material.color.set(color ?? getDifferenceControlPointBaseColor(point));
 }
 
 function clearDifferenceControlPointSelection() {
   for (const point of Array.from(differenceSelectedControlPoints)) {
-    setDifferenceControlPointVisual(point, 0xff6b6b);
+    setDifferenceControlPointVisual(point, getDifferenceControlPointBaseColor(point));
   }
   differenceSelectedControlPoints.clear();
 }
@@ -4480,7 +5009,7 @@ function toggleDifferenceControlPointSelection(point) {
   if (!point?.userData?.differenceControlPoint) { return; }
   if (differenceSelectedControlPoints.has(point)) {
     differenceSelectedControlPoints.delete(point);
-    setDifferenceControlPointVisual(point, 0xff6b6b);
+    setDifferenceControlPointVisual(point, getDifferenceControlPointBaseColor(point));
     return;
   }
   differenceSelectedControlPoints.add(point);
@@ -4498,6 +5027,7 @@ function highlightDifferenceFaceControlPoints(mesh, localNormal) {
     if (!child?.userData?.differenceControlPoint || !child?.material?.color) { return; }
     const v = child.position[axis] || 0;
     if (isDifferenceControlPointSelected(child)) { return; }
+    if (isGroupedDifferenceControlPoint(child)) { return; }
     if ((sign > 0 && v > 0) || (sign < 0 && v < 0)) {
       child.material.color.set(0xffd64d);
     }
@@ -4944,6 +5474,13 @@ function addDifferenceSharedPointLink(a, b) {
     linksB.push(a);
   }
   b.userData.sharedDifferencePoints = linksB;
+
+  if (!isDifferenceControlPointSelected(a)) {
+    setDifferenceControlPointVisual(a);
+  }
+  if (!isDifferenceControlPointSelected(b)) {
+    setDifferenceControlPointVisual(b);
+  }
 }
 
 function findDifferenceControlPointByLocalPosition(mesh, localPos, eps = differenceSharedPointLinkEpsilon) {
@@ -6482,6 +7019,7 @@ async function handleMouseUp(mobile = false) {
     moveDragAnchorStart = null;
     GuideLine.visible = false;
     drawingObject();
+    updateMovePointPanelUI({ clearInputs: true });
     return;
   }
 
@@ -6502,6 +7040,7 @@ async function handleMouseUp(mobile = false) {
         console.log('add_group')
         const already = steelFrameMode.isSelectedPoint(choice_object);
         steelFrameMode.toggleSelectedPoint(choice_object);
+        updateMovePointPanelUI({ clearInputs: true });
         if (steelFrameMode?.getSelectedPointMeshes) {
           const group = steelFrameMode.getSelectedPointMeshes();
           const tag = already ? 'remove' : 'add';
@@ -6561,6 +7100,7 @@ async function handleMouseUp(mobile = false) {
       }
 
       drawingObject();
+      updateMovePointPanelUI({ clearInputs: true });
     }
 
     if (search_object === false){
@@ -8276,6 +8816,7 @@ function updateRotateDrag() {
 window.addEventListener('resize', onWindowResize, false);
 
 export function UIevent (uiID, toggle){
+  scheduleClampUiPanels();
   if ( uiID === 'see' ){ if ( toggle === 'active' ){
     console.log( 'see _active' )
     OperationMode = 0
@@ -8430,6 +8971,10 @@ export function UIevent (uiID, toggle){
   console.log( 'pillar _active' )
   setRailConstructionCategory('pillar');
   runRailConstructionByCategory('pillar');
+  }} else if ( uiID === 'catenary_pole' ){ if ( toggle === 'active' ){
+  console.log( 'catenary_pole _active' )
+  setRailConstructionCategory('catenary_pole');
+  runRailConstructionByCategory('catenary_pole');
   }} else if ( uiID === 'rib_bridge' ){ if ( toggle === 'active' ){
   console.log( 'rib_bridge _active' )
   setRailConstructionCategory('rib_bridge');
@@ -8486,6 +9031,7 @@ export function UIevent (uiID, toggle){
       differencePanel.style.display = 'none';
     }
     clearDifferencePreviewTube();
+    setCreateModeWorldFocus(false);
 
   }} else if ( uiID === 'view' ){ if ( toggle === 'active' ){
   console.log( 'view _active' )
@@ -8651,6 +9197,8 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'rotation' ){ if ( toggle === 'active' ){
   console.log( 'rotation _active' )
+    movePointPanelActive = false
+    setRotationPanelMode('rotation');
     angleSearchModeActive = false
     editObject = 'STEEL_FRAME'
     objectEditMode = ROTATE_MODE
@@ -8660,9 +9208,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     updateRotateGizmo()
-    if (rotationPanel) {
-      rotationPanel.style.display = 'block';
-    }
+    setRotationPanelVisible(true);
     search_point()
   } else {
   console.log( 'rotation _inactive' )
@@ -8671,15 +9217,15 @@ export function UIevent (uiID, toggle){
     if (rotateGizmoGroup) {
       rotateGizmoGroup.visible = false;
     }
-    if (rotationPanel) {
-      rotationPanel.style.display = 'none';
-    }
+    setRotationPanelVisible(false);
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
 
   }} else if ( uiID === 'search' ){ if ( toggle === 'active' ){
   console.log( 'search _active' )
+    movePointPanelActive = false
+    setRotationPanelMode('rotation');
     angleSearchModeActive = true
     searchSelectedGrid = null
     editObject = 'STEEL_FRAME'
@@ -8689,9 +9235,7 @@ export function UIevent (uiID, toggle){
     targetObjects = steelFrameMode.getAllPointMeshes()
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
-    if (rotationPanel) {
-      rotationPanel.style.display = 'block';
-    }
+    setRotationPanelVisible(true);
     updateSearchGridTiltVisuals();
     updateRotationSelectionInfo()
     search_point()
@@ -8705,9 +9249,7 @@ export function UIevent (uiID, toggle){
     if (rotationSelectionInfo) {
       rotationSelectionInfo.textContent = '選択点: 2点以上で情報を表示';
     }
-    if (rotationPanel) {
-      rotationPanel.style.display = 'none';
-    }
+    setRotationPanelVisible(false);
     if (editObject === 'STEEL_FRAME' && objectEditMode === SEARCH_MODE) {
       objectEditMode = 'Standby'
     }
@@ -8715,6 +9257,7 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
+    movePointPanelActive = true
     // search_object = false
     editObject = 'STEEL_FRAME'
     // steelFrameMode.clearSelection()
@@ -8726,9 +9269,13 @@ export function UIevent (uiID, toggle){
     steelFrameMode.setActive(true)
 
     search_object = true
+    updateMovePointPanelUI({ clearInputs: true });
 
   } else {
   console.log( 'move_point _inactive' )
+    movePointPanelActive = false
+    setRotationPanelMode('rotation');
+    setRotationPanelVisible(false);
     pointRotateModeActive = false
     search_object = false
     move_direction_y = false
@@ -8748,6 +9295,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     search_object = true
     search_point()
+    updateMovePointPanelUI({ clearInputs: true });
 
   } else {
   console.log( 'x_z_sf _inactive' )
@@ -8763,12 +9311,15 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     search_object = true
     search_point()
+    updateMovePointPanelUI({ clearInputs: true });
 
   } else {
   console.log( 'y_sf _inactive' )
     search_object = false
   }} else if ( uiID === 'rotation/2' ){ if ( toggle === 'active' ){
   console.log( 'rotation/2 _active' )
+    movePointPanelActive = false
+    setRotationPanelMode('rotation');
     pointRotateModeActive = true
     editObject = 'STEEL_FRAME'
     if (objectEditMode === 'Standby') {
@@ -8779,17 +9330,13 @@ export function UIevent (uiID, toggle){
     targetObjects = steelFrameMode.getAllPointMeshes()
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
-    if (rotationPanel) {
-      rotationPanel.style.display = 'block';
-    }
+    setRotationPanelVisible(true);
     updatePointRotateVisuals()
     search_point()
   } else {
   console.log( 'rotation/2 _inactive' )
     pointRotateModeActive = false
-    if (rotationPanel) {
-      rotationPanel.style.display = 'none';
-    }
+    setRotationPanelVisible(false);
     clearPointRotateState()
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING') {
       search_object = true
@@ -8797,6 +9344,8 @@ export function UIevent (uiID, toggle){
     }
   }} else if ( uiID === 'change_angle' ){ if ( toggle === 'active' ){
   console.log( 'change_angle _active' )
+    movePointPanelActive = false
+    setRotationPanelMode('rotation');
     movePlaneMode = 'change_angle'
     ensureMovePlaneGizmo();
     changeAngleGridTarget = guideAddGrids.length > 0
@@ -8818,9 +9367,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1);
     search_object = true;
     search_point();
-    if (rotationPanel) {
-      rotationPanel.style.display = 'block';
-    }
+    setRotationPanelVisible(true);
     movePlaneGrid.visible = false;
     movePlaneGridHelper.visible = false;
   } else {
@@ -8830,9 +9377,7 @@ export function UIevent (uiID, toggle){
     }
     changeAngleGridTarget = null;
     movePlaneRotateDragging = false;
-    if (rotationPanel) {
-      rotationPanel.style.display = 'none';
-    }
+    setRotationPanelVisible(false);
     movePlaneGrid.visible = false;
     movePlaneGridHelper.visible = false;
     if (movePlaneGizmoGroup) movePlaneGizmoGroup.visible = false;
@@ -8882,6 +9427,7 @@ export function UIevent (uiID, toggle){
   console.log( 'tubular _inactive' )
   }} else if ( uiID === 'Difference' ){ if ( toggle === 'active' ){
   console.log( 'Difference _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceTransformMode = 'none'
     if (differencePanel) {
       differencePanel.style.display = 'block';
@@ -8908,6 +9454,7 @@ export function UIevent (uiID, toggle){
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
   }} else if ( uiID === 'space' ){ if ( toggle === 'active' ){
   console.log( 'space _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'none'
     differenceShapeType = 'box'
@@ -8942,6 +9489,7 @@ export function UIevent (uiID, toggle){
     updateDifferenceStatus('spaceで平面を1枚以上配置してください。');
   }} else if ( uiID === 'add/2' || uiID === 'add_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'add'
     pointRotateModeActive = false
@@ -8968,6 +9516,7 @@ export function UIevent (uiID, toggle){
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
   }} else if ( uiID === 'move/2' || uiID === 'move_space' || uiID === 'rotation/3' || uiID === 'rotation_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'move'
     differenceShapeType = 'box'
@@ -8981,17 +9530,15 @@ export function UIevent (uiID, toggle){
     targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
     setMeshListOpacity(targetObjects, 1)
     differenceSpacePlanes.forEach((mesh) => setDifferencePlaneVisual(mesh, false));
-    if (rotationPanel) {
-      rotationPanel.style.display = 'block';
-    }
+    movePointPanelActive = false;
+    setRotationPanelMode('rotation');
+    setRotationPanelVisible(true);
     updateDifferenceStatus('面を選択してドラッグで形状を変更します。');
   } else {
   console.log( uiID + ' _inactive' )
     differenceSpaceTransformMode = 'none'
     pointRotateModeActive = false
-    if (rotationPanel) {
-      rotationPanel.style.display = 'none';
-    }
+    setRotationPanelVisible(false);
     clearPointRotateState()
     if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT') {
       objectEditMode = 'Standby';
@@ -9000,6 +9547,7 @@ export function UIevent (uiID, toggle){
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
   }} else if ( uiID === 'tube' || uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'tube'
     pointRotateModeActive = false
@@ -9027,6 +9575,7 @@ export function UIevent (uiID, toggle){
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
   }} else if ( uiID === 'excavation' ){ if ( toggle === 'active' ){
   console.log( 'excavation _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
     if (!runDifferenceOnSinjyukuFromSelectedPoints()) {
       console.warn('excavation failed.');
     }
@@ -9312,6 +9861,7 @@ document.addEventListener('mousemove', (e) => {
         } else {
           if (!steelFrameMode.isSelectedPoint(choice_object)) {
             steelFrameMode.toggleSelectedPoint(choice_object);
+            updateMovePointPanelUI({ clearInputs: true });
           }
           moveDragAnchorStart = choice_object.position.clone();
           moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
@@ -9396,6 +9946,7 @@ document.addEventListener('touchmove', (e) => {
       if (choice_object) {
         if (!steelFrameMode.isSelectedPoint(choice_object)) {
           steelFrameMode.toggleSelectedPoint(choice_object);
+          updateMovePointPanelUI({ clearInputs: true });
         }
         moveDragAnchorStart = choice_object.position.clone();
         moveDragStartPositions = steelFrameMode.getSelectedPointMeshes().map((mesh) => ({
@@ -9598,6 +10149,15 @@ document.addEventListener('keydown', (e) => {
     redoHistoryByContext();
   }
 });
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) { return; }
+  const activeTag = document.activeElement?.tagName?.toLowerCase?.() || '';
+  if (activeTag === 'input' || activeTag === 'textarea') { return; }
+  if (e.key !== '`' && e.code !== 'Backquote') { return; }
+  e.preventDefault();
+  uiHiddenByHotkey = !uiHiddenByHotkey;
+  setUiVisibleByHotkey(!uiHiddenByHotkey);
+});
 document.addEventListener('keyup', (e) => {
   if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
   keys[e.key.toLowerCase()] = false;
@@ -9605,12 +10165,12 @@ document.addEventListener('keyup', (e) => {
 
 // ========== カメラ制御変数 ========== //
 let cameraAngleY = 180 * Math.PI / 180;  // 水平回転
-let cameraAngleX = -10 * Math.PI / 180;  // 垂直回転
+let cameraAngleX = -30 * Math.PI / 180;  // 垂直回転
 let moveVectorX = 0
 let moveVectorZ = 0
 
 camera.position.y += 5
-camera.position.z = -20//-13
+camera.position.z = 20//-13
 // ========== ボタン UI ========== //
 // 状態フラグ
 let speedUp = false;
