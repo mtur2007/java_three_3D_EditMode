@@ -67,7 +67,7 @@ log_hidden.addEventListener("touchstart", () => {
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
-import { Brush, Evaluator, HOLLOW_SUBTRACTION } from 'three-bvh-csg';
+import { Brush, Evaluator, HOLLOW_SUBTRACTION, ADDITION } from 'three-bvh-csg';
 import { encode, decode } from 'https://cdn.jsdelivr.net/npm/@msgpack/msgpack@3.0.0/dist.esm/index.mjs';
 const scene = new THREE.Scene();
 
@@ -207,6 +207,8 @@ const threeUi = document.getElementById('three-ui');
   const differencePanel = document.getElementById('difference-panel');
   const differenceShapeSelect = document.getElementById('difference-shape');
   const differencePathSelect = document.getElementById('difference-path');
+  const differenceUnifyButton = document.getElementById('difference-unify-button');
+  let differenceViewToggleButton = document.getElementById('difference-view-toggle-button');
   const differenceStatus = document.getElementById('difference-status');
   const constructionCategoryPanel = document.getElementById('construction-category-panel');
   const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
@@ -567,6 +569,35 @@ const threeUi = document.getElementById('three-ui');
       refreshDifferencePreview();
     });
   }
+  if (differenceUnifyButton) {
+    differenceUnifyButton.addEventListener('click', () => {
+      runHighQualityDifferenceUnify();
+    });
+  }
+  if (!differenceViewToggleButton && differenceUnifyButton?.parentElement) {
+    differenceViewToggleButton = document.createElement('button');
+    differenceViewToggleButton.id = 'difference-view-toggle-button';
+    differenceViewToggleButton.type = 'button';
+    differenceViewToggleButton.style.marginTop = '6px';
+    differenceViewToggleButton.style.width = '100%';
+    differenceViewToggleButton.style.padding = '6px 8px';
+    differenceViewToggleButton.style.display = 'none';
+    differenceViewToggleButton.textContent = 'view[diff]';
+    differenceUnifyButton.insertAdjacentElement('afterend', differenceViewToggleButton);
+  }
+  if (differenceViewToggleButton) {
+    differenceViewToggleButton.addEventListener('click', () => {
+      differenceViewMode = differenceViewMode === 'preview' ? 'diff' : 'preview';
+      if (typeof applyDifferenceViewMode === 'function') {
+        applyDifferenceViewMode();
+      }
+      if (differenceStatus) {
+        differenceStatus.textContent = differenceViewMode === 'preview'
+          ? 'view[preview]: 黄を表示 / 橙を削除 / 赤を非表示'
+          : 'view[diff]: 黄・橙・赤の判定表示';
+      }
+    });
+  }
 
   if (showInstructionsBtn) {
     showInstructionsBtn.addEventListener('click', () => {
@@ -782,24 +813,22 @@ const threeUi = document.getElementById('three-ui');
       const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : state.x;
       const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : state.y;
       const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : state.z;
-      const dx = axDeg - state.x;
-      const dy = ayDeg - state.y;
-      const dz = azDeg - state.z;
-
-      if (Math.abs(dx) > 1e-6) {
-        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(pointRotateBasisQuat).normalize();
-        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, dx * degToRad);
-        pointRotateBasisQuat.copy(qx.multiply(pointRotateBasisQuat)).normalize();
+      const nextQuat = new THREE.Quaternion();
+      if (Math.abs(axDeg) > 1e-6) {
+        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
+        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, axDeg * degToRad);
+        nextQuat.copy(qx.multiply(nextQuat)).normalize();
       }
-      if (Math.abs(dy) > 1e-6) {
-        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dy * degToRad);
-        pointRotateBasisQuat.copy(qy.multiply(pointRotateBasisQuat)).normalize();
+      if (Math.abs(ayDeg) > 1e-6) {
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ayDeg * degToRad);
+        nextQuat.copy(qy.multiply(nextQuat)).normalize();
       }
-      if (Math.abs(dz) > 1e-6) {
-        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat).normalize();
-        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, dz * degToRad);
-        pointRotateBasisQuat.copy(qz.multiply(pointRotateBasisQuat)).normalize();
+      if (Math.abs(azDeg) > 1e-6) {
+        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
+        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, azDeg * degToRad);
+        nextQuat.copy(qz.multiply(nextQuat)).normalize();
       }
+      pointRotateBasisQuat.copy(nextQuat);
 
       pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
       pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
@@ -832,24 +861,22 @@ const threeUi = document.getElementById('three-ui');
       const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(state.x) || 0);
       const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(state.y) || 0);
       const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(state.z) || 0);
-      const dx = axDeg - (Number(state.x) || 0);
-      const dy = ayDeg - (Number(state.y) || 0);
-      const dz = azDeg - (Number(state.z) || 0);
-
-      if (Math.abs(dx) > 1e-6) {
-        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(movePlaneBasisQuat).normalize();
-        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, dx * degToRad);
-        movePlaneBasisQuat.copy(qx.multiply(movePlaneBasisQuat)).normalize();
+      const nextQuat = new THREE.Quaternion();
+      if (Math.abs(axDeg) > 1e-6) {
+        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
+        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, axDeg * degToRad);
+        nextQuat.copy(qx.multiply(nextQuat)).normalize();
       }
-      if (Math.abs(dy) > 1e-6) {
-        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dy * degToRad);
-        movePlaneBasisQuat.copy(qy.multiply(movePlaneBasisQuat)).normalize();
+      if (Math.abs(ayDeg) > 1e-6) {
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ayDeg * degToRad);
+        nextQuat.copy(qy.multiply(nextQuat)).normalize();
       }
-      if (Math.abs(dz) > 1e-6) {
-        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(movePlaneBasisQuat).normalize();
-        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, dz * degToRad);
-        movePlaneBasisQuat.copy(qz.multiply(movePlaneBasisQuat)).normalize();
+      if (Math.abs(azDeg) > 1e-6) {
+        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
+        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, azDeg * degToRad);
+        nextQuat.copy(qz.multiply(nextQuat)).normalize();
       }
+      movePlaneBasisQuat.copy(nextQuat);
       updateMovePlaneNormal();
       // パネル操作でもギズモ姿勢を反映
       movePlaneGizmoQuat.copy(movePlaneBasisQuat);
@@ -3146,6 +3173,7 @@ function clearDifferenceSpacesForImport() {
   clearDifferencePreviewTube();
   clearDifferenceFaceHighlight();
   clearDifferenceFaceSelection();
+  clearDifferenceEdgeSelection();
   clearDifferenceControlPointSelection();
   differenceSpacePlanes.forEach((mesh) => {
     if (!mesh) { return; }
@@ -3167,6 +3195,7 @@ function clearDifferenceSpacesForImport() {
   });
   differenceSpacePlanes.length = 0;
   differenceSelectedPlane = null;
+  updateDifferenceUnifyButtonState();
 }
 
 function buildGeometryFromSerializedSpace(rawSpace) {
@@ -3229,8 +3258,12 @@ function applyCreateModePayload(payload) {
     mesh.updateMatrixWorld(true);
     rebuildDifferenceControlPointsFromGeometry(mesh);
     syncDifferenceGeometryFromControlPoints(mesh);
+    mergeCoincidentDifferenceControlPoints(mesh);
+    pruneDifferenceControlPointsByMeaningfulEdges(mesh);
   });
   relinkImportedDifferenceSharedPoints();
+  mergeOverlappedBoundaryControlPoints();
+  rebuildDifferenceEdgeOverlapConstraints();
 
   const mode = payload.mode && typeof payload.mode === 'object' ? payload.mode : {};
   editObject = typeof mode.editObject === 'string' ? mode.editObject : editObject;
@@ -3253,6 +3286,7 @@ function applyCreateModePayload(payload) {
   setMeshListOpacity(targetObjects, 1);
   refreshDifferencePreview();
   updateDifferenceStatus(`map_data 読込完了: 空間 ${differenceSpacePlanes.length} 件`);
+  updateDifferenceUnifyButtonState();
 
   if (payload.uiState && typeof payload.uiState === 'object') {
     try {
@@ -4024,9 +4058,9 @@ function setMeshListOpacity(list, opacity) {
         material.transparent = true;
         material.side = THREE.DoubleSide;
         material.depthWrite = false;
-        if ('metalness' in material) { material.metalness = 0.0; }
-        if ('roughness' in material) { material.roughness = 1.0; }
-        if ('flatShading' in material) { material.flatShading = true; }
+        if ('metalness' in material) { material.metalness = 0.08; }
+        if ('roughness' in material) { material.roughness = 0.58; }
+        if ('flatShading' in material) { material.flatShading = false; }
         material.needsUpdate = true;
       };
       if (Array.isArray(mesh.material)) {
@@ -4333,6 +4367,17 @@ let differenceSelectedPlane = null
 let differenceFaceHighlight = null
 const differenceSelectedFaceHighlights = []
 const differenceSelectedEdgeHighlights = []
+const differenceEdgeFaceIntersectionMarkers = []
+const differenceFaceFaceIntersectionLines = []
+const differencePenetrationEdgeLines = []
+const differencePreviewWireframeLines = []
+const differenceClassifiedYellowSegments = []
+const differenceClassifiedOrangeSegments = []
+const differenceClassifiedRedSegments = []
+const differenceClassifiedOrangeEdgeKeys = new Set()
+const differenceClassifiedRedEdgeKeys = new Set()
+const differenceClassifiedEdgePriority = new Map()
+var differenceViewMode = 'diff'
 let differenceHoverFaceKey = null
 let differenceHoveredFaceHit = null
 const differenceSelectedControlPoints = new Set()
@@ -4340,6 +4385,11 @@ const differenceSelectedFaces = new Map()
 const differenceSelectedEdges = new Map()
 const differenceSharedPointLinkEpsilon = 0.02
 const differenceAutoMergeDistance = 0.08
+const differenceBoundaryMergeDistance = 0.06
+const differenceEdgeOverlapConstraints = []
+const differenceIntersectionPointRadius = 0.035
+const differenceIntersectionLineRadius = 0.01
+const differencePenetrationEdgeRadius = 0.013
 let differenceFaceVertexDragActive = false
 let differenceFaceVertexDragMesh = null
 let differenceFaceVertexDragLocalNormal = null
@@ -4384,6 +4434,7 @@ let historyApplying = false;
 let moveHistoryStart = null;
 let differenceHistoryApplying = false;
 let differenceHistoryStartSnapshot = null;
+updateDifferenceUnifyButtonState();
 
 function getActiveHistoryContext() {
   try {
@@ -4449,6 +4500,7 @@ function pushCreateHistory(action) {
   }
   createRedoStack.length = 0;
   updateUndoRedoButtons();
+  updateDifferenceUnifyButtonState();
 }
 
 function clearCreateHistory() {
@@ -4491,6 +4543,7 @@ function applyDifferenceSnapshot(snapshot) {
   setMeshListOpacity(targetObjects, 1);
   refreshDifferencePreview();
   updateDifferenceStatus(`Difference履歴を適用: 空間 ${differenceSpacePlanes.length} 件`);
+  updateDifferenceUnifyButtonState();
 }
 
 function pushDifferenceHistory(action) {
@@ -4885,19 +4938,29 @@ function setCreateModeWorldFocus(enable) {
 }
 
 function clearDifferencePreviewTube() {
-  if (!differencePreviewTube) { return; }
-  if (differencePreviewTube.parent) {
-    differencePreviewTube.parent.remove(differencePreviewTube);
-  }
-  if (differencePreviewTube.geometry?.dispose) {
-    differencePreviewTube.geometry.dispose();
-  }
-  if (Array.isArray(differencePreviewTube.material)) {
-    differencePreviewTube.material.forEach((mat) => mat?.dispose?.());
-  } else {
-    differencePreviewTube.material?.dispose?.();
-  }
+  purgeDifferencePreviewCuttersInScene();
   differencePreviewTube = null;
+}
+
+function purgeDifferencePreviewCuttersInScene() {
+  const cutters = [];
+  scene.traverse((obj) => {
+    if (!obj?.isMesh) { return; }
+    if (obj.name === 'DifferencePreviewCutter') {
+      cutters.push(obj);
+    }
+  });
+  cutters.forEach((obj) => {
+    if (obj.parent) {
+      obj.parent.remove(obj);
+    }
+    obj.geometry?.dispose?.();
+    if (Array.isArray(obj.material)) {
+      obj.material.forEach((m) => m?.dispose?.());
+    } else {
+      obj.material?.dispose?.();
+    }
+  });
 }
 
 function clearDifferenceFaceHighlight(resetHoverState = true) {
@@ -4928,6 +4991,1420 @@ function clearDifferenceSelectedFaceHighlights() {
     mesh.geometry?.dispose?.();
     mesh.material?.dispose?.();
   }
+}
+
+function clearDifferenceSelectedEdgeHighlights() {
+  while (differenceSelectedEdgeHighlights.length > 0) {
+    const edgeObj = differenceSelectedEdgeHighlights.pop();
+    if (!edgeObj) { continue; }
+    if (edgeObj.parent) {
+      edgeObj.parent.remove(edgeObj);
+    }
+    edgeObj.traverse?.((node) => {
+      node.geometry?.dispose?.();
+      if (Array.isArray(node.material)) {
+        node.material.forEach((m) => m?.dispose?.());
+      } else {
+        node.material?.dispose?.();
+      }
+    });
+    edgeObj.geometry?.dispose?.();
+    if (Array.isArray(edgeObj.material)) {
+      edgeObj.material.forEach((m) => m?.dispose?.());
+    } else {
+      edgeObj.material?.dispose?.();
+    }
+  }
+}
+
+function clearDifferenceIntersectionVisuals() {
+  while (differenceEdgeFaceIntersectionMarkers.length > 0) {
+    const marker = differenceEdgeFaceIntersectionMarkers.pop();
+    if (!marker) { continue; }
+    if (marker.parent) { marker.parent.remove(marker); }
+    marker.geometry?.dispose?.();
+    marker.material?.dispose?.();
+  }
+  while (differenceFaceFaceIntersectionLines.length > 0) {
+    const line = differenceFaceFaceIntersectionLines.pop();
+    if (!line) { continue; }
+    if (line.parent) { line.parent.remove(line); }
+    line.geometry?.dispose?.();
+    line.material?.dispose?.();
+  }
+  while (differencePenetrationEdgeLines.length > 0) {
+    const line = differencePenetrationEdgeLines.pop();
+    if (!line) { continue; }
+    if (line.parent) { line.parent.remove(line); }
+    line.geometry?.dispose?.();
+    line.material?.dispose?.();
+  }
+}
+
+function createDifferenceIntersectionPointMarker(position) {
+  const geom = new THREE.SphereGeometry(differenceIntersectionPointRadius, 8, 8);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xadff2f,
+    transparent: true,
+    opacity: 0.95,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.copy(position);
+  mesh.renderOrder = 2480;
+  return mesh;
+}
+
+function createDifferenceIntersectionLine(a, b, color = 0xffea00, radius = differenceIntersectionLineRadius, renderOrder = 2470) {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-6) { return null; }
+  const geom = new THREE.CylinderGeometry(
+    radius,
+    radius,
+    len,
+    10,
+    1,
+    false,
+  );
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.9,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const segment = new THREE.Mesh(geom, mat);
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  segment.position.copy(mid);
+  const up = new THREE.Vector3(0, 1, 0);
+  segment.quaternion.setFromUnitVectors(up, dir.normalize());
+  segment.renderOrder = renderOrder;
+  return segment;
+}
+
+function pointInsideDifferenceMesh(point, tris, eps = 1e-4) {
+  if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
+  const dir = new THREE.Vector3(0.373, 0.781, 0.499).normalize();
+  const ray = new THREE.Ray(point.clone(), dir);
+  const hits = [];
+  for (let i = 0; i < tris.length; i += 1) {
+    const tri = tris[i];
+    const hit = ray.intersectTriangle(tri[0], tri[1], tri[2], false, new THREE.Vector3());
+    if (!hit) { continue; }
+    const t = hit.clone().sub(point).dot(dir);
+    if (t <= eps) { continue; }
+    const isDup = hits.some((p) => p.distanceToSquared(hit) <= eps * eps);
+    if (!isDup) {
+      hits.push(hit);
+    }
+  }
+  return (hits.length % 2) === 1;
+}
+
+function getSegmentTriangleHitCount(a, b, tris, eps = 0.012) {
+  if (!a || !b || !Array.isArray(tris) || tris.length < 1) { return 0; }
+  const hits = [];
+  for (let i = 0; i < tris.length; i += 1) {
+    const hit = intersectSegmentTriangle(a, b, tris[i]);
+    if (!hit) { continue; }
+    const isDup = hits.some((p) => p.distanceToSquared(hit) <= eps * eps);
+    if (!isDup) {
+      hits.push(hit);
+    }
+  }
+  return hits.length;
+}
+
+function getSegmentTriangleHitTs(a, b, tris, eps = 0.012) {
+  if (!a || !b || !Array.isArray(tris) || tris.length < 1) { return []; }
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-7) { return []; }
+  const rayDir = dir.clone().multiplyScalar(1 / len);
+  const ts = [];
+  for (let i = 0; i < tris.length; i += 1) {
+    const hit = intersectSegmentTriangle(a, b, tris[i]);
+    if (!hit) { continue; }
+    const tLen = hit.clone().sub(a).dot(rayDir);
+    if (tLen < -1e-5 || tLen > len + 1e-5) { continue; }
+    const t = THREE.MathUtils.clamp(tLen / len, 0, 1);
+    const isDup = ts.some((v) => Math.abs(v - t) <= eps);
+    if (!isDup) {
+      ts.push(t);
+    }
+  }
+  ts.sort((x, y) => x - y);
+  return ts;
+}
+
+function getDifferenceMeshTrianglesWorld(mesh) {
+  const geom = mesh?.geometry;
+  const pos = geom?.attributes?.position;
+  if (!pos) { return []; }
+  const out = [];
+  const toWorld = mesh.matrixWorld;
+  const readWorld = (i) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(toWorld);
+  if (geom.index) {
+    const arr = geom.index.array;
+    for (let i = 0; i + 2 < arr.length; i += 3) {
+      const ia = Number(arr[i]);
+      const ib = Number(arr[i + 1]);
+      const ic = Number(arr[i + 2]);
+      out.push([readWorld(ia), readWorld(ib), readWorld(ic)]);
+    }
+  } else {
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      out.push([readWorld(i), readWorld(i + 1), readWorld(i + 2)]);
+    }
+  }
+  return out;
+}
+
+function intersectSegmentTriangle(a, b, tri) {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-7) { return null; }
+  const ray = new THREE.Ray(a.clone(), dir.clone().multiplyScalar(1 / len));
+  const hit = ray.intersectTriangle(tri[0], tri[1], tri[2], false, new THREE.Vector3());
+  if (!hit) { return null; }
+  const t = hit.clone().sub(a).dot(ray.direction);
+  if (t < -1e-5 || t > len + 1e-5) { return null; }
+  return hit;
+}
+
+function dedupeWorldPoints(points, eps = 0.03) {
+  const out = [];
+  points.forEach((p) => {
+    const exists = out.some((q) => q.distanceToSquared(p) <= (eps * eps));
+    if (!exists) { out.push(p.clone()); }
+  });
+  return out;
+}
+
+function getTriangleEdges(tri) {
+  return [
+    [tri[0], tri[1]],
+    [tri[1], tri[2]],
+    [tri[2], tri[0]],
+  ];
+}
+
+function getTriangleAABB(tri) {
+  return new THREE.Box3().setFromPoints(tri);
+}
+
+function simplifyOrderedPointsByAngle(points, angleDegThreshold = 6, minSegmentLength = 1e-3, lineDistanceTol = 0.03) {
+  if (!Array.isArray(points) || points.length < 3) { return Array.isArray(points) ? points.slice() : []; }
+  let work = points.map((p) => p.clone());
+  const radThreshold = THREE.MathUtils.degToRad(Math.max(0.1, angleDegThreshold));
+  // 1回では取り切れないので、削除が止まるまで数回反復する。
+  for (let pass = 0; pass < 6; pass += 1) {
+    if (work.length < 3) { break; }
+    const out = [work[0].clone()];
+    let removedInPass = false;
+    for (let i = 1; i < work.length - 1; i += 1) {
+      const prev = out[out.length - 1];
+      const curr = work[i];
+      const next = work[i + 1];
+      const v1 = curr.clone().sub(prev);
+      const v2 = next.clone().sub(curr);
+      const l1 = v1.length();
+      const l2 = v2.length();
+      if (l1 < minSegmentLength || l2 < minSegmentLength) {
+        removedInPass = true;
+        continue;
+      }
+      v1.multiplyScalar(1 / l1);
+      v2.multiplyScalar(1 / l2);
+      const angle = Math.acos(THREE.MathUtils.clamp(v1.dot(v2), -1, 1));
+      // 直線距離でも判定して、微小なノイズ点を落とす。
+      const prevToNext = next.clone().sub(prev);
+      const prevToCurr = curr.clone().sub(prev);
+      let lineDist = Infinity;
+      const baseLenSq = prevToNext.lengthSq();
+      if (baseLenSq > 1e-10) {
+        const t = THREE.MathUtils.clamp(prevToCurr.dot(prevToNext) / baseLenSq, 0, 1);
+        const closest = prev.clone().add(prevToNext.multiplyScalar(t));
+        lineDist = curr.distanceTo(closest);
+      }
+      // 進行方向の変化が小さい（ほぼ直線）点は削除。
+      if (angle <= radThreshold || lineDist <= lineDistanceTol) {
+        removedInPass = true;
+        continue;
+      }
+      out.push(curr.clone());
+    }
+    out.push(work[work.length - 1].clone());
+    work = out;
+    if (!removedInPass) { break; }
+  }
+  return work;
+}
+
+function orderPointsAsChain(points, nearTol = 0.06) {
+  if (!Array.isArray(points) || points.length < 2) { return Array.isArray(points) ? points.slice() : []; }
+  if (points.length === 2) { return [points[0].clone(), points[1].clone()]; }
+
+  const list = points.map((p) => p.clone());
+  const n = list.length;
+  const nearTolSq = nearTol * nearTol;
+  const edges = Array.from({ length: n }, () => []);
+
+  // 近傍グラフを作る（近い点を双方向で接続）
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      const d2 = list[i].distanceToSquared(list[j]);
+      if (d2 <= nearTolSq) {
+        edges[i].push(j);
+        edges[j].push(i);
+      }
+    }
+  }
+
+  // 端点候補: 次数1。なければ最遠2点のどちらかを開始点にする。
+  const degree1 = [];
+  for (let i = 0; i < n; i += 1) {
+    if (edges[i].length === 1) { degree1.push(i); }
+  }
+  let start = degree1.length > 0 ? degree1[0] : 0;
+  if (degree1.length < 1) {
+    let bestI = 0;
+    let bestJ = 1;
+    let bestD = list[0].distanceToSquared(list[1]);
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n; j += 1) {
+        const d = list[i].distanceToSquared(list[j]);
+        if (d > bestD) {
+          bestD = d;
+          bestI = i;
+          bestJ = j;
+        }
+      }
+    }
+    start = bestI < bestJ ? bestI : bestJ;
+  }
+
+  // 連結辿り + 途切れたら未訪問中の最近点へジャンプ
+  const ordered = [];
+  const visited = new Set();
+  let current = start;
+  while (visited.size < n) {
+    if (!visited.has(current)) {
+      ordered.push(list[current].clone());
+      visited.add(current);
+    }
+
+    let next = null;
+    let nextDist = Infinity;
+    const neighbors = edges[current] || [];
+    for (let i = 0; i < neighbors.length; i += 1) {
+      const ni = neighbors[i];
+      if (visited.has(ni)) { continue; }
+      const d = list[current].distanceToSquared(list[ni]);
+      if (d < nextDist) {
+        nextDist = d;
+        next = ni;
+      }
+    }
+    if (next !== null) {
+      current = next;
+      continue;
+    }
+
+    for (let i = 0; i < n; i += 1) {
+      if (visited.has(i)) { continue; }
+      const d = list[current].distanceToSquared(list[i]);
+      if (d < nextDist) {
+        nextDist = d;
+        next = i;
+      }
+    }
+    if (next === null) { break; }
+    current = next;
+  }
+  return ordered.length >= 2 ? ordered : list;
+}
+
+function dedupeSegmentEndpoints(points, eps = 0.02) {
+  if (!Array.isArray(points) || points.length < 2) { return null; }
+  const uniq = dedupeWorldPoints(points, eps);
+  if (uniq.length < 2) { return null; }
+  let bestA = uniq[0];
+  let bestB = uniq[1];
+  let bestDist = bestA.distanceToSquared(bestB);
+  for (let i = 0; i < uniq.length; i += 1) {
+    for (let j = i + 1; j < uniq.length; j += 1) {
+      const d = uniq[i].distanceToSquared(uniq[j]);
+      if (d > bestDist) {
+        bestDist = d;
+        bestA = uniq[i];
+        bestB = uniq[j];
+      }
+    }
+  }
+  if (bestDist < 1e-8) { return null; }
+  const chainOrdered = orderPointsAsChain(uniq, eps * 2.6);
+  const simplified = simplifyOrderedPointsByAngle(chainOrdered, 14, eps * 0.8, eps * 2.4);
+  const finalPoints = simplified.length >= 2 ? simplified : chainOrdered;
+  return {
+    a: finalPoints[0].clone(),
+    b: finalPoints[finalPoints.length - 1].clone(),
+    points: finalPoints,
+  };
+}
+
+function getTrianglePairIntersectionSegment(triA, triB) {
+  const hits = [];
+  const edgesA = getTriangleEdges(triA);
+  const edgesB = getTriangleEdges(triB);
+  edgesA.forEach((edge) => {
+    const hit = intersectSegmentTriangle(edge[0], edge[1], triB);
+    if (hit) { hits.push(hit); }
+  });
+  edgesB.forEach((edge) => {
+    const hit = intersectSegmentTriangle(edge[0], edge[1], triA);
+    if (hit) { hits.push(hit); }
+  });
+  return dedupeSegmentEndpoints(hits, 0.02);
+}
+
+function getSegmentKey(a, b, eps = 0.02) {
+  const qa = `${Math.round(a.x / eps)},${Math.round(a.y / eps)},${Math.round(a.z / eps)}`;
+  const qb = `${Math.round(b.x / eps)},${Math.round(b.y / eps)},${Math.round(b.z / eps)}`;
+  return qa < qb ? `${qa}|${qb}` : `${qb}|${qa}`;
+}
+
+function getDifferenceSourceEdgeKeyByWorldPoints(a, b, eps = 0.01) {
+  return getSegmentKey(a, b, Math.max(1e-6, eps));
+}
+
+function clearDifferencePreviewWireframeLines() {
+  while (differencePreviewWireframeLines.length > 0) {
+    const line = differencePreviewWireframeLines.pop();
+    if (!line) { continue; }
+    if (line.parent) { line.parent.remove(line); }
+    line.geometry?.dispose?.();
+    line.material?.dispose?.();
+  }
+}
+
+function clearDifferenceClassifiedSegments() {
+  differenceClassifiedYellowSegments.length = 0;
+  differenceClassifiedOrangeSegments.length = 0;
+  differenceClassifiedRedSegments.length = 0;
+  differenceClassifiedOrangeEdgeKeys.clear();
+  differenceClassifiedRedEdgeKeys.clear();
+  differenceClassifiedEdgePriority.clear();
+}
+
+function setDifferenceEdgePriority(edgeKey, level) {
+  if (!edgeKey) { return; }
+  const prev = differenceClassifiedEdgePriority.get(edgeKey) || 0;
+  if (level > prev) {
+    differenceClassifiedEdgePriority.set(edgeKey, level);
+  }
+}
+
+function setDifferenceMeshFacesVisible(visible) {
+  const spaces = getActiveDifferenceSpaces();
+  spaces.forEach((mesh) => {
+    const applyMaterial = (material) => {
+      if (!material) { return; }
+      material.transparent = true;
+      material.opacity = visible ? 0.5 : 0.0;
+      material.depthWrite = visible;
+      material.needsUpdate = true;
+    };
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(applyMaterial);
+    } else {
+      applyMaterial(mesh.material);
+    }
+    mesh.children.forEach((child) => {
+      if (!child?.userData?.differenceControlPoint) { return; }
+      child.visible = visible;
+    });
+  });
+}
+
+function getSegmentOverlapLengthApprox(a0, a1, b0, b1, distTol = 0.08, angleDegTol = 10) {
+  const da = a1.clone().sub(a0);
+  const db = b1.clone().sub(b0);
+  const la = da.length();
+  const lb = db.length();
+  if (la < 1e-6 || lb < 1e-6) { return 0; }
+  const ua = da.clone().multiplyScalar(1 / la);
+  const ub = db.clone().multiplyScalar(1 / lb);
+  const cosTol = Math.cos(THREE.MathUtils.degToRad(angleDegTol));
+  if (Math.abs(ua.dot(ub)) < cosTol) { return 0; }
+
+  const lineDist = Math.max(
+    distancePointToInfiniteLine(b0, a0, ua),
+    distancePointToInfiniteLine(b1, a0, ua),
+  );
+  if (lineDist > distTol) { return 0; }
+
+  const tA0 = projectPointTOnSegment(a0, a0, a1);
+  const tA1 = projectPointTOnSegment(a1, a0, a1);
+  const tB0 = projectPointTOnSegment(b0, a0, a1);
+  const tB1 = projectPointTOnSegment(b1, a0, a1);
+  const minA = Math.min(tA0, tA1);
+  const maxA = Math.max(tA0, tA1);
+  const minB = Math.min(tB0, tB1);
+  const maxB = Math.max(tB0, tB1);
+  const overlap = Math.max(0, Math.min(maxA, maxB) - Math.max(minA, minB));
+  return overlap * la;
+}
+
+function collectSourceEdgeKeysForSegment(segA, segB, candidateEdges = [], maxDiag = 1) {
+  if (!segA || !segB || !Array.isArray(candidateEdges) || candidateEdges.length < 1) { return []; }
+  const distTol = Math.max(0.05, maxDiag * 0.03);
+  const overlapTol = Math.max(0.004, maxDiag * 0.0025);
+  const keys = new Set();
+  candidateEdges.forEach((edge) => {
+    const p0 = edge?.p0;
+    const p1 = edge?.p1;
+    if (!p0 || !p1) { return; }
+    const ov = getSegmentOverlapLengthApprox(segA, segB, p0, p1, distTol, 12);
+    if (ov < overlapTol) { return; }
+    const key = edge.key || getDifferenceSourceEdgeKeyByWorldPoints(p0, p1);
+    keys.add(key);
+  });
+  return Array.from(keys);
+}
+
+function mergeUnitIntervals(intervals) {
+  if (!Array.isArray(intervals) || intervals.length < 1) { return []; }
+  const sorted = intervals
+    .map((it) => [Math.max(0, Math.min(1, it[0])), Math.max(0, Math.min(1, it[1]))])
+    .filter((it) => it[1] > it[0])
+    .sort((a, b) => a[0] - b[0]);
+  if (sorted.length < 1) { return []; }
+  const merged = [sorted[0]];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const cur = sorted[i];
+    const last = merged[merged.length - 1];
+    if (cur[0] <= last[1] + 1e-6) {
+      last[1] = Math.max(last[1], cur[1]);
+    } else {
+      merged.push(cur);
+    }
+  }
+  return merged;
+}
+
+function collectHiddenIntervalsOnEdge(edgeA, edgeB, edgeKey, maxDiag = 1) {
+  const hiddenSegs = differenceClassifiedOrangeSegments.concat(differenceClassifiedRedSegments);
+  if (hiddenSegs.length < 1) { return []; }
+  const lineDistTol = Math.max(0.05, maxDiag * 0.03);
+  const overlapTol = Math.max(0.003, maxDiag * 0.002);
+  const intervals = [];
+  hiddenSegs.forEach((seg) => {
+    const sourceKeys = Array.isArray(seg?.sourceEdgeKeys) ? seg.sourceEdgeKeys : [];
+    const byKey = sourceKeys.includes(edgeKey);
+    let byOverlap = false;
+    if (!byKey) {
+      const ov = getSegmentOverlapLengthApprox(edgeA, edgeB, seg.a, seg.b, lineDistTol, 12);
+      byOverlap = ov >= overlapTol;
+    }
+    if (!byKey && !byOverlap) { return; }
+    const t0 = THREE.MathUtils.clamp(projectPointTOnSegment(seg.a, edgeA, edgeB), 0, 1);
+    const t1 = THREE.MathUtils.clamp(projectPointTOnSegment(seg.b, edgeA, edgeB), 0, 1);
+    const s = Math.min(t0, t1);
+    const e = Math.max(t0, t1);
+    if ((e - s) <= 1e-5) { return; }
+    intervals.push([s, e]);
+  });
+  return mergeUnitIntervals(intervals);
+}
+
+function isDifferencePreviewHiddenEdgeByOverlap(p0, p1, maxDiag = 0) {
+  const key = getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
+  const rank = differenceClassifiedEdgePriority.get(key) || 0;
+  if (rank >= 2 || differenceClassifiedRedEdgeKeys.has(key) || differenceClassifiedOrangeEdgeKeys.has(key)) {
+    return true;
+  }
+  // 少しでも橙/赤セグメントと重なる辺は preview では隠す。
+  const overlapTol = Math.max(0.003, maxDiag * 0.002);
+  const lineDistTol = Math.max(0.05, maxDiag * 0.03);
+  const allSkip = differenceClassifiedOrangeSegments.concat(differenceClassifiedRedSegments);
+  for (let i = 0; i < allSkip.length; i += 1) {
+    const seg = allSkip[i];
+    const ov = getSegmentOverlapLengthApprox(p0, p1, seg.a, seg.b, lineDistTol, 12);
+    if (ov >= overlapTol) { return true; }
+  }
+  return false;
+}
+
+function drawDifferencePreviewWireframe() {
+  clearDifferencePreviewWireframeLines();
+  if (differenceViewMode !== 'preview') { return; }
+  const spaces = getActiveDifferenceSpaces();
+  if (spaces.length < 1) { return; }
+  const maxDiag = spaces.reduce((acc, mesh) => {
+    mesh.geometry?.computeBoundingBox?.();
+    const d = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 0;
+    return Math.max(acc, d);
+  }, 0);
+  const previewKeySnap = Math.max(1e-4, maxDiag * 0.002);
+  const previewSegKeys = new Set();
+  const minDrawLen = Math.max(0.004, maxDiag * 0.0015);
+  const addPreviewBlueSegment = (a, b, radius = 0.012) => {
+    if (!a || !b) { return; }
+    if (a.distanceToSquared(b) < (minDrawLen * minDrawLen)) { return; }
+    const qa = `${Math.round(a.x / previewKeySnap)},${Math.round(a.y / previewKeySnap)},${Math.round(a.z / previewKeySnap)}`;
+    const qb = `${Math.round(b.x / previewKeySnap)},${Math.round(b.y / previewKeySnap)},${Math.round(b.z / previewKeySnap)}`;
+    const key = qa < qb ? `${qa}|${qb}` : `${qb}|${qa}`;
+    if (previewSegKeys.has(key)) { return; }
+    previewSegKeys.add(key);
+    const line = createDifferenceIntersectionLine(a, b, 0x2f6dff, radius, 2468);
+    if (!line) { return; }
+    scene.add(line);
+    differencePreviewWireframeLines.push(line);
+  };
+  spaces.forEach((mesh) => {
+    const edges = getDifferenceMeshControlPointEdges(mesh);
+    edges.forEach((edge) => {
+      const p0 = edge.pointA.getWorldPosition(new THREE.Vector3());
+      const p1 = edge.pointB.getWorldPosition(new THREE.Vector3());
+      const edgeKey = getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
+      const hiddenIntervals = collectHiddenIntervalsOnEdge(p0, p1, edgeKey, maxDiag);
+      if (hiddenIntervals.length < 1) {
+        if (!isDifferencePreviewHiddenEdgeByOverlap(p0, p1, maxDiag)) {
+          addPreviewBlueSegment(p0, p1, 0.012);
+        }
+        return;
+      }
+      let cursor = 0;
+      hiddenIntervals.forEach((it) => {
+        const s = it[0];
+        const e = it[1];
+        if (s > cursor + 1e-6) {
+          addPreviewBlueSegment(
+            p0.clone().lerp(p1, cursor),
+            p0.clone().lerp(p1, s),
+            0.012,
+          );
+        }
+        cursor = Math.max(cursor, e);
+      });
+      if (cursor < 1 - 1e-6) {
+        addPreviewBlueSegment(
+          p0.clone().lerp(p1, cursor),
+          p0.clone().lerp(p1, 1),
+          0.012,
+        );
+      }
+    });
+  });
+
+  differenceClassifiedYellowSegments.forEach((seg) => {
+    const sourceKeys = Array.isArray(seg?.sourceEdgeKeys) ? seg.sourceEdgeKeys : [];
+    const rank = sourceKeys.reduce((acc, key) => Math.max(acc, differenceClassifiedEdgePriority.get(key) || 0), 0);
+    if (rank >= 2) { return; }
+    // preview は「青い辺の可視化」に統一し、黄分類は“残す辺”として青で描く。
+    addPreviewBlueSegment(seg.a, seg.b, 0.012);
+  });
+}
+
+function applyDifferenceViewMode() {
+  if (differenceViewToggleButton) {
+    differenceViewToggleButton.textContent = differenceViewMode === 'preview' ? 'view[preview]' : 'view[diff]';
+  }
+  setDifferenceMeshFacesVisible(differenceViewMode !== 'preview');
+  if (differenceViewMode === 'preview') {
+    // preview は「加工結果のみ」を表示する。
+    clearDifferenceSelectedEdgeHighlights();
+    clearDifferenceSelectedFaceHighlights();
+    clearDifferenceFaceHighlight();
+    clearDifferencePreviewWireframeLines();
+    clearDifferenceIntersectionVisuals();
+    // move 系は加工後の可視線のみ再描画（tube 系は DifferencePreviewCutter をそのまま表示）。
+    if (differenceSpaceModeActive && differenceSpaceTransformMode === 'move') {
+      refreshDifferenceIntersectionVisuals();
+    }
+  } else {
+    clearDifferencePreviewWireframeLines();
+    refreshDifferenceSelectedEdgeHighlights();
+  }
+}
+
+function refreshDifferenceIntersectionVisuals() {
+  clearDifferenceIntersectionVisuals();
+  clearDifferenceClassifiedSegments();
+  if (!differenceSpaceModeActive) { return; }
+  // preview でも分類（黄/橙/赤）は必要。
+  if (differenceSpaceTransformMode !== 'move' && differenceViewMode !== 'preview') { return; }
+  const meshes = differenceSpacePlanes.filter((m) => m?.parent && m?.geometry);
+  if (meshes.length < 2) { return; }
+  const maxDiag = meshes.reduce((acc, mesh) => {
+    mesh.geometry?.computeBoundingBox?.();
+    const d = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 0;
+    return Math.max(acc, d);
+  }, 0);
+  scene.updateMatrixWorld(true);
+  for (let i = 0; i < meshes.length; i += 1) {
+    const a = meshes[i];
+    const boxA = new THREE.Box3().setFromObject(a);
+    const edgesA = getDifferenceMeshControlPointEdges(a).map((e) => ({
+      p0: e.pointA.getWorldPosition(new THREE.Vector3()),
+      p1: e.pointB.getWorldPosition(new THREE.Vector3()),
+      key: getDifferenceSourceEdgeKeyByWorldPoints(
+        e.pointA.getWorldPosition(new THREE.Vector3()),
+        e.pointB.getWorldPosition(new THREE.Vector3()),
+        0.01,
+      ),
+    }));
+    for (let j = i + 1; j < meshes.length; j += 1) {
+      const b = meshes[j];
+      const boxB = new THREE.Box3().setFromObject(b);
+      if (!boxA.intersectsBox(boxB)) { continue; }
+      const trisA = getDifferenceMeshTrianglesWorld(a);
+      const trisB = getDifferenceMeshTrianglesWorld(b);
+      const drawPenetrationEdges = (edges, targetTris) => {
+        edges.forEach((edge) => {
+          const p0 = edge.p0;
+          const p1 = edge.p1;
+          const edgeKey = edge.key || getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
+          const in0 = pointInsideDifferenceMesh(p0, targetTris);
+          const in1 = pointInsideDifferenceMesh(p1, targetTris);
+          if (in0 && in1) {
+            differenceClassifiedRedEdgeKeys.add(edgeKey);
+            setDifferenceEdgePriority(edgeKey, 3);
+            differenceClassifiedRedSegments.push({
+              a: p0.clone(),
+              b: p1.clone(),
+              sourceEdgeKeys: [edgeKey],
+            });
+            const edgeLine = createDifferenceIntersectionLine(
+              p0,
+              p1,
+              0xff3b30, // 完全に内側: 赤
+              differencePenetrationEdgeRadius,
+              2465,
+            );
+            if (!edgeLine) { return; }
+            scene.add(edgeLine);
+            differencePenetrationEdgeLines.push(edgeLine);
+            return;
+          }
+
+          const hitTs = getSegmentTriangleHitTs(p0, p1, targetTris, 0.006);
+          const hasPartial = in0 || in1 || hitTs.length >= 1 || getSegmentTriangleHitCount(p0, p1, targetTris) >= 2;
+          if (!hasPartial) { return; }
+          if (!differenceClassifiedRedEdgeKeys.has(edgeKey)) {
+            differenceClassifiedOrangeEdgeKeys.add(edgeKey);
+            setDifferenceEdgePriority(edgeKey, 2);
+          }
+
+          // 部分侵入は、交点で辺を分割して「内側区間のみ」オレンジ表示する。
+          const ts = [0, ...hitTs, 1];
+          for (let k = 0; k < ts.length - 1; k += 1) {
+            const tA = ts[k];
+            const tB = ts[k + 1];
+            if (tB - tA <= 1e-4) { continue; }
+            const tMid = (tA + tB) * 0.5;
+            const mid = p0.clone().lerp(p1, tMid);
+            if (!pointInsideDifferenceMesh(mid, targetTris)) { continue; }
+            const segA = p0.clone().lerp(p1, tA);
+            const segB = p0.clone().lerp(p1, tB);
+            differenceClassifiedOrangeSegments.push({
+              a: segA.clone(),
+              b: segB.clone(),
+              sourceEdgeKeys: [edgeKey],
+            });
+            const partialLine = createDifferenceIntersectionLine(
+              segA,
+              segB,
+              0xff9800, // 一部侵入: オレンジ
+              differencePenetrationEdgeRadius,
+              2466,
+            );
+            if (!partialLine) { continue; }
+            scene.add(partialLine);
+            differencePenetrationEdgeLines.push(partialLine);
+          }
+        });
+      };
+      drawPenetrationEdges(edgesA, trisB);
+      const edgesB = getDifferenceMeshControlPointEdges(b).map((e) => ({
+        p0: e.pointA.getWorldPosition(new THREE.Vector3()),
+        p1: e.pointB.getWorldPosition(new THREE.Vector3()),
+        key: getDifferenceSourceEdgeKeyByWorldPoints(
+          e.pointA.getWorldPosition(new THREE.Vector3()),
+          e.pointB.getWorldPosition(new THREE.Vector3()),
+          0.01,
+        ),
+      }));
+      drawPenetrationEdges(edgesB, trisA);
+      const pairEdges = edgesA.concat(edgesB);
+
+      const points = [];
+      const segmentMap = new Map();
+
+      for (let ta = 0; ta < trisA.length; ta += 1) {
+        const triA = trisA[ta];
+        const triABox = getTriangleAABB(triA);
+        for (let tb = 0; tb < trisB.length; tb += 1) {
+          const triB = trisB[tb];
+          const triBBox = getTriangleAABB(triB);
+          if (!triABox.intersectsBox(triBBox)) { continue; }
+          const segment = getTrianglePairIntersectionSegment(triA, triB);
+          if (!segment) { continue; }
+          points.push(...segment.points);
+          const key = getSegmentKey(segment.a, segment.b, 0.025);
+          if (!segmentMap.has(key)) {
+            segmentMap.set(key, segment);
+          }
+        }
+      }
+
+      const uniq = dedupeWorldPoints(points, 0.03);
+      uniq.forEach((p) => {
+        const marker = createDifferenceIntersectionPointMarker(p);
+        scene.add(marker);
+        differenceEdgeFaceIntersectionMarkers.push(marker);
+      });
+
+      segmentMap.forEach((seg) => {
+        const sourceEdgeKeys = collectSourceEdgeKeysForSegment(seg.a, seg.b, pairEdges, maxDiag);
+        sourceEdgeKeys.forEach((k) => setDifferenceEdgePriority(k, 1));
+        differenceClassifiedYellowSegments.push({
+          a: seg.a.clone(),
+          b: seg.b.clone(),
+          sourceEdgeKeys,
+        });
+        const line = createDifferenceIntersectionLine(seg.a, seg.b, 0xffea00, differenceIntersectionLineRadius, 2470);
+        if (!line) { return; }
+        scene.add(line);
+        differenceFaceFaceIntersectionLines.push(line);
+      });
+    }
+  }
+  if (differenceViewMode === 'preview') {
+    clearDifferenceIntersectionVisuals();
+    drawDifferencePreviewWireframe();
+    return;
+  }
+}
+
+function updateDifferenceSelectionStatus() {
+  updateDifferenceStatus(`point選択: ${differenceSelectedControlPoints.size} / edge選択: ${differenceSelectedEdges.size} / face選択: ${differenceSelectedFaces.size}`);
+}
+
+function getDifferenceEdgeKey(mesh, pointA, pointB) {
+  if (!mesh || !pointA?.userData?.differenceControlPoint || !pointB?.userData?.differenceControlPoint || pointA === pointB) { return null; }
+  const [a, b] = [pointA.id, pointB.id].sort((x, y) => x - y);
+  return `${mesh.id}:p${a}|p${b}`;
+}
+
+function createDifferenceEdgeHighlightLine(pointA, pointB, color = 0x67b7ff) {
+  if (!pointA?.isObject3D || !pointB?.isObject3D) { return null; }
+  const a = pointA.getWorldPosition(new THREE.Vector3());
+  const b = pointB.getWorldPosition(new THREE.Vector3());
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-6) { return null; }
+  const radius = 0.02;
+  const geom = new THREE.CylinderGeometry(radius, radius, len, 6, 1, false);
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    transparent: true,
+    opacity: 0.88,
+    roughness: 0.75,
+    metalness: 0.0,
+    flatShading: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const segment = new THREE.Mesh(geom, mat);
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  segment.position.copy(mid);
+  const up = new THREE.Vector3(0, 1, 0);
+  segment.quaternion.setFromUnitVectors(up, dir.normalize());
+  segment.renderOrder = 2450;
+  return segment;
+}
+
+function getDifferenceMeshControlPointEdges(mesh) {
+  const pos = mesh?.geometry?.attributes?.position;
+  if (!mesh?.userData?.differenceSpacePlane || !pos) { return []; }
+  const cpList = mesh.children.filter((c) => c?.userData?.differenceControlPoint);
+  if (cpList.length < 2) { return []; }
+
+  const idxToPoint = new Map();
+  cpList.forEach((p) => {
+    const ids = p?.userData?.differenceVertexIndices;
+    if (!Array.isArray(ids)) { return; }
+    ids.forEach((idx) => {
+      if (Number.isInteger(idx) && idx >= 0 && idx < pos.count) {
+        idxToPoint.set(idx, p);
+      }
+    });
+  });
+  // differenceVertexIndices が無い制御点（初期ボックス等）も、cornerKey から厳密対応させる
+  const cornerMap = ensureDifferenceCornerVertexMap(mesh);
+  if (cornerMap) {
+    cpList.forEach((p) => {
+      const key = p?.userData?.differenceCornerKey;
+      if (!key || !Array.isArray(cornerMap[key])) { return; }
+      cornerMap[key].forEach((idx) => {
+        if (Number.isInteger(idx) && idx >= 0 && idx < pos.count) {
+          idxToPoint.set(idx, p);
+        }
+      });
+    });
+  }
+
+  const resolvePointByIndex = (idx) => {
+    const mapped = idxToPoint.get(idx);
+    if (mapped) { return mapped; }
+    // 近接スナップは誤った対角線辺を生みやすいので使わない
+    return null;
+  };
+
+  mesh.geometry.computeBoundingBox?.();
+  const meshDiag = mesh.geometry.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  const vtxSnap = Math.max(1e-6, meshDiag * 1e-5);
+  const makeVertexKey = (idx) => {
+    const x = Math.round(pos.getX(idx) / vtxSnap);
+    const y = Math.round(pos.getY(idx) / vtxSnap);
+    const z = Math.round(pos.getZ(idx) / vtxSnap);
+    return `${x},${y},${z}`;
+  };
+
+  const edgeFaces = new Map();
+  const edgeIndexPairs = new Map();
+  const addTriEdge = (a, b, triNormal, triPoint = null) => {
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a === b || !triNormal) { return; }
+    const ka = makeVertexKey(a);
+    const kb = makeVertexKey(b);
+    const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+    if (!edgeFaces.has(key)) {
+      edgeFaces.set(key, []);
+      edgeIndexPairs.set(key, []);
+    }
+    // 平面キー（法線+距離）で同一平面をまとめる。三角分割の対角線除去に使う。
+    const n = triNormal.clone().normalize();
+    const p = triPoint ? triPoint.clone() : getVertex(a);
+    const d = -n.dot(p);
+    const nSnap = Math.max(1e-4, Math.sin(THREE.MathUtils.degToRad(10)) * 0.5);
+    const dSnap = Math.max(1e-6, meshDiag * 1e-3);
+    const planeKey = `${Math.round(n.x / nSnap)},${Math.round(n.y / nSnap)},${Math.round(n.z / nSnap)}|${Math.round(d / dSnap)}`;
+    edgeFaces.get(key).push({
+      normal: n,
+      planeKey,
+    });
+    edgeIndexPairs.get(key).push([a, b]);
+  };
+  const getVertex = (idx) => new THREE.Vector3(pos.getX(idx), pos.getY(idx), pos.getZ(idx));
+  const computeTriNormal = (ia, ib, ic) => {
+    const a = getVertex(ia);
+    const b = getVertex(ib);
+    const c = getVertex(ic);
+    const ab = b.clone().sub(a);
+    const ac = c.clone().sub(a);
+    const n = new THREE.Vector3().crossVectors(ab, ac);
+    if (n.lengthSq() < 1e-12) { return null; }
+    return n.normalize();
+  };
+
+  if (mesh.geometry.index) {
+    const arr = mesh.geometry.index.array;
+    for (let i = 0; i + 2 < arr.length; i += 3) {
+      const a = Number(arr[i]);
+      const b = Number(arr[i + 1]);
+      const c = Number(arr[i + 2]);
+      const triNormal = computeTriNormal(a, b, c);
+      const triPoint = triNormal ? getVertex(a) : null;
+      addTriEdge(a, b, triNormal, triPoint);
+      addTriEdge(b, c, triNormal, triPoint);
+      addTriEdge(c, a, triNormal, triPoint);
+    }
+  } else {
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      const triNormal = computeTriNormal(i, i + 1, i + 2);
+      const triPoint = triNormal ? getVertex(i) : null;
+      addTriEdge(i, i + 1, triNormal, triPoint);
+      addTriEdge(i + 1, i + 2, triNormal, triPoint);
+      addTriEdge(i + 2, i, triNormal, triPoint);
+    }
+  }
+
+  const isMeaningfulEdge = (ia, ib, faces) => {
+    // 三角分割由来の細かい辺を消すため、短すぎる辺は除外
+    const pa = new THREE.Vector3(pos.getX(ia), pos.getY(ia), pos.getZ(ia));
+    const pb = new THREE.Vector3(pos.getX(ib), pos.getY(ib), pos.getZ(ib));
+    const len = pa.distanceTo(pb);
+    const diag = meshDiag;
+    const minLen = Math.max(0.02, diag * 0.01);
+    if (len < minLen) { return false; }
+
+    // 同一平面しか関与しない辺（三角分割の対角線など）は除外
+    const planeKeys = new Set();
+    const uniqueNormals = [];
+    (faces || []).forEach((f) => {
+      if (!f?.planeKey || !f?.normal) { return; }
+      planeKeys.add(f.planeKey);
+      const isNew = uniqueNormals.every((n) => Math.abs(n.dot(f.normal)) < 0.9999);
+      if (isNew) {
+        uniqueNormals.push(f.normal.clone().normalize());
+      }
+    });
+    if (planeKeys.size <= 1) { return false; }
+
+    // 折れ角が極小なら表示しない（ほぼ同一平面の誤検出対策）
+    // 側面（|ny|が小さい）では誤差が出やすいので許容角を広める
+    const avgAbsY = uniqueNormals.length > 0
+      ? uniqueNormals.reduce((acc, nn) => acc + Math.abs(nn.y), 0) / uniqueNormals.length
+      : 1;
+    const creaseDeg = avgAbsY < 0.45 ? 14 : 8;
+    const creaseCos = Math.cos(THREE.MathUtils.degToRad(creaseDeg));
+    let hasCrease = false;
+    for (let i = 0; i < uniqueNormals.length; i += 1) {
+      for (let j = i + 1; j < uniqueNormals.length; j += 1) {
+        const d = Math.abs(uniqueNormals[i].dot(uniqueNormals[j]));
+        if (d < creaseCos) {
+          hasCrease = true;
+          break;
+        }
+      }
+      if (hasCrease) { break; }
+    }
+    if (!hasCrease && planeKeys.size > 1) { return false; }
+    return true;
+  };
+
+  const edges = [];
+  const cpEdgeSeen = new Set();
+  edgeFaces.forEach((normals, rawKey) => {
+    const candidates = edgeIndexPairs.get(rawKey) || [];
+    let ia = null;
+    let ib = null;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const c = candidates[i];
+      const paTry = resolvePointByIndex(c[0]);
+      const pbTry = resolvePointByIndex(c[1]);
+      if (paTry && pbTry && paTry !== pbTry) {
+        ia = c[0];
+        ib = c[1];
+        break;
+      }
+    }
+    if (!Number.isInteger(ia) || !Number.isInteger(ib)) { return; }
+    if (!isMeaningfulEdge(ia, ib, normals)) { return; }
+    const pa = resolvePointByIndex(ia);
+    const pb = resolvePointByIndex(ib);
+    if (!pa || !pb || pa === pb) { return; }
+    const cpKey = pa.id < pb.id ? `${pa.id}|${pb.id}` : `${pb.id}|${pa.id}`;
+    if (cpEdgeSeen.has(cpKey)) { return; }
+    cpEdgeSeen.add(cpKey);
+    edges.push({ pointA: pa, pointB: pb });
+  });
+
+  const mergeSplitCollinearEdges = (rawEdges, collinearDegTol = 3.0) => {
+    if (!Array.isArray(rawEdges) || rawEdges.length < 2) { return rawEdges || []; }
+    const cosTol = Math.cos(THREE.MathUtils.degToRad(Math.max(0.1, collinearDegTol)));
+    const keyOf = (a, b) => {
+      const ia = a.id;
+      const ib = b.id;
+      return ia < ib ? `${ia}|${ib}` : `${ib}|${ia}`;
+    };
+
+    let work = rawEdges.slice();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const adj = new Map();
+      const addAdj = (a, b) => {
+        if (!adj.has(a)) { adj.set(a, []); }
+        adj.get(a).push(b);
+      };
+      const edgeKeySet = new Set();
+      work.forEach((e) => {
+        if (!e?.pointA || !e?.pointB || e.pointA === e.pointB) { return; }
+        const k = keyOf(e.pointA, e.pointB);
+        if (edgeKeySet.has(k)) { return; }
+        edgeKeySet.add(k);
+        addAdj(e.pointA, e.pointB);
+        addAdj(e.pointB, e.pointA);
+      });
+
+      for (const [mid, neighbors] of adj.entries()) {
+        if (!Array.isArray(neighbors) || neighbors.length !== 2) { continue; }
+        const n0 = neighbors[0];
+        const n1 = neighbors[1];
+        if (!n0 || !n1 || n0 === n1) { continue; }
+
+        const v0 = n0.position.clone().sub(mid.position);
+        const v1 = n1.position.clone().sub(mid.position);
+        const l0 = v0.lengthSq();
+        const l1 = v1.lengthSq();
+        if (l0 <= 1e-12 || l1 <= 1e-12) { continue; }
+        v0.multiplyScalar(1 / Math.sqrt(l0));
+        v1.multiplyScalar(1 / Math.sqrt(l1));
+        const d = Math.abs(v0.dot(v1));
+        if (d < cosTol) { continue; }
+
+        // mid を挟んだ2分割辺を 1 本に統合
+        const kA = keyOf(mid, n0);
+        const kB = keyOf(mid, n1);
+        const next = [];
+        work.forEach((e) => {
+          const k = keyOf(e.pointA, e.pointB);
+          if (k === kA || k === kB) { return; }
+          next.push(e);
+        });
+        work = next;
+        // edgeKeySet はこの時点の work で再構築するため、ここでは使わない
+        const edgeKeySet = new Set(work.map((e) => keyOf(e.pointA, e.pointB)));
+        if (!edgeKeySet.has(keyOf(n0, n1))) {
+          work.push({ pointA: n0, pointB: n1 });
+        }
+        changed = true;
+        break;
+      }
+    }
+    return work;
+  };
+
+  return mergeSplitCollinearEdges(edges, 5.5);
+}
+
+function getDifferenceMeshRawControlPointEdges(mesh) {
+  const pos = mesh?.geometry?.attributes?.position;
+  if (!mesh?.userData?.differenceSpacePlane || !pos) { return []; }
+  const cpList = mesh.children.filter((c) => c?.userData?.differenceControlPoint);
+  if (cpList.length < 2) { return []; }
+
+  mesh.geometry.computeBoundingBox?.();
+  const meshDiag = mesh.geometry.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  const nearestTolSq = Math.max(0.04, meshDiag * 0.08) ** 2;
+
+  const idxToPoint = new Map();
+  cpList.forEach((p) => {
+    const ids = p?.userData?.differenceVertexIndices;
+    if (!Array.isArray(ids)) { return; }
+    ids.forEach((idx) => {
+      if (Number.isInteger(idx) && idx >= 0 && idx < pos.count) {
+        idxToPoint.set(idx, p);
+      }
+    });
+  });
+  const cornerMap = ensureDifferenceCornerVertexMap(mesh);
+  if (cornerMap) {
+    cpList.forEach((p) => {
+      const key = p?.userData?.differenceCornerKey;
+      if (!key || !Array.isArray(cornerMap[key])) { return; }
+      cornerMap[key].forEach((idx) => {
+        if (Number.isInteger(idx) && idx >= 0 && idx < pos.count) {
+          idxToPoint.set(idx, p);
+        }
+      });
+    });
+  }
+  const resolvePointByIndex = (idx) => {
+    const mapped = idxToPoint.get(idx);
+    if (mapped) { return mapped; }
+    const vx = pos.getX(idx);
+    const vy = pos.getY(idx);
+    const vz = pos.getZ(idx);
+    let best = null;
+    let bestD = Infinity;
+    cpList.forEach((p) => {
+      const dx = p.position.x - vx;
+      const dy = p.position.y - vy;
+      const dz = p.position.z - vz;
+      const d = (dx * dx) + (dy * dy) + (dz * dz);
+      if (d < bestD) {
+        best = p;
+        bestD = d;
+      }
+    });
+    if (!best || bestD > nearestTolSq) { return null; }
+    idxToPoint.set(idx, best);
+    return best;
+  };
+
+  const edges = [];
+  const seen = new Set();
+  const addEdgeByIndex = (ia, ib) => {
+    const pa = resolvePointByIndex(ia);
+    const pb = resolvePointByIndex(ib);
+    if (!pa || !pb || pa === pb) { return; }
+    const key = pa.id < pb.id ? `${pa.id}|${pb.id}` : `${pb.id}|${pa.id}`;
+    if (seen.has(key)) { return; }
+    seen.add(key);
+    edges.push({ pointA: pa, pointB: pb });
+  };
+
+  const idx = mesh.geometry.getIndex();
+  const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3);
+  for (let t = 0; t < triCount; t += 1) {
+    const a = idx ? Number(idx.getX(t * 3 + 0)) : (t * 3 + 0);
+    const b = idx ? Number(idx.getX(t * 3 + 1)) : (t * 3 + 1);
+    const c = idx ? Number(idx.getX(t * 3 + 2)) : (t * 3 + 2);
+    addEdgeByIndex(a, b);
+    addEdgeByIndex(b, c);
+    addEdgeByIndex(c, a);
+  }
+  return edges;
+}
+
+function projectPointTOnSegment(point, a, b) {
+  const ab = b.clone().sub(a);
+  const lenSq = ab.lengthSq();
+  if (lenSq < 1e-10) { return 0; }
+  return point.clone().sub(a).dot(ab) / lenSq;
+}
+
+function distancePointToInfiniteLine(point, linePoint, lineDirNorm) {
+  const rel = point.clone().sub(linePoint);
+  const cross = new THREE.Vector3().crossVectors(rel, lineDirNorm);
+  return cross.length();
+}
+
+function rebuildDifferenceEdgeOverlapConstraints() {
+  differenceEdgeOverlapConstraints.length = 0;
+  const spaces = getActiveDifferenceSpaces();
+  if (spaces.length < 1) { return 0; }
+  const edges = spaces
+    .flatMap((mesh) => getDifferenceMeshRawControlPointEdges(mesh).map((edge) => ({ ...edge, mesh })))
+    .filter((edge) => edge?.pointA?.parent && edge?.pointB?.parent && edge.pointA !== edge.pointB);
+  if (edges.length < 2) { return 0; }
+
+  const maxDiag = spaces.reduce((acc, mesh) => {
+    mesh.geometry?.computeBoundingBox?.();
+    const d = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 0;
+    return Math.max(acc, d);
+  }, 0);
+  const distanceTol = Math.max(0.06, maxDiag * 0.035);
+  const overlapLenTol = Math.max(0.015, maxDiag * 0.008);
+  const parallelCos = Math.cos(THREE.MathUtils.degToRad(12.0));
+
+  const worldData = edges.map((edge) => {
+    const a = edge.pointA.getWorldPosition(new THREE.Vector3());
+    const b = edge.pointB.getWorldPosition(new THREE.Vector3());
+    const vec = b.clone().sub(a);
+    const len = vec.length();
+    const dir = len > 1e-8 ? vec.clone().multiplyScalar(1 / len) : new THREE.Vector3(0, 0, 0);
+    return { edge, a, b, len, dir };
+  });
+  const followerBest = new Map();
+  const upsertFollower = (candidate) => {
+    const key = candidate?.follower?.id;
+    if (!key) { return; }
+    const prev = followerBest.get(key);
+    if (!prev) {
+      followerBest.set(key, candidate);
+      return;
+    }
+    const prevScore = (prev.overlapLen * 3) + prev.masterLen;
+    const nextScore = (candidate.overlapLen * 3) + candidate.masterLen;
+    if (nextScore > prevScore) {
+      followerBest.set(key, candidate);
+    }
+  };
+
+  for (let i = 0; i < worldData.length; i += 1) {
+    const e1 = worldData[i];
+    if (e1.len < 1e-6) { continue; }
+    for (let j = i + 1; j < worldData.length; j += 1) {
+      const e2 = worldData[j];
+      if (e2.len < 1e-6) { continue; }
+      const samePair = (
+        (e1.edge.pointA === e2.edge.pointA && e1.edge.pointB === e2.edge.pointB)
+        || (e1.edge.pointA === e2.edge.pointB && e1.edge.pointB === e2.edge.pointA)
+      );
+      if (samePair) {
+        continue;
+      }
+      const dot = Math.abs(e1.dir.dot(e2.dir));
+      if (dot < parallelCos) { continue; }
+
+      const d11 = distancePointToInfiniteLine(e1.a, e2.a, e2.dir);
+      const d12 = distancePointToInfiniteLine(e1.b, e2.a, e2.dir);
+      const d21 = distancePointToInfiniteLine(e2.a, e1.a, e1.dir);
+      const d22 = distancePointToInfiniteLine(e2.b, e1.a, e1.dir);
+      const lineDistance = Math.min(Math.max(d11, d12), Math.max(d21, d22));
+      if (lineDistance > distanceTol) { continue; }
+
+      let master = e1;
+      let slave = e2;
+      if (e2.len > e1.len) {
+        master = e2;
+        slave = e1;
+      } else if (Math.abs(e2.len - e1.len) < 1e-6) {
+        const mA = Math.min(e1.edge.pointA.id, e1.edge.pointB.id);
+        const sA = Math.min(e2.edge.pointA.id, e2.edge.pointB.id);
+        if (sA < mA) {
+          master = e2;
+          slave = e1;
+        }
+      }
+
+      const t0 = projectPointTOnSegment(slave.a, master.a, master.b);
+      const t1 = projectPointTOnSegment(slave.b, master.a, master.b);
+      const rangeMin = Math.max(0, Math.min(t0, t1));
+      const rangeMax = Math.min(1, Math.max(t0, t1));
+      const overlapLen = Math.max(0, (rangeMax - rangeMin) * master.len);
+      if (overlapLen < overlapLenTol) { continue; }
+
+      const addFollower = (followerPoint, followerWorld) => {
+        if (!followerPoint?.parent || followerPoint === master.edge.pointA || followerPoint === master.edge.pointB) { return; }
+        const rawT = projectPointTOnSegment(followerWorld, master.a, master.b);
+        const t = THREE.MathUtils.clamp(rawT, 0, 1);
+        upsertFollower({
+          masterA: master.edge.pointA,
+          masterB: master.edge.pointB,
+          follower: followerPoint,
+          t,
+          overlapLen,
+          masterLen: master.len,
+        });
+      };
+      addFollower(slave.edge.pointA, slave.a);
+      addFollower(slave.edge.pointB, slave.b);
+    }
+  }
+
+  followerBest.forEach((entry) => {
+    differenceEdgeOverlapConstraints.push({
+      masterA: entry.masterA,
+      masterB: entry.masterB,
+      follower: entry.follower,
+      t: entry.t,
+    });
+  });
+  return differenceEdgeOverlapConstraints.length;
+}
+
+function applyDifferenceEdgeOverlapConstraints(dirtyMeshes = null) {
+  if (!Array.isArray(differenceEdgeOverlapConstraints) || differenceEdgeOverlapConstraints.length < 1) { return 0; }
+  const usedDirty = dirtyMeshes || new Set();
+  const touched = [];
+  let changed = 0;
+  for (let i = 0; i < differenceEdgeOverlapConstraints.length; i += 1) {
+    const c = differenceEdgeOverlapConstraints[i];
+    const a = c?.masterA;
+    const b = c?.masterB;
+    const follower = c?.follower;
+    if (!a?.parent || !b?.parent || !follower?.parent) { continue; }
+    const aw = a.getWorldPosition(new THREE.Vector3());
+    const bw = b.getWorldPosition(new THREE.Vector3());
+    const targetWorld = aw.clone().lerp(bw, THREE.MathUtils.clamp(Number(c.t) || 0, 0, 1));
+    const inv = new THREE.Matrix4().copy(follower.parent.matrixWorld).invert();
+    const targetLocal = targetWorld.applyMatrix4(inv);
+    if (follower.position.distanceToSquared(targetLocal) <= 1e-12) { continue; }
+    follower.position.copy(targetLocal);
+    usedDirty.add(follower.parent);
+    touched.push(follower);
+    changed += 1;
+  }
+  if (changed > 0) {
+    propagateDifferenceSharedPoints(touched, usedDirty);
+  }
+  return changed;
+}
+
+function refreshDifferenceSelectedEdgeHighlights() {
+  clearDifferenceSelectedEdgeHighlights();
+  refreshDifferenceIntersectionVisuals();
+  if (differenceViewMode === 'preview') { return; }
+  if (!differenceSpaceModeActive || differenceSpaceTransformMode !== 'move') { return; }
+  for (const [key, entry] of Array.from(differenceSelectedEdges.entries())) {
+    const pa = entry?.pointA;
+    const pb = entry?.pointB;
+    const mesh = entry?.mesh;
+    if (!mesh?.parent || !pa?.parent || !pb?.parent || pa.parent !== mesh || pb.parent !== mesh) {
+      differenceSelectedEdges.delete(key);
+    }
+  }
+  const activeMeshes = differenceSpacePlanes.filter((m) => m?.parent);
+  activeMeshes.forEach((mesh) => {
+    if (!mesh?.parent) { return; }
+    const edges = getDifferenceMeshControlPointEdges(mesh);
+    edges.forEach((edge) => {
+      const edgeKey = getDifferenceEdgeKey(mesh, edge.pointA, edge.pointB);
+      const isSelected = Boolean(edgeKey && differenceSelectedEdges.has(edgeKey));
+      const color = isSelected ? 0x8fd8ff : 0x5c8fff;
+      const line = createDifferenceEdgeHighlightLine(edge.pointA, edge.pointB, color);
+      if (!line) { return; }
+      scene.add(line);
+      differenceSelectedEdgeHighlights.push(line);
+    });
+  });
+}
+
+function toggleDifferenceEdgeSelection(mesh, pointA, pointB) {
+  if (!mesh?.userData?.differenceSpacePlane || !pointA?.userData?.differenceControlPoint || !pointB?.userData?.differenceControlPoint) { return false; }
+  const key = getDifferenceEdgeKey(mesh, pointA, pointB);
+  if (!key) { return false; }
+  if (differenceSelectedEdges.has(key)) {
+    differenceSelectedEdges.delete(key);
+    refreshDifferenceSelectedEdgeHighlights();
+    return false;
+  }
+  differenceSelectedEdges.set(key, {
+    mesh,
+    pointA,
+    pointB,
+  });
+  refreshDifferenceSelectedEdgeHighlights();
+  return true;
+}
+
+function clearDifferenceEdgeSelection() {
+  differenceSelectedEdges.clear();
+  clearDifferenceSelectedEdgeHighlights();
+  clearDifferenceIntersectionVisuals();
+}
+
+function getNearestDifferenceEdgeHitFromFaceHit(hit) {
+  const mesh = hit?.object;
+  const localNormal = getLocalFaceNormalFromHit(hit);
+  if (!mesh?.userData?.differenceSpacePlane || !localNormal || !mesh?.geometry?.attributes?.position) { return null; }
+  const candidateEdges = getDifferenceMeshControlPointEdges(mesh);
+  if (!Array.isArray(candidateEdges) || candidateEdges.length < 1) { return null; }
+  const worldClick = hit?.point?.clone?.();
+  if (!worldClick) { return null; }
+  const worldToLocal = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+  const clickLocal = worldClick.clone().applyMatrix4(worldToLocal);
+  const pointToSegmentDistance = (p, a, b) => {
+    const ab = b.clone().sub(a);
+    const len2 = ab.lengthSq();
+    if (len2 < 1e-10) { return p.distanceTo(a); }
+    const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / len2, 0, 1);
+    const closest = a.clone().add(ab.multiplyScalar(t));
+    return p.distanceTo(closest);
+  };
+  let best = null;
+  candidateEdges.forEach((edge) => {
+    const a = edge?.pointA;
+    const b = edge?.pointB;
+    if (!a?.userData?.differenceControlPoint || !b?.userData?.differenceControlPoint) { return; }
+    const dist = pointToSegmentDistance(clickLocal, a.position, b.position);
+    if (!best || dist < best.distanceLocal) {
+      best = { pointA: a, pointB: b, distanceLocal: dist };
+    }
+  });
+  if (!best) { return null; }
+  mesh.geometry.computeBoundingBox?.();
+  const size = mesh.geometry.boundingBox?.getSize?.(new THREE.Vector3()) || new THREE.Vector3(1, 1, 1);
+  const diag = Math.max(1e-6, size.length());
+  // 面選択を阻害しないよう、辺ヒット判定はかなり近接時だけ有効にする
+  const maxDistance = Math.max(0.01, Math.min(0.04, diag * 0.03));
+  if (best.distanceLocal > maxDistance) { return null; }
+  return {
+    mesh,
+    pointA: best.pointA,
+    pointB: best.pointB,
+    distanceLocal: best.distanceLocal,
+    localNormal,
+    hit,
+  };
 }
 
 function updateDifferenceFaceHoverFromPointer() {
@@ -5137,6 +6614,7 @@ function toggleDifferenceFaceSelection(mesh, localNormal) {
 function clearDifferenceFaceSelection() {
   differenceSelectedFaces.clear();
   clearDifferenceSelectedFaceHighlights();
+  clearDifferenceEdgeSelection();
 }
 
 function clearDifferenceMovePending() {
@@ -5146,6 +6624,7 @@ function clearDifferenceMovePending() {
   differenceMoveHitKind = 'none';
   differenceMoveHitControlPoint = null;
   differenceMoveHitFace = null;
+  differenceMoveHitEdge = null;
 }
 
 function startDifferenceMoveDragFromPending() {
@@ -5179,6 +6658,28 @@ function startDifferenceMoveDragFromPending() {
     }
     return ok;
   }
+  if (differenceMoveHitKind === 'edge' && differenceMoveHitEdge?.mesh && differenceMoveHitEdge?.pointA && differenceMoveHitEdge?.pointB) {
+    const primary = differenceMoveHitEdge;
+    const dragPoints = [];
+    const pushUnique = (p) => {
+      if (!p?.userData?.differenceControlPoint || !p?.parent) { return; }
+      if (dragPoints.includes(p)) { return; }
+      dragPoints.push(p);
+    };
+    pushUnique(primary.pointA);
+    pushUnique(primary.pointB);
+    Array.from(differenceSelectedEdges.values()).forEach((entry) => {
+      if (!entry?.mesh?.parent) { return; }
+      pushUnique(entry?.pointA);
+      pushUnique(entry?.pointB);
+    });
+    if (dragPoints.length < 1) { return false; }
+    const ok = beginDifferenceControlPointDrag(dragPoints[0], dragPoints);
+    if (ok) {
+      clearDifferenceMovePending();
+    }
+    return ok;
+  }
   return false;
 }
 
@@ -5189,8 +6690,23 @@ function toggleDifferenceMoveSelectionFromPending() {
   }
   if (differenceMoveHitKind === 'point' && differenceMoveHitControlPoint?.userData?.differenceControlPoint) {
     toggleDifferenceControlPointSelection(differenceMoveHitControlPoint);
-    updateDifferenceStatus(`point選択: ${differenceSelectedControlPoints.size} / face選択: ${differenceSelectedFaces.size}`);
+    updateDifferenceSelectionStatus();
     clearDifferenceFaceHighlight();
+    clearDifferenceMovePending();
+    return true;
+  }
+  if (differenceMoveHitKind === 'edge' && differenceMoveHitEdge?.mesh && differenceMoveHitEdge?.pointA && differenceMoveHitEdge?.pointB) {
+    const selected = toggleDifferenceEdgeSelection(
+      differenceMoveHitEdge.mesh,
+      differenceMoveHitEdge.pointA,
+      differenceMoveHitEdge.pointB,
+    );
+    if (selected) {
+      showDifferenceFaceHighlight(differenceMoveHitEdge.hit);
+    } else {
+      clearDifferenceFaceHighlight();
+    }
+    updateDifferenceSelectionStatus();
     clearDifferenceMovePending();
     return true;
   }
@@ -5220,7 +6736,7 @@ function toggleDifferenceMoveSelectionFromPending() {
     updatePointRotateVisuals();
 
     const selected = toggleDifferenceFaceSelection(differenceMoveHitFace.mesh, differenceMoveHitFace.localNormal);
-    updateDifferenceStatus(`point選択: ${differenceSelectedControlPoints.size} / face選択: ${differenceSelectedFaces.size}`);
+    updateDifferenceSelectionStatus();
     if (selected) {
       showDifferenceFaceHighlight({
         object: differenceMoveHitFace.mesh,
@@ -5254,9 +6770,9 @@ function createDifferenceSpacePlane(position) {
       opacity: 0.5,
       side: THREE.DoubleSide,
       depthWrite: false,
-      metalness: 0.0,
-      roughness: 1.0,
-      flatShading: true,
+      metalness: 0.08,
+      roughness: 0.58,
+      flatShading: false,
     }),
   );
   plane.position.copy(position);
@@ -5380,15 +6896,74 @@ function getDifferenceControlPointMapByCornerKey(mesh) {
   return out;
 }
 
+function getDifferenceFaceControlPointsByPlaneCluster(mesh, localNormal, facePointLocal) {
+  if (!mesh || !localNormal || !facePointLocal) { return []; }
+  const cps = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
+  if (cps.length < 3) { return []; }
+  const n = localNormal.clone().normalize();
+  if (n.lengthSq() < 1e-8) { return []; }
+
+  mesh.geometry?.computeBoundingBox?.();
+  const diag = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  const clusterGap = Math.max(0.02, diag * 0.018);
+  const planeTol = Math.max(0.05, diag * 0.03);
+  const targetD = n.dot(facePointLocal);
+
+  const entries = cps.map((point) => ({
+    point,
+    d: n.dot(point.position),
+  })).sort((a, b) => a.d - b.d);
+  if (entries.length < 3) { return []; }
+
+  const clusters = [];
+  let current = [entries[0]];
+  for (let i = 1; i < entries.length; i += 1) {
+    if (Math.abs(entries[i].d - entries[i - 1].d) <= clusterGap) {
+      current.push(entries[i]);
+    } else {
+      clusters.push(current);
+      current = [entries[i]];
+    }
+  }
+  clusters.push(current);
+  if (clusters.length < 1) { return []; }
+
+  let bestCluster = clusters[0];
+  let bestDist = Infinity;
+  clusters.forEach((cluster) => {
+    const mean = cluster.reduce((acc, item) => acc + item.d, 0) / cluster.length;
+    const dist = Math.abs(mean - targetD);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestCluster = cluster;
+    }
+  });
+
+  const meanD = bestCluster.reduce((acc, item) => acc + item.d, 0) / bestCluster.length;
+  const expanded = entries
+    .filter((item) => Math.abs(item.d - meanD) <= planeTol)
+    .map((item) => item.point);
+
+  if (expanded.length >= 3) { return expanded; }
+  if (bestCluster.length >= 3) { return bestCluster.map((item) => item.point); }
+  return [];
+}
+
 function getDifferenceFaceControlPoints(mesh, localNormal, facePointLocal = null) {
   if (!mesh || !localNormal) { return []; }
 
   // クリック面の情報がある場合は、軸依存ではなく「平面距離」で面頂点を抽出する。
   // これにより斜め面でも押し出し対象の頂点群を拾える。
   if (facePointLocal) {
+    const clustered = getDifferenceFaceControlPointsByPlaneCluster(mesh, localNormal, facePointLocal);
+    if (clustered.length >= 3) {
+      return clustered;
+    }
     const n = localNormal.clone().normalize();
     if (n.lengthSq() > 1e-8) {
-      const planeTol = 0.11;
+      mesh.geometry?.computeBoundingBox?.();
+      const diag = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+      const planeTol = Math.max(0.07, diag * 0.04);
       const planePoints = mesh.children.filter((child) => {
         if (!child?.userData?.differenceControlPoint) { return false; }
         const p = child.position;
@@ -5419,6 +6994,53 @@ function getDifferenceFaceControlPoints(mesh, localNormal, facePointLocal = null
   return points;
 }
 
+function getDifferenceFaceControlPointsFromTriangles(mesh, localNormal, facePointLocal, tol = 0.14) {
+  if (!mesh?.geometry?.attributes?.position || !localNormal || !facePointLocal) { return []; }
+  const geometry = mesh.geometry;
+  const pos = geometry.attributes.position;
+  const n = localNormal.clone().normalize();
+  if (n.lengthSq() < 1e-8) { return []; }
+
+  const idxAttr = geometry.getIndex();
+  const triCount = idxAttr ? Math.floor(idxAttr.count / 3) : Math.floor(pos.count / 3);
+  if (triCount < 1) { return []; }
+
+  const nearFaceVertexIndices = new Set();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const readV = (i, out) => out.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+  for (let t = 0; t < triCount; t += 1) {
+    const ia = idxAttr ? idxAttr.getX(t * 3 + 0) : (t * 3 + 0);
+    const ib = idxAttr ? idxAttr.getX(t * 3 + 1) : (t * 3 + 1);
+    const ic = idxAttr ? idxAttr.getX(t * 3 + 2) : (t * 3 + 2);
+    readV(ia, a);
+    readV(ib, b);
+    readV(ic, c);
+    const da = Math.abs(a.clone().sub(facePointLocal).dot(n));
+    const db = Math.abs(b.clone().sub(facePointLocal).dot(n));
+    const dc = Math.abs(c.clone().sub(facePointLocal).dot(n));
+    if (da <= tol && db <= tol && dc <= tol) {
+      nearFaceVertexIndices.add(ia);
+      nearFaceVertexIndices.add(ib);
+      nearFaceVertexIndices.add(ic);
+    }
+  }
+  if (nearFaceVertexIndices.size < 1) { return []; }
+
+  const points = [];
+  mesh.children.forEach((child) => {
+    if (!child?.userData?.differenceControlPoint) { return; }
+    const ids = child.userData?.differenceVertexIndices;
+    if (!Array.isArray(ids) || ids.length < 1) { return; }
+    const used = ids.some((i) => nearFaceVertexIndices.has(i));
+    if (used) {
+      points.push(child);
+    }
+  });
+  return points;
+}
+
 function rebuildDifferenceControlPointsFromGeometry(mesh) {
   if (!mesh?.geometry?.attributes?.position) { return; }
   const oldPoints = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
@@ -5429,7 +7051,10 @@ function rebuildDifferenceControlPointsFromGeometry(mesh) {
   });
   const pos = mesh.geometry.attributes.position;
   const grouped = new Map();
-  const eps = 1e-5;
+  mesh.geometry.computeBoundingBox?.();
+  const diag = mesh.geometry.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  // 近接頂点の微小ブレを最初からまとめる（点増殖の抑制）
+  const eps = Math.max(1e-5, diag * 2e-4);
   for (let i = 0; i < pos.count; i += 1) {
     const x = pos.getX(i);
     const y = pos.getY(i);
@@ -5463,6 +7088,122 @@ function rebuildDifferenceControlPointsFromGeometry(mesh) {
     mesh.add(point);
   });
   updateDifferenceControlPointMarkerTransform(mesh);
+  mergeCoincidentDifferenceControlPoints(mesh);
+}
+
+function pruneDifferenceControlPointsByMeaningfulEdges(mesh) {
+  if (!mesh?.userData?.differenceSpacePlane) { return 0; }
+  const points = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
+  if (points.length < 3) { return 0; }
+
+  const meaningfulEdges = getDifferenceMeshControlPointEdges(mesh);
+  if (!Array.isArray(meaningfulEdges) || meaningfulEdges.length < 1) { return 0; }
+
+  const used = new Set();
+  meaningfulEdges.forEach((edge) => {
+    if (edge?.pointA?.parent === mesh) { used.add(edge.pointA); }
+    if (edge?.pointB?.parent === mesh) { used.add(edge.pointB); }
+  });
+  // 落とし過ぎ防止: 最低4点は維持
+  if (used.size < 4) { return 0; }
+
+  let removed = 0;
+  points.forEach((point) => {
+    if (used.has(point)) { return; }
+    const links = Array.isArray(point.userData?.sharedDifferencePoints)
+      ? point.userData.sharedDifferencePoints.slice()
+      : [];
+    links.forEach((linked) => removeDifferenceSharedPointLink(point, linked));
+    if (differenceSelectedControlPoints.has(point)) {
+      differenceSelectedControlPoints.delete(point);
+    }
+    if (point.parent) {
+      point.parent.remove(point);
+    }
+    point.geometry?.dispose?.();
+    point.material?.dispose?.();
+    removed += 1;
+  });
+  if (removed > 0) {
+    updateDifferenceControlPointMarkerTransform(mesh);
+  }
+  return removed;
+}
+
+function mergeCoincidentDifferenceControlPoints(mesh, eps = null) {
+  if (!mesh?.userData?.differenceSpacePlane) { return 0; }
+  const points = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
+  if (points.length < 2) { return 0; }
+  mesh.geometry?.computeBoundingBox?.();
+  const diag = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  // 辺を維持したまま点を統合したいので、許容をやや広めにする
+  const tol = Number.isFinite(eps) ? Math.max(1e-6, eps) : Math.max(2e-5, diag * 5e-4);
+
+  const keyOfPos = (p) => {
+    const x = Math.round(p.position.x / tol);
+    const y = Math.round(p.position.y / tol);
+    const z = Math.round(p.position.z / tol);
+    return `${x},${y},${z}`;
+  };
+
+  const buckets = new Map();
+  points.forEach((p) => {
+    const k = keyOfPos(p);
+    if (!buckets.has(k)) { buckets.set(k, []); }
+    buckets.get(k).push(p);
+  });
+
+  let removed = 0;
+  buckets.forEach((group) => {
+    if (!Array.isArray(group) || group.length < 2) { return; }
+    const keeper = group[0];
+    const keepIdx = new Set(Array.isArray(keeper.userData?.differenceVertexIndices) ? keeper.userData.differenceVertexIndices : []);
+    for (let i = 1; i < group.length; i += 1) {
+      const point = group[i];
+      if (!point || !point.parent || point === keeper) { continue; }
+
+      const idx = Array.isArray(point.userData?.differenceVertexIndices) ? point.userData.differenceVertexIndices : [];
+      idx.forEach((v) => {
+        if (Number.isInteger(v)) { keepIdx.add(v); }
+      });
+
+      const links = Array.isArray(point.userData?.sharedDifferencePoints)
+        ? point.userData.sharedDifferencePoints.slice()
+        : [];
+      links.forEach((linked) => {
+        if (!linked || linked === keeper || linked === point) { return; }
+        addDifferenceSharedPointLink(keeper, linked);
+        removeDifferenceSharedPointLink(point, linked);
+      });
+      removeDifferenceSharedPointLink(point, keeper);
+
+      if (differenceSelectedControlPoints.has(point)) {
+        differenceSelectedControlPoints.delete(point);
+        differenceSelectedControlPoints.add(keeper);
+      }
+      if (differenceControlPointDragPoint === point) {
+        differenceControlPointDragPoint = keeper;
+      }
+      if (differenceMoveHitControlPoint === point) {
+        differenceMoveHitControlPoint = keeper;
+      }
+
+      point.parent.remove(point);
+      point.geometry?.dispose?.();
+      point.material?.dispose?.();
+      removed += 1;
+    }
+    keeper.userData = {
+      ...(keeper.userData || {}),
+      differenceVertexIndices: Array.from(keepIdx),
+    };
+    setDifferenceControlPointVisual(keeper);
+  });
+
+  if (removed > 0) {
+    updateDifferenceControlPointMarkerTransform(mesh);
+  }
+  return removed;
 }
 
 function addDifferenceSharedPointLink(a, b) {
@@ -5485,6 +7226,821 @@ function addDifferenceSharedPointLink(a, b) {
   if (!isDifferenceControlPointSelected(b)) {
     setDifferenceControlPointVisual(b);
   }
+}
+
+function removeDifferenceSharedPointLink(a, b) {
+  if (!a || !b || a === b) { return; }
+  const linksA = Array.isArray(a.userData?.sharedDifferencePoints) ? a.userData.sharedDifferencePoints : [];
+  a.userData.sharedDifferencePoints = linksA.filter((p) => p && p !== b);
+  const linksB = Array.isArray(b.userData?.sharedDifferencePoints) ? b.userData.sharedDifferencePoints : [];
+  b.userData.sharedDifferencePoints = linksB.filter((p) => p && p !== a);
+}
+
+function getActiveDifferenceSpaces() {
+  return differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.geometry && mesh?.userData?.differenceSpacePlane);
+}
+
+function getDifferenceMeshBoundaryControlPoints(mesh) {
+  if (!mesh?.userData?.differenceSpacePlane || !mesh?.geometry?.attributes?.position) { return []; }
+  const geometry = mesh.geometry;
+  const pos = geometry.attributes.position;
+  const idx = geometry.getIndex();
+  const cpList = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
+  if (cpList.length < 2 || pos.count < 3) { return []; }
+
+  geometry.computeBoundingBox?.();
+  const diag = geometry.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  const weldTol = Math.max(1e-5, diag * 8e-4);
+  const findTolSq = Math.max(0.03, diag * 0.06) ** 2;
+  const edgeCount = new Map();
+  const keyOfCoord = (x, y, z) => {
+    const ix = Math.round(x / weldTol);
+    const iy = Math.round(y / weldTol);
+    const iz = Math.round(z / weldTol);
+    return `${ix},${iy},${iz}`;
+  };
+  const keyOfVertex = (vi) => keyOfCoord(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+  const addEdge = (a, b) => {
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a === b) { return; }
+    const ka = keyOfVertex(a);
+    const kb = keyOfVertex(b);
+    const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+    edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+  };
+
+  const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3);
+  for (let t = 0; t < triCount; t += 1) {
+    const a = idx ? Number(idx.getX(t * 3 + 0)) : (t * 3 + 0);
+    const b = idx ? Number(idx.getX(t * 3 + 1)) : (t * 3 + 1);
+    const c = idx ? Number(idx.getX(t * 3 + 2)) : (t * 3 + 2);
+    addEdge(a, b);
+    addEdge(b, c);
+    addEdge(c, a);
+  }
+
+  const resolvePointByKey = (vKey) => {
+    const [sx, sy, sz] = String(vKey).split(',');
+    const vx = Number(sx) * weldTol;
+    const vy = Number(sy) * weldTol;
+    const vz = Number(sz) * weldTol;
+    let best = null;
+    let bestD = Infinity;
+    cpList.forEach((point) => {
+      const dx = point.position.x - vx;
+      const dy = point.position.y - vy;
+      const dz = point.position.z - vz;
+      const d = (dx * dx) + (dy * dy) + (dz * dz);
+      if (d < bestD) {
+        bestD = d;
+        best = point;
+      }
+    });
+    if (!best || bestD > findTolSq) { return null; }
+    return best;
+  };
+
+  const boundaryPoints = new Set();
+  edgeCount.forEach((count, key) => {
+    // 境界辺: 三角形1枚のみに属する辺
+    if (count !== 1) { return; }
+    const [ka, kb] = key.split('|');
+    const pa = resolvePointByKey(ka);
+    const pb = resolvePointByKey(kb);
+    if (pa?.parent === mesh) { boundaryPoints.add(pa); }
+    if (pb?.parent === mesh) { boundaryPoints.add(pb); }
+  });
+
+  // 完全閉空間などで境界辺が0件でも、意味あるエッジ上の点は対象に含める。
+  if (boundaryPoints.size < 2) {
+    const edges = getDifferenceMeshControlPointEdges(mesh);
+    edges.forEach((edge) => {
+      if (edge?.pointA?.parent === mesh) { boundaryPoints.add(edge.pointA); }
+      if (edge?.pointB?.parent === mesh) { boundaryPoints.add(edge.pointB); }
+    });
+  }
+  return Array.from(boundaryPoints);
+}
+
+function mergeOverlappedBoundaryControlPoints(threshold = differenceBoundaryMergeDistance) {
+  const spaces = getActiveDifferenceSpaces();
+  if (spaces.length < 1) { return 0; }
+  const boundaryPoints = spaces
+    .flatMap((mesh) => getDifferenceMeshBoundaryControlPoints(mesh))
+    .filter((point) => point?.userData?.differenceControlPoint && point?.parent);
+  if (boundaryPoints.length < 2) { return 0; }
+
+  const maxDiag = spaces.reduce((acc, mesh) => {
+    mesh.geometry?.computeBoundingBox?.();
+    const d = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 0;
+    return Math.max(acc, d);
+  }, 0);
+  const adaptiveTol = Math.max(Number(threshold) || differenceBoundaryMergeDistance, maxDiag * 0.015);
+  const tol = Math.max(1e-6, adaptiveTol);
+  const tolSq = tol * tol;
+  const worldPoints = boundaryPoints.map((point) => point.getWorldPosition(new THREE.Vector3()));
+  const visited = new Array(boundaryPoints.length).fill(false);
+  const dirtyMeshes = new Set();
+  const touchedPoints = [];
+  let merged = 0;
+
+  for (let i = 0; i < boundaryPoints.length; i += 1) {
+    if (visited[i]) { continue; }
+    const cluster = [i];
+    visited[i] = true;
+    const queue = [i];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      const p = worldPoints[cur];
+      for (let j = 0; j < boundaryPoints.length; j += 1) {
+        if (visited[j]) { continue; }
+        if (p.distanceToSquared(worldPoints[j]) > tolSq) { continue; }
+        visited[j] = true;
+        cluster.push(j);
+        queue.push(j);
+      }
+    }
+    if (cluster.length < 2) { continue; }
+
+    const center = new THREE.Vector3();
+    cluster.forEach((idxCp) => center.add(worldPoints[idxCp]));
+    center.multiplyScalar(1 / cluster.length);
+    const keeper = boundaryPoints[cluster[0]];
+    cluster.forEach((idxCp) => {
+      const point = boundaryPoints[idxCp];
+      const inv = new THREE.Matrix4().copy(point.parent.matrixWorld).invert();
+      point.position.copy(center.clone().applyMatrix4(inv));
+      dirtyMeshes.add(point.parent);
+      touchedPoints.push(point);
+      if (point !== keeper) {
+        addDifferenceSharedPointLink(keeper, point);
+      }
+    });
+    merged += (cluster.length - 1);
+  }
+
+  if (merged < 1) {
+    rebuildDifferenceEdgeOverlapConstraints();
+    return 0;
+  }
+  propagateDifferenceSharedPoints(touchedPoints, dirtyMeshes);
+  dirtyMeshes.forEach((mesh) => {
+    syncDifferenceGeometryFromControlPoints(mesh);
+    mergeCoincidentDifferenceControlPoints(mesh, Math.max(1e-6, tol * 0.6));
+    updateDifferenceControlPointMarkerTransform(mesh);
+  });
+  rebuildDifferenceEdgeOverlapConstraints();
+  return merged;
+}
+
+function buildDifferenceIntersectGroups(spaces = getActiveDifferenceSpaces()) {
+  const list = Array.isArray(spaces)
+    ? spaces.filter((mesh) => mesh?.parent && mesh?.geometry)
+    : [];
+  if (list.length < 2) { return []; }
+
+  const parents = list.map((_, i) => i);
+  const findRoot = (i) => {
+    let node = i;
+    while (parents[node] !== node) {
+      parents[node] = parents[parents[node]];
+      node = parents[node];
+    }
+    return node;
+  };
+  const unionSet = (a, b) => {
+    const ra = findRoot(a);
+    const rb = findRoot(b);
+    if (ra !== rb) {
+      parents[rb] = ra;
+    }
+  };
+
+  const boxes = list.map((mesh) => {
+    mesh.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(mesh);
+  });
+  for (let i = 0; i < list.length; i += 1) {
+    for (let j = i + 1; j < list.length; j += 1) {
+      const boxA = boxes[i];
+      const boxB = boxes[j];
+      if (!boxA || !boxB || boxA.isEmpty() || boxB.isEmpty()) { continue; }
+      if (!boxA.intersectsBox(boxB)) { continue; }
+      unionSet(i, j);
+    }
+  }
+
+  const groups = new Map();
+  list.forEach((mesh, idx) => {
+    const root = findRoot(idx);
+    if (!groups.has(root)) {
+      groups.set(root, []);
+    }
+    groups.get(root).push(mesh);
+  });
+  return Array.from(groups.values()).filter((group) => group.length >= 2);
+}
+
+function updateDifferenceUnifyButtonState() {
+  if (!differenceUnifyButton) { return; }
+  let isDifferenceContext = false;
+  try {
+    isDifferenceContext = (editObject === 'DIFFERENCE_SPACE') || differenceSpaceModeActive;
+  } catch (err) {
+    isDifferenceContext = false;
+  }
+  differenceUnifyButton.style.display = isDifferenceContext ? 'block' : 'none';
+  differenceUnifyButton.disabled = !isDifferenceContext;
+  if (differenceViewToggleButton) {
+    differenceViewToggleButton.style.display = isDifferenceContext ? 'block' : 'none';
+    differenceViewToggleButton.disabled = !isDifferenceContext;
+  }
+  let viewModeReady = true;
+  try {
+    void differenceViewMode;
+  } catch (err) {
+    viewModeReady = false;
+  }
+  if (!isDifferenceContext && viewModeReady && differenceViewMode !== 'diff') {
+    differenceViewMode = 'diff';
+    applyDifferenceViewMode();
+  }
+}
+
+function removeDifferenceSpaceMeshForUnify(mesh) {
+  if (!mesh) { return false; }
+  const controlPoints = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
+  controlPoints.forEach((point) => {
+    if (isDifferenceControlPointSelected(point)) {
+      differenceSelectedControlPoints.delete(point);
+    }
+    const linkedPoints = Array.isArray(point.userData?.sharedDifferencePoints)
+      ? point.userData.sharedDifferencePoints.slice()
+      : [];
+    linkedPoints.forEach((linked) => removeDifferenceSharedPointLink(point, linked));
+    point.userData.sharedDifferencePoints = [];
+    mesh.remove(point);
+    point.geometry?.dispose?.();
+    point.material?.dispose?.();
+  });
+
+  if (differenceSelectedPlane === mesh) {
+    selectDifferencePlane(null);
+  }
+  if (mesh.parent) {
+    mesh.parent.remove(mesh);
+  }
+  mesh.geometry?.dispose?.();
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach((mat) => mat?.dispose?.());
+  } else {
+    mesh.material?.dispose?.();
+  }
+  const idx = differenceSpacePlanes.indexOf(mesh);
+  if (idx >= 0) {
+    differenceSpacePlanes.splice(idx, 1);
+  }
+  return true;
+}
+
+function cleanupDifferenceUnifiedGeometry(geometry) {
+  if (!geometry?.attributes?.position) { return geometry || null; }
+  let geom = geometry;
+  const pos = geom.attributes.position;
+  if (!geom.getIndex()) {
+    const index = Array.from({ length: pos.count }, (_, i) => i);
+    geom.setIndex(index);
+  }
+  const indexAttr = geom.getIndex();
+  if (indexAttr && indexAttr.count >= 3) {
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const ab = new THREE.Vector3();
+    const ac = new THREE.Vector3();
+    const cross = new THREE.Vector3();
+    const kept = [];
+    const triDedup = new Set();
+    for (let i = 0; i < indexAttr.count; i += 3) {
+      const ia = indexAttr.getX(i + 0);
+      const ib = indexAttr.getX(i + 1);
+      const ic = indexAttr.getX(i + 2);
+      a.set(pos.getX(ia), pos.getY(ia), pos.getZ(ia));
+      b.set(pos.getX(ib), pos.getY(ib), pos.getZ(ib));
+      c.set(pos.getX(ic), pos.getY(ic), pos.getZ(ic));
+      ab.subVectors(b, a);
+      ac.subVectors(c, a);
+      cross.crossVectors(ab, ac);
+      if (cross.lengthSq() <= 1e-12) { continue; }
+      const ka = Math.min(ia, ib, ic);
+      const kc = Math.max(ia, ib, ic);
+      const kb = (ia + ib + ic) - ka - kc;
+      const triKey = `${ka}|${kb}|${kc}`;
+      if (triDedup.has(triKey)) { continue; }
+      triDedup.add(triKey);
+      kept.push(ia, ib, ic);
+    }
+    if (kept.length >= 3 && kept.length < indexAttr.count) {
+      geom.setIndex(kept);
+    }
+  }
+  geom.computeBoundingBox?.();
+  const diag = geom.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  // 品質優先: 溶接を段階的に行い、微小な割れを減らす
+  const weldSteps = [
+    Math.max(1e-6, diag * 6e-5),
+    Math.max(1e-6, diag * 1e-4),
+    Math.max(1e-6, diag * 1.6e-4),
+  ];
+  weldSteps.forEach((eps) => {
+    const welded = mergeVertices(geom, eps) || geom;
+    if (welded !== geom) {
+      geom.dispose?.();
+      geom = welded;
+    }
+    geom.computeVertexNormals();
+    geom.computeBoundingBox?.();
+    geom.computeBoundingSphere?.();
+  });
+
+  // さらに微小三角形を除去して面のちらつき/乱れを低減
+  const pos2 = geom.attributes?.position;
+  const idx2 = geom.getIndex();
+  if (pos2 && idx2 && idx2.count >= 3) {
+    const bbDiag = geom.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || diag || 1;
+    const areaThreshold = Math.max(1e-12, (bbDiag * bbDiag) * 1e-10);
+    const p0 = new THREE.Vector3();
+    const p1 = new THREE.Vector3();
+    const p2 = new THREE.Vector3();
+    const e1 = new THREE.Vector3();
+    const e2 = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const kept = [];
+    for (let i = 0; i < idx2.count; i += 3) {
+      const ia = idx2.getX(i + 0);
+      const ib = idx2.getX(i + 1);
+      const ic = idx2.getX(i + 2);
+      p0.set(pos2.getX(ia), pos2.getY(ia), pos2.getZ(ia));
+      p1.set(pos2.getX(ib), pos2.getY(ib), pos2.getZ(ib));
+      p2.set(pos2.getX(ic), pos2.getY(ic), pos2.getZ(ic));
+      e1.subVectors(p1, p0);
+      e2.subVectors(p2, p0);
+      n.crossVectors(e1, e2);
+      const area2 = n.lengthSq() * 0.25;
+      if (area2 <= areaThreshold) { continue; }
+      kept.push(ia, ib, ic);
+    }
+    if (kept.length >= 3 && kept.length < idx2.count) {
+      geom.setIndex(kept);
+    }
+  }
+  geom.computeVertexNormals();
+  geom.computeBoundingBox?.();
+  geom.computeBoundingSphere?.();
+  geom = simplifyCoplanarPatchesToPlanes(geom, {
+    angleDegTol: 2.8,
+    distTolScale: 1.6e-3,
+    minTrianglesPerPatch: 3,
+  }) || geom;
+  geom.computeVertexNormals();
+  geom.computeBoundingBox?.();
+  geom.computeBoundingSphere?.();
+  return geom;
+}
+
+function simplifyCoplanarPatchesToPlanes(geometry, options = {}) {
+  if (!geometry?.attributes?.position) { return geometry || null; }
+  const geom = geometry;
+  const pos = geom.attributes.position;
+  if (!geom.getIndex()) {
+    const idx = Array.from({ length: pos.count }, (_, i) => i);
+    geom.setIndex(idx);
+  }
+  const indexAttr = geom.getIndex();
+  if (!indexAttr || indexAttr.count < 9) { return geom; }
+
+  geom.computeBoundingBox?.();
+  const diag = geom.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+  const angleDegTol = Number.isFinite(options.angleDegTol) ? options.angleDegTol : 2.0;
+  const angleTol = THREE.MathUtils.degToRad(Math.max(0.05, angleDegTol));
+  const normalStep = Math.max(1e-4, Math.sin(angleTol) * 0.5);
+  const distTol = Math.max(1e-6, diag * (Number.isFinite(options.distTolScale) ? options.distTolScale : 1e-3));
+  const minTrianglesPerPatch = Math.max(3, Number(options.minTrianglesPerPatch) || 3);
+
+  const triCount = Math.floor(indexAttr.count / 3);
+  const triangles = new Array(triCount);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const n = new THREE.Vector3();
+
+  for (let t = 0; t < triCount; t += 1) {
+    const i0 = indexAttr.getX(t * 3 + 0);
+    const i1 = indexAttr.getX(t * 3 + 1);
+    const i2 = indexAttr.getX(t * 3 + 2);
+    a.set(pos.getX(i0), pos.getY(i0), pos.getZ(i0));
+    b.set(pos.getX(i1), pos.getY(i1), pos.getZ(i1));
+    c.set(pos.getX(i2), pos.getY(i2), pos.getZ(i2));
+    ab.subVectors(b, a);
+    ac.subVectors(c, a);
+    n.crossVectors(ab, ac);
+    const lenSq = n.lengthSq();
+    if (lenSq <= 1e-12) {
+      triangles[t] = { i0, i1, i2, valid: false };
+      continue;
+    }
+    n.multiplyScalar(1 / Math.sqrt(lenSq));
+    const d = -n.dot(a);
+    const sideLike = Math.abs(n.y) < 0.45;
+    const nStepLocal = normalStep * (sideLike ? 1.7 : 1.0);
+    const dTolLocal = distTol * (sideLike ? 2.4 : 1.0);
+    const key = `${Math.round(n.x / nStepLocal)},${Math.round(n.y / nStepLocal)},${Math.round(n.z / nStepLocal)}|${Math.round(d / dTolLocal)}`;
+    triangles[t] = { i0, i1, i2, n: n.clone(), d, key, valid: true };
+  }
+
+  const planeGroups = new Map();
+  for (let t = 0; t < triangles.length; t += 1) {
+    const tri = triangles[t];
+    if (!tri?.valid) { continue; }
+    if (!planeGroups.has(tri.key)) {
+      planeGroups.set(tri.key, []);
+    }
+    planeGroups.get(tri.key).push(t);
+  }
+
+  const triRemove = new Set();
+  const triAdd = [];
+  const edgeKey = (u, v) => (u < v ? `${u}|${v}` : `${v}|${u}`);
+
+  const buildPatchComponents = (triIndices) => {
+    const edgeToTris = new Map();
+    triIndices.forEach((ti) => {
+      const tri = triangles[ti];
+      const edges = [
+        [tri.i0, tri.i1],
+        [tri.i1, tri.i2],
+        [tri.i2, tri.i0],
+      ];
+      edges.forEach(([u, v]) => {
+        const key = edgeKey(u, v);
+        if (!edgeToTris.has(key)) { edgeToTris.set(key, []); }
+        edgeToTris.get(key).push(ti);
+      });
+    });
+    const adj = new Map();
+    triIndices.forEach((ti) => adj.set(ti, new Set()));
+    edgeToTris.forEach((owners) => {
+      if (!owners || owners.length < 2) { return; }
+      for (let i = 0; i < owners.length; i += 1) {
+        for (let j = i + 1; j < owners.length; j += 1) {
+          adj.get(owners[i])?.add(owners[j]);
+          adj.get(owners[j])?.add(owners[i]);
+        }
+      }
+    });
+    const visited = new Set();
+    const comps = [];
+    triIndices.forEach((start) => {
+      if (visited.has(start)) { return; }
+      const q = [start];
+      const comp = [];
+      visited.add(start);
+      while (q.length > 0) {
+        const cur = q.pop();
+        comp.push(cur);
+        adj.get(cur)?.forEach((nx) => {
+          if (visited.has(nx)) { return; }
+          visited.add(nx);
+          q.push(nx);
+        });
+      }
+      comps.push(comp);
+    });
+    return comps;
+  };
+
+  const extractBoundaryLoop = (comp) => {
+    const edgeCount = new Map();
+    comp.forEach((ti) => {
+      const tri = triangles[ti];
+      const edges = [
+        [tri.i0, tri.i1],
+        [tri.i1, tri.i2],
+        [tri.i2, tri.i0],
+      ];
+      edges.forEach(([u, v]) => {
+        const k = edgeKey(u, v);
+        edgeCount.set(k, (edgeCount.get(k) || 0) + 1);
+      });
+    });
+    const boundaryEdges = [];
+    edgeCount.forEach((count, k) => {
+      if (count !== 1) { return; }
+      const [su, sv] = k.split('|');
+      boundaryEdges.push([Number(su), Number(sv)]);
+    });
+    if (boundaryEdges.length < 3) { return null; }
+
+    const nbr = new Map();
+    boundaryEdges.forEach(([u, v]) => {
+      if (!nbr.has(u)) { nbr.set(u, []); }
+      if (!nbr.has(v)) { nbr.set(v, []); }
+      nbr.get(u).push(v);
+      nbr.get(v).push(u);
+    });
+    for (const [, list] of nbr) {
+      if (list.length !== 2) { return null; }
+    }
+
+    let start = null;
+    for (const key of nbr.keys()) {
+      start = key;
+      break;
+    }
+    if (start == null) { return null; }
+
+    const loop = [start];
+    let prev = null;
+    let cur = start;
+    const maxSteps = boundaryEdges.length + 4;
+    for (let step = 0; step < maxSteps; step += 1) {
+      const nexts = nbr.get(cur) || [];
+      if (nexts.length < 1) { return null; }
+      let nx = nexts[0];
+      if (prev != null && nexts.length > 1 && nx === prev) {
+        nx = nexts[1];
+      }
+      if (nx === start) {
+        break;
+      }
+      loop.push(nx);
+      prev = cur;
+      cur = nx;
+    }
+    if (loop.length < 3) { return null; }
+    return loop;
+  };
+
+  const buildPatchTrianglesFromLoop = (loop, normalRef) => {
+    if (!Array.isArray(loop) || loop.length < 3 || !normalRef) { return null; }
+    const p0 = new THREE.Vector3(pos.getX(loop[0]), pos.getY(loop[0]), pos.getZ(loop[0]));
+    let u = null;
+    for (let i = 1; i < loop.length; i += 1) {
+      const pi = new THREE.Vector3(pos.getX(loop[i]), pos.getY(loop[i]), pos.getZ(loop[i]));
+      const v = pi.clone().sub(p0);
+      if (v.lengthSq() > 1e-10) {
+        u = v.normalize();
+        break;
+      }
+    }
+    if (!u) { return null; }
+    const vAxis = new THREE.Vector3().crossVectors(normalRef, u).normalize();
+    if (vAxis.lengthSq() <= 1e-10) { return null; }
+
+    const simplifyLoopIndices = (indices) => {
+      if (!Array.isArray(indices) || indices.length < 4) { return indices || []; }
+      const sideFactor = Math.abs(normalRef.y) < 0.45 ? 1.8 : 1.0;
+      const shortTol = Math.max(1e-6, diag * 2e-4 * sideFactor);
+      const shortTolSq = shortTol * shortTol;
+      const lineTol = Math.max(1e-6, diag * 1e-4 * sideFactor);
+      const straightDegTol = Math.min(6.0, 2.0 * sideFactor);
+      let work = indices.slice();
+      for (let pass = 0; pass < 6; pass += 1) {
+        if (work.length < 4) { break; }
+        let changed = false;
+        const next = [];
+        for (let i = 0; i < work.length; i += 1) {
+          const prevIdx = work[(i - 1 + work.length) % work.length];
+          const curIdx = work[i];
+          const nextIdx = work[(i + 1) % work.length];
+          const pPrev = new THREE.Vector3(pos.getX(prevIdx), pos.getY(prevIdx), pos.getZ(prevIdx));
+          const pCur = new THREE.Vector3(pos.getX(curIdx), pos.getY(curIdx), pos.getZ(curIdx));
+          const pNext = new THREE.Vector3(pos.getX(nextIdx), pos.getY(nextIdx), pos.getZ(nextIdx));
+
+          const v1 = pCur.clone().sub(pPrev);
+          const v2 = pNext.clone().sub(pCur);
+          const l1Sq = v1.lengthSq();
+          const l2Sq = v2.lengthSq();
+          if (l1Sq <= shortTolSq || l2Sq <= shortTolSq) {
+            changed = true;
+            continue;
+          }
+          const l1 = Math.sqrt(l1Sq);
+          const l2 = Math.sqrt(l2Sq);
+          const d = THREE.MathUtils.clamp(v1.dot(v2) / (l1 * l2), -1, 1);
+          const angle = Math.acos(d);
+
+          const base = pNext.clone().sub(pPrev);
+          let lineDist = Infinity;
+          const baseLenSq = base.lengthSq();
+          if (baseLenSq > 1e-10) {
+            const t = THREE.MathUtils.clamp(pCur.clone().sub(pPrev).dot(base) / baseLenSq, 0, 1);
+            const close = pPrev.clone().add(base.multiplyScalar(t));
+            lineDist = pCur.distanceTo(close);
+          }
+          // ほぼ一直線（180deg付近）かつ線からのズレが小さい頂点は削除する。
+          if (Math.abs(Math.PI - angle) <= THREE.MathUtils.degToRad(straightDegTol) && lineDist <= lineTol) {
+            changed = true;
+            continue;
+          }
+          next.push(curIdx);
+        }
+        if (!changed) { break; }
+        work = next;
+      }
+      return work.length >= 3 ? work : indices;
+    };
+
+    const simplifiedLoop = simplifyLoopIndices(loop);
+    if (!Array.isArray(simplifiedLoop) || simplifiedLoop.length < 3) { return null; }
+
+    const contour = simplifiedLoop.map((vi) => {
+      const p = new THREE.Vector3(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+      const rel = p.sub(p0);
+      return new THREE.Vector2(rel.dot(u), rel.dot(vAxis));
+    });
+    const tri2d = THREE.ShapeUtils.triangulateShape(contour, []);
+    if (!Array.isArray(tri2d) || tri2d.length < 1) { return null; }
+
+    const out = tri2d.map((tri) => {
+      const ia = simplifiedLoop[tri[0]];
+      const ib = simplifiedLoop[tri[1]];
+      const ic = simplifiedLoop[tri[2]];
+      return [ia, ib, ic];
+    });
+    if (out.length < 1) { return null; }
+
+    const t0 = out[0];
+    const ta = new THREE.Vector3(pos.getX(t0[0]), pos.getY(t0[0]), pos.getZ(t0[0]));
+    const tb = new THREE.Vector3(pos.getX(t0[1]), pos.getY(t0[1]), pos.getZ(t0[1]));
+    const tc = new THREE.Vector3(pos.getX(t0[2]), pos.getY(t0[2]), pos.getZ(t0[2]));
+    const tn = new THREE.Vector3().crossVectors(tb.clone().sub(ta), tc.clone().sub(ta)).normalize();
+    if (tn.lengthSq() > 1e-10 && tn.dot(normalRef) < 0) {
+      for (let i = 0; i < out.length; i += 1) {
+        const tmp = out[i][1];
+        out[i][1] = out[i][2];
+        out[i][2] = tmp;
+      }
+    }
+    return out;
+  };
+
+  planeGroups.forEach((triIndices) => {
+    if (!Array.isArray(triIndices) || triIndices.length < minTrianglesPerPatch) { return; }
+    const comps = buildPatchComponents(triIndices);
+    comps.forEach((comp) => {
+      if (!Array.isArray(comp) || comp.length < minTrianglesPerPatch) { return; }
+      const loop = extractBoundaryLoop(comp);
+      if (!loop) { return; }
+      const normalRef = comp
+        .map((ti) => triangles[ti]?.n)
+        .filter(Boolean)
+        .reduce((acc, cn) => acc.add(cn), new THREE.Vector3());
+      if (normalRef.lengthSq() <= 1e-12) { return; }
+      normalRef.normalize();
+      const patchTris = buildPatchTrianglesFromLoop(loop, normalRef);
+      if (!patchTris || patchTris.length < 1) { return; }
+      comp.forEach((ti) => triRemove.add(ti));
+      patchTris.forEach((tri) => triAdd.push(tri));
+    });
+  });
+
+  if (triRemove.size < 1 || triAdd.length < 1) { return geom; }
+
+  const rebuilt = [];
+  for (let t = 0; t < triangles.length; t += 1) {
+    const tri = triangles[t];
+    if (!tri?.valid) { continue; }
+    if (triRemove.has(t)) { continue; }
+    rebuilt.push(tri.i0, tri.i1, tri.i2);
+  }
+  triAdd.forEach((tri) => {
+    rebuilt.push(tri[0], tri[1], tri[2]);
+  });
+  if (rebuilt.length >= 3) {
+    geom.setIndex(rebuilt);
+  }
+  return geom;
+}
+
+function runHighQualityDifferenceUnify() {
+  const spaces = getActiveDifferenceSpaces();
+  if (spaces.length < 2) {
+    updateDifferenceStatus('高品質一体化: 空間が2つ以上必要です。');
+    updateDifferenceUnifyButtonState();
+    return false;
+  }
+
+  scene.updateMatrixWorld(true);
+  const groups = buildDifferenceIntersectGroups(spaces);
+  if (groups.length < 1) {
+    updateDifferenceStatus('高品質一体化: 交差する空間がありません。');
+    updateDifferenceUnifyButtonState();
+    return false;
+  }
+
+  beginDifferenceHistorySession();
+  let unifiedGroupCount = 0;
+  let removedSpaceCount = 0;
+
+  groups.forEach((group) => {
+    if (!Array.isArray(group) || group.length < 2) { return; }
+    const root = group.find((mesh) => mesh?.parent && mesh?.geometry);
+    if (!root) { return; }
+
+    const worldGeometries = group
+      .filter((mesh) => mesh?.parent && mesh?.geometry)
+      .map((mesh) => {
+        mesh.updateMatrixWorld(true);
+        let cloned = mesh.geometry.clone();
+        cloned = cleanupDifferenceUnifiedGeometry(cloned) || cloned;
+        cloned.applyMatrix4(mesh.matrixWorld);
+        return cloned;
+      });
+    if (worldGeometries.length < 2) {
+      worldGeometries.forEach((g) => g.dispose?.());
+      return;
+    }
+
+    let mergedGeometry = null;
+    try {
+      mergedGeometry = worldGeometries[0];
+      for (let i = 1; i < worldGeometries.length; i += 1) {
+        const nextGeometry = worldGeometries[i];
+        const result = differenceCsgEvaluator.evaluate(
+          new Brush(mergedGeometry),
+          new Brush(nextGeometry),
+          ADDITION,
+        );
+        if (!result?.geometry) {
+          throw new Error('union_result_empty');
+        }
+        mergedGeometry.dispose?.();
+        nextGeometry.dispose?.();
+        mergedGeometry = result.geometry;
+      }
+    } catch (err) {
+      // 品質優先: 失敗時の雑な mergeGeometries フォールバックは使わない
+      // （重なり面が残って見た目が崩れやすいため）
+      console.warn('Difference union failed; quality mode skips fallback merge', err);
+      worldGeometries.forEach((g) => g.dispose?.());
+      return;
+    }
+
+    const worldToRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    mergedGeometry.applyMatrix4(worldToRoot);
+    const cleaned = cleanupDifferenceUnifiedGeometry(mergedGeometry);
+    if (!cleaned) {
+      mergedGeometry.dispose?.();
+      return;
+    }
+
+    const previousGeometry = root.geometry;
+    root.geometry = cleaned;
+    if (previousGeometry && previousGeometry !== cleaned) {
+      previousGeometry.dispose?.();
+    }
+    root.userData = {
+      ...(root.userData || {}),
+      differenceCornerVertexMap: null,
+      differenceSpacePlane: true,
+    };
+    rebuildDifferenceControlPointsFromGeometry(root);
+    syncDifferenceGeometryFromControlPoints(root);
+    mergeCoincidentDifferenceControlPoints(root);
+    pruneDifferenceControlPointsByMeaningfulEdges(root);
+
+    group.forEach((mesh) => {
+      if (!mesh || mesh === root) { return; }
+      if (removeDifferenceSpaceMeshForUnify(mesh)) {
+        removedSpaceCount += 1;
+      }
+    });
+    unifiedGroupCount += 1;
+  });
+
+  relinkImportedDifferenceSharedPoints();
+  mergeOverlappedBoundaryControlPoints();
+  rebuildDifferenceEdgeOverlapConstraints();
+  clearDifferenceFaceSelection();
+  clearDifferenceEdgeSelection();
+  clearDifferenceControlPointSelection();
+  selectDifferencePlane(null);
+  targetObjects = getActiveDifferenceSpaces();
+  setMeshListOpacity(targetObjects, 1);
+  refreshDifferencePreview();
+  refreshDifferenceSelectedEdgeHighlights();
+  commitDifferenceHistoryIfNeeded();
+
+  if (removedSpaceCount < 1) {
+    updateDifferenceStatus('高品質一体化: 形状更新はありませんでした。');
+    updateDifferenceUnifyButtonState();
+    return false;
+  }
+  updateDifferenceStatus(`高品質一体化 完了: ${unifiedGroupCount}グループ / ${removedSpaceCount}空間を統合`);
+  updateDifferenceUnifyButtonState();
+  return true;
 }
 
 function showDifferenceMergeNoticeAt(worldPos, text = '結合しました') {
@@ -5691,18 +8247,18 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
       opacity: 0.5,
       side: THREE.DoubleSide,
       depthWrite: false,
-      metalness: 0.0,
-      roughness: 1.0,
-      flatShading: true,
+      metalness: 0.08,
+      roughness: 0.58,
+      flatShading: false,
     });
   if (mat) {
     mat.opacity = 0.5;
     mat.transparent = true;
     mat.side = THREE.DoubleSide;
     mat.depthWrite = false;
-    if ('metalness' in mat) { mat.metalness = 0.0; }
-    if ('roughness' in mat) { mat.roughness = 1.0; }
-    if ('flatShading' in mat) { mat.flatShading = true; }
+    if ('metalness' in mat) { mat.metalness = 0.08; }
+    if ('roughness' in mat) { mat.roughness = 0.58; }
+    if ('flatShading' in mat) { mat.flatShading = false; }
     mat.needsUpdate = true;
   }
   const mesh = new THREE.Mesh(geometry, mat);
@@ -6016,13 +8572,21 @@ function updateDifferenceStatus(text) {
 function refreshDifferencePreview() {
   clearDifferencePreviewTube();
   const points = getDifferenceSelectedPoints();
-  if (!differenceSpaceModeActive) { return false; }
+  if (!differenceSpaceModeActive) {
+    updateDifferenceUnifyButtonState();
+    applyDifferenceViewMode();
+    return false;
+  }
   // チューブは tube モード時のみ生成する。
   if (differenceSpaceTransformMode !== 'tube') {
+    updateDifferenceUnifyButtonState();
+    applyDifferenceViewMode();
     return false;
   }
   if (points.length < 2) {
     updateDifferenceStatus('spaceで平面を1枚以上配置してください。');
+    updateDifferenceUnifyButtonState();
+    applyDifferenceViewMode();
     return false;
   }
   const cutter = buildDifferenceCutterMesh(points, {
@@ -6031,11 +8595,15 @@ function refreshDifferencePreview() {
   });
   if (!cutter) {
     updateDifferenceStatus('プレビュー作成に失敗しました。');
+    updateDifferenceUnifyButtonState();
+    applyDifferenceViewMode();
     return false;
   }
   scene.add(cutter);
   differencePreviewTube = cutter;
   updateDifferenceStatus(`プレビュー表示中: ${differenceShapeType} / ${differencePathType}`);
+  updateDifferenceUnifyButtonState();
+  applyDifferenceViewMode();
   return true;
 }
 
@@ -7061,7 +9629,9 @@ async function handleMouseUp(mobile = false) {
       ? differenceControlPointDragPoint.map((entry) => entry?.point).filter(Boolean)
       : [];
     autoMergeNearbyDifferencePoints(draggedPoints);
+    mergeOverlappedBoundaryControlPoints();
     refreshDifferencePreview();
+    refreshDifferenceSelectedEdgeHighlights();
     commitDifferenceHistoryIfNeeded();
     differenceControlPointDragActive = false;
     differenceControlPointDragPoint = null;
@@ -7075,7 +9645,9 @@ async function handleMouseUp(mobile = false) {
       ? differenceFaceVertexDragMesh.flatMap((entry) => entry?.points?.map?.((p) => p.point) || [])
       : [];
     autoMergeNearbyDifferencePoints(movedPoints);
+    mergeOverlappedBoundaryControlPoints();
     refreshDifferencePreview();
+    refreshDifferenceSelectedEdgeHighlights();
     commitDifferenceHistoryIfNeeded();
     differenceFaceVertexDragActive = false;
     differenceFaceVertexDragMesh = null;
@@ -7085,6 +9657,7 @@ async function handleMouseUp(mobile = false) {
   }
   if (pointRotateMoveDragging) {
     if (pointRotateTarget?.userData?.differenceSpacePlane) {
+      refreshDifferenceSelectedEdgeHighlights();
       commitDifferenceHistoryIfNeeded();
     }
     pointRotateMoveDragging = false;
@@ -7093,6 +9666,7 @@ async function handleMouseUp(mobile = false) {
   }
   if (pointRotateDragging) {
     if (pointRotateTarget?.userData?.differenceSpacePlane) {
+      refreshDifferenceSelectedEdgeHighlights();
       commitDifferenceHistoryIfNeeded();
     }
     pointRotateDragging = false;
@@ -7377,11 +9951,32 @@ async function handleMouseDown() {
           differenceMoveHitKind = 'point';
           differenceMoveHitControlPoint = controlPointHit.object;
           differenceMoveHitFace = null;
+          differenceMoveHitEdge = null;
           clearDifferenceFaceHighlight();
           return;
         }
         const localNormal = getLocalFaceNormalFromHit(faceHit);
         if (localNormal) {
+          const edgeHit = getNearestDifferenceEdgeHitFromFaceHit(faceHit);
+          let allowEdgePick = false;
+          if (edgeHit?.pointA && edgeHit?.pointB) {
+            const g = faceHit?.object?.geometry;
+            g?.computeBoundingBox?.();
+            const diag = Math.max(
+              1e-6,
+              g?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1,
+            );
+            const strictEdgePickDistance = Math.max(0.008, Math.min(0.028, diag * 0.02));
+            allowEdgePick = Number(edgeHit.distanceLocal) <= strictEdgePickDistance;
+          }
+          if (allowEdgePick) {
+            differenceMoveHitKind = 'edge';
+            differenceMoveHitEdge = edgeHit;
+            differenceMoveHitFace = null;
+            differenceMoveHitControlPoint = null;
+            showDifferenceFaceHighlight(faceHit);
+            return;
+          }
           differenceMoveHitKind = 'face';
           differenceMoveHitFace = {
             mesh: faceHit.object,
@@ -7389,6 +9984,7 @@ async function handleMouseDown() {
             hit: faceHit,
           };
           differenceMoveHitControlPoint = null;
+          differenceMoveHitEdge = null;
           showDifferenceFaceHighlight(faceHit);
           return;
         }
@@ -7601,6 +10197,7 @@ async function handleMouseDown() {
           updateDifferenceStatus('面を押し出して空間を拡張しました。');
           differenceHoveredFaceHit = null;
           refreshDifferencePreview();
+          refreshDifferenceSelectedEdgeHighlights();
           commitDifferenceHistoryIfNeeded();
           return;
         }
@@ -7687,6 +10284,7 @@ async function handleMouseDown() {
       targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
       setMeshListOpacity(targetObjects, 1);
       refreshDifferencePreview();
+      refreshDifferenceSelectedEdgeHighlights();
       commitDifferenceHistoryIfNeeded();
 
     } else if (editObject === 'ORIGINAL'){
@@ -8126,6 +10724,7 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
   const worldNormal = getWorldFaceNormalFromHit(hit);
   if (!mesh?.userData?.differenceSpacePlane || !localNormal || !worldNormal) { return false; }
   beginDifferenceHistorySession();
+  rebuildDifferenceEdgeOverlapConstraints();
   const axis = Math.abs(localNormal.x) > 0.9
     ? 'x'
     : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
@@ -8147,6 +10746,29 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
     if (!m?.userData?.differenceSpacePlane || !n) { return null; }
     const localHit = entry?.facePointLocal?.clone?.() || null;
     let facePoints = getDifferenceFaceControlPoints(m, n, localHit);
+    const meshDiag = (() => {
+      m.geometry?.computeBoundingBox?.();
+      return m.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
+    })();
+    const triTol = Math.max(0.08, meshDiag * 0.06);
+    const triFacePoints = getDifferenceFaceControlPointsFromTriangles(m, n, localHit, triTol);
+    if (triFacePoints.length > 0) {
+      const merged = new Set([...(facePoints || []), ...triFacePoints]);
+      facePoints = Array.from(merged);
+    }
+    if (localHit && Array.isArray(facePoints) && facePoints.length > 0) {
+      const nn = n.clone().normalize();
+      const centerD = facePoints.reduce((acc, p) => acc + nn.dot(p.position), 0) / facePoints.length;
+      const planeTol = Math.max(0.06, meshDiag * 0.035);
+      const expandedByPlane = m.children.filter((child) => {
+        if (!child?.userData?.differenceControlPoint) { return false; }
+        const d = nn.dot(child.position);
+        return Math.abs(d - centerD) <= planeTol;
+      });
+      if (expandedByPlane.length > facePoints.length) {
+        facePoints = expandedByPlane;
+      }
+    }
     if (!Array.isArray(facePoints) || facePoints.length < 3) {
       facePoints = getDifferenceFaceControlPoints(m, n, null);
     }
@@ -8180,6 +10802,7 @@ function beginDifferenceControlPointDrag(point, selectedPoints = null) {
   const mesh = point?.userData?.parentDifferenceSpacePlane || point?.parent || null;
   if (!point?.userData?.differenceControlPoint || !mesh?.userData?.differenceSpacePlane) { return false; }
   beginDifferenceHistorySession();
+  rebuildDifferenceEdgeOverlapConstraints();
   const gizmoAxisWorld = pointRotateDirection?.clone?.().normalize?.() || new THREE.Vector3();
   const fallbackAxisWorld = point.position.clone().applyQuaternion(mesh.quaternion).normalize();
   const axisWorld = gizmoAxisWorld.lengthSq() > 1e-8 ? gizmoAxisWorld : fallbackAxisWorld;
@@ -8241,7 +10864,12 @@ function updateDifferenceControlPointDrag() {
     differenceControlPointDragPoint.map((entry) => entry.point),
     dirtyMeshes,
   );
+  for (let i = 0; i < 3; i += 1) {
+    const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+    if (moved < 1) { break; }
+  }
   dirtyMeshes.forEach((m) => syncDifferenceGeometryFromControlPoints(m));
+  refreshDifferenceSelectedEdgeHighlights();
   refreshDifferencePreview();
 }
 
@@ -8271,11 +10899,16 @@ function updateDifferenceFaceVertexDrag() {
     dirtyMeshes.add(entry.mesh);
   });
   propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+  for (let i = 0; i < 3; i += 1) {
+    const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+    if (moved < 1) { break; }
+  }
   dirtyMeshes.forEach((m) => {
     syncDifferenceGeometryFromControlPoints(m);
     updateDifferenceControlPointMarkerTransform(m);
   });
   refreshDifferenceSelectedFaceHighlights();
+  refreshDifferenceSelectedEdgeHighlights();
   refreshDifferencePreview();
   showDifferenceFaceHighlight({
     object: mesh,
@@ -8332,6 +10965,7 @@ function beginPointRotateMoveDrag() {
   if (!pointRotateTarget) { return; }
   if (pointRotateTarget?.userData?.differenceSpacePlane) {
     beginDifferenceHistorySession();
+    rebuildDifferenceEdgeOverlapConstraints();
   }
   const axisDir = pointRotateDirection.clone().normalize();
   if (axisDir.lengthSq() < 1e-8) { return; }
@@ -8401,6 +11035,13 @@ function updatePointRotateMoveDrag() {
   };
   showPointRotationGuideLine(pointRotateTarget);
   if (pointRotateTarget?.userData?.differenceSpacePlane) {
+    const dirtyMeshes = new Set();
+    for (let i = 0; i < 3; i += 1) {
+      const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+      if (moved < 1) { break; }
+    }
+    dirtyMeshes.forEach((m) => syncDifferenceGeometryFromControlPoints(m));
+    refreshDifferenceSelectedEdgeHighlights();
     refreshDifferencePreview();
   }
   updatePointRotateVisuals();
@@ -8436,6 +11077,8 @@ function clearPointRotateState() {
   }
   clearDifferenceFaceHighlight();
   clearDifferenceFaceSelection();
+  clearDifferenceEdgeSelection();
+  clearDifferenceIntersectionVisuals();
   setDifferenceControlPointSelected(null);
   if (pointRotateArrow) {
     pointRotateArrow.visible = false;
@@ -9534,7 +12177,7 @@ export function UIevent (uiID, toggle){
     if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceTransformMode = 'none'
     if (differencePanel) {
-      differencePanel.style.display = 'block';
+      differencePanel.style.display = 'none';
     }
     updateDifferenceStatus('spaceで平面を配置し、カテゴリ指定後に excavation を実行してください。');
   } else {
@@ -9572,7 +12215,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(false)
     if (differencePanel) {
-      differencePanel.style.display = 'block';
+      differencePanel.style.display = 'none';
     }
     refreshDifferencePreview();
   } else {
@@ -9591,6 +12234,7 @@ export function UIevent (uiID, toggle){
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
     updateDifferenceStatus('spaceで平面を1枚以上配置してください。');
+    refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'add/2' || uiID === 'add_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
     if (blockManualDioramaSpaceMode()) { return; }
@@ -9609,6 +12253,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferencePreviewTube();
     updateDifferenceStatus('空き領域クリックでボックス追加。既存面クリックで押し出し拡張します。');
+    refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
     differenceSpaceTransformMode = 'none'
@@ -9618,6 +12263,7 @@ export function UIevent (uiID, toggle){
     clearDifferenceFaceHighlight();
     differenceHoverFaceKey = null;
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'move/2' || uiID === 'move_space' || uiID === 'rotation/3' || uiID === 'rotation_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
     if (blockManualDioramaSpaceMode()) { return; }
@@ -9638,6 +12284,7 @@ export function UIevent (uiID, toggle){
     setRotationPanelMode('rotation');
     setRotationPanelVisible(true);
     updateDifferenceStatus('面を選択してドラッグで形状を変更します。');
+    refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
     differenceSpaceTransformMode = 'none'
@@ -9649,6 +12296,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'tube' || uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
     if (blockManualDioramaSpaceMode()) { return; }
@@ -9670,6 +12318,7 @@ export function UIevent (uiID, toggle){
     }
     refreshDifferencePreview();
     updateDifferenceStatus('tubeモード: 配置済みボックス列からチューブを生成します。');
+    refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
     if (differenceSpaceTransformMode === 'tube') {
@@ -9677,6 +12326,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'excavation' ){ if ( toggle === 'active' ){
   console.log( 'excavation _active' )
     if (blockManualDioramaSpaceMode()) { return; }

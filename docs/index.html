@@ -711,6 +711,21 @@
     line-height: 1.4;
     color: #4a5f78;
   }
+  #difference-unify-button {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(160, 194, 252, 0.45);
+    background: linear-gradient(135deg, #2a84ff, #246fd9);
+    color: #fff;
+    cursor: pointer;
+    padding: 6px 8px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  #difference-unify-button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
   #construction-category-panel {
     position: fixed;
     right: 20px;
@@ -1154,6 +1169,7 @@
                   </label>
                 </div>
                 <button id="rotation-apply" style="margin-top: 8px; width: 100%; padding: 6px 8px;">適用</button>
+                <button id="difference-unify-button" type="button" style="margin-top: 8px; width: 100%; padding: 6px 8px; display: none;">高品質一体化</button>
                 <pre id="rotation-selection-info" style="margin-top: 8px; max-height: 180px; overflow: auto; padding: 6px; border-radius: 6px; background: rgba(14,20,30,0.78); color: #eef4ff; border: 1px solid rgba(150,180,230,0.3); font-size: 10px; line-height: 1.45; white-space: pre-wrap;">選択点: 2点以上で情報を表示</pre>
               </div>
 
