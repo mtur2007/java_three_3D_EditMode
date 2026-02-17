@@ -201,6 +201,10 @@ const threeUi = document.getElementById('three-ui');
   const rotationInputZ = document.getElementById('rotation-input-z');
   const rotationApplyBtn = document.getElementById('rotation-apply');
   const rotationSelectionInfo = document.getElementById('rotation-selection-info');
+  const movePointCoordinateModeRow = document.getElementById('move-point-coordinate-mode');
+  const movePointAxisLegend = document.getElementById('move-point-axis-legend');
+  const movePointCoordinateWorldBtn = document.getElementById('move-point-coordinate-world');
+  const movePointCoordinateGridBtn = document.getElementById('move-point-coordinate-grid');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
@@ -312,6 +316,7 @@ const threeUi = document.getElementById('three-ui');
   let differencePathType = differencePathSelect?.value || 'smooth';
   let differenceSpaceTransformMode = 'none';
   let movePointPanelActive = false;
+  let movePointCoordinateMode = 'world';
   let selectedConstructionProfile = null;
   let selectedRailConstructionCategory = null;
   const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
@@ -630,17 +635,47 @@ const threeUi = document.getElementById('three-ui');
     if (rotationPanelTitle) {
       rotationPanelTitle.textContent = isMovePoint ? 'Move Point' : 'Rotation';
     }
+    const axisSuffix = isMovePoint
+      ? (movePointCoordinateMode === 'grid' ? ' (grid)' : ' (world)')
+      : ' (deg)';
     if (rotationLabelX) {
-      rotationLabelX.childNodes[0].nodeValue = isMovePoint ? 'X ' : 'X (deg)';
+      rotationLabelX.childNodes[0].nodeValue = `X${axisSuffix}`;
     }
     if (rotationLabelY) {
-      rotationLabelY.childNodes[0].nodeValue = isMovePoint ? 'Y ' : 'Y (deg)';
+      rotationLabelY.childNodes[0].nodeValue = `Y${axisSuffix}`;
     }
     if (rotationLabelZ) {
-      rotationLabelZ.childNodes[0].nodeValue = isMovePoint ? 'Z ' : 'Z (deg)';
+      rotationLabelZ.childNodes[0].nodeValue = `Z${axisSuffix}`;
     }
     if (rotationApplyBtn) {
       rotationApplyBtn.textContent = isMovePoint ? '座標適用' : '適用';
+    }
+    if (movePointCoordinateModeRow) {
+      movePointCoordinateModeRow.style.display = isMovePoint ? 'block' : 'none';
+    }
+    if (movePointAxisLegend) {
+      movePointAxisLegend.style.display = isMovePoint ? 'block' : 'none';
+    }
+  }
+
+  function updateMovePointCoordinateButtons() {
+    if (!movePointCoordinateWorldBtn || !movePointCoordinateGridBtn) { return; }
+    const isWorld = movePointCoordinateMode === 'world';
+    movePointCoordinateWorldBtn.style.background = isWorld ? '#b9d5ff' : '#eaf2ff';
+    movePointCoordinateWorldBtn.style.borderColor = isWorld ? '#6f95cf' : '#9eb7db';
+    movePointCoordinateGridBtn.style.background = isWorld ? '#eefcf3' : '#bfe9ca';
+    movePointCoordinateGridBtn.style.borderColor = isWorld ? '#b8d7c0' : '#6ea984';
+  }
+
+  function setMovePointCoordinateMode(mode = 'world', { refresh = true } = {}) {
+    const next = mode === 'grid' ? 'grid' : 'world';
+    movePointCoordinateMode = next;
+    updateMovePointCoordinateButtons();
+    if (movePointPanelActive) {
+      setRotationPanelMode('move_point');
+      if (refresh) {
+        updateMovePointPanelUI({ clearInputs: true });
+      }
     }
   }
 
@@ -680,10 +715,40 @@ const threeUi = document.getElementById('three-ui');
     return { mode: 'invalid', raw: text };
   }
 
+  function getMovePointGridFrameForMesh(mesh) {
+    const planeRef = mesh?.userData?.planeRef;
+    if (!planeRef?.quaternion?.isQuaternion) {
+      return null;
+    }
+    const anchor = planeRef?.position ? planeRef.position.clone() : new THREE.Vector3(0, 0, 0);
+    const quat = planeRef.quaternion.clone().normalize();
+    return { anchor, quat };
+  }
+
+  function worldToGridPosition(worldPos, frame) {
+    return worldPos.clone().sub(frame.anchor).applyQuaternion(frame.quat.clone().invert());
+  }
+
+  function gridToWorldPosition(gridPos, frame) {
+    return gridPos.clone().applyQuaternion(frame.quat).add(frame.anchor);
+  }
+
+  function getMovePointAxisPosition(mesh, mode = 'world') {
+    if (mode !== 'grid') {
+      return mesh.position.clone();
+    }
+    const frame = getMovePointGridFrameForMesh(mesh);
+    if (!frame) {
+      return mesh.position.clone();
+    }
+    return worldToGridPosition(mesh.position, frame);
+  }
+
   function getAxisDisplayForTargets(targets, axis) {
     if (!Array.isArray(targets) || targets.length === 0) { return '-'; }
     if (targets.length === 1) {
-      return Number(targets[0].position[axis]).toFixed(3);
+      const pos = getMovePointAxisPosition(targets[0], movePointCoordinateMode);
+      return Number(pos[axis]).toFixed(3);
     }
     return 'each';
   }
@@ -714,9 +779,11 @@ const threeUi = document.getElementById('three-ui');
       if (targets.length === 0) {
         rotationSelectionInfo.textContent = '選択点: なし\n点をクリックで選択してください。';
       } else if (targets.length === 1) {
-        const p = targets[0].position;
+        const p = getMovePointAxisPosition(targets[0], movePointCoordinateMode);
+        const coordModeLabel = movePointCoordinateMode === 'grid' ? 'Grid' : 'World';
         rotationSelectionInfo.textContent = [
           '選択点: 1',
+          `座標系: ${coordModeLabel}`,
           `id: ${targets[0].id}`,
           `x: ${p.x.toFixed(3)}`,
           `y: ${p.y.toFixed(3)}`,
@@ -724,8 +791,10 @@ const threeUi = document.getElementById('three-ui');
           '入力: 数値=絶対座標 / +=数値=相対移動',
         ].join('\n');
       } else {
+        const coordModeLabel = movePointCoordinateMode === 'grid' ? 'Grid' : 'World';
         rotationSelectionInfo.textContent = [
           `選択点: ${targets.length}`,
+          `座標系: ${coordModeLabel}`,
           `x: ${xDisplay}`,
           `y: ${yDisplay}`,
           `z: ${zDisplay}`,
@@ -768,15 +837,24 @@ const threeUi = document.getElementById('three-ui');
 
     const beforeItems = targets.map((mesh) => ({ mesh, before: mesh.position.clone(), after: null }));
     targets.forEach((mesh) => {
+      const frame = getMovePointGridFrameForMesh(mesh);
+      const useGridFrame = movePointCoordinateMode === 'grid' && Boolean(frame);
+      const workPos = useGridFrame
+        ? worldToGridPosition(mesh.position, frame)
+        : mesh.position.clone();
       ['x', 'y', 'z'].forEach((axis) => {
         const parsed = inputs[axis];
         if (!parsed) { return; }
         if (parsed.mode === 'delta') {
-          mesh.position[axis] += parsed.value;
+          workPos[axis] += parsed.value;
         } else if (parsed.mode === 'absolute') {
-          mesh.position[axis] = parsed.value;
+          workPos[axis] = parsed.value;
         }
       });
+      const nextWorldPos = useGridFrame
+        ? gridToWorldPosition(workPos, frame)
+        : workPos;
+      mesh.position.copy(nextWorldPos);
       syncGuideCurveFromPointMesh(mesh);
     });
 
@@ -944,6 +1022,17 @@ const threeUi = document.getElementById('three-ui');
   if (rotationApplyBtn) {
     rotationApplyBtn.addEventListener('click', applyRotationFromPanel);
   }
+  if (movePointCoordinateWorldBtn) {
+    movePointCoordinateWorldBtn.addEventListener('click', () => {
+      setMovePointCoordinateMode('world');
+    });
+  }
+  if (movePointCoordinateGridBtn) {
+    movePointCoordinateGridBtn.addEventListener('click', () => {
+      setMovePointCoordinateMode('grid');
+    });
+  }
+  updateMovePointCoordinateButtons();
 
   let guidePlacementTemplate = null;
   let guidePlacementActive = false;
@@ -4310,7 +4399,34 @@ const ADD_POINT_GRID_DIVISIONS = 40;
 const GuideGrid = new THREE.GridHelper(5, 10, 0x8888aa, 0x88aa88);
 GuideGrid.name = "GuideGrid";
 GuideGrid.position.set(0,0,0);
+if (GuideGrid.material) {
+  if (Array.isArray(GuideGrid.material)) {
+    GuideGrid.material.forEach((mat) => {
+      if (!mat) { return; }
+      mat.transparent = true;
+      mat.opacity = 0;
+      mat.depthWrite = false;
+    });
+  } else {
+    GuideGrid.material.transparent = true;
+    GuideGrid.material.opacity = 0;
+    GuideGrid.material.depthWrite = false;
+  }
+}
 scene.add(GuideGrid);
+const GUIDE_GRID_AXIS_LEN = 2.2;
+const GuideGridAxisGroup = new THREE.Group();
+GuideGridAxisGroup.name = 'GuideGridAxisGroup';
+const GuideGridAxisX = createLine({x:-GUIDE_GRID_AXIS_LEN, y:0.01, z:0}, {x:GUIDE_GRID_AXIS_LEN, y:0.01, z:0}, 0xe34c4c);
+GuideGridAxisX.name = 'GuideGridAxisX';
+const GuideGridAxisY = createLine({x:0, y:-GUIDE_GRID_AXIS_LEN, z:0}, {x:0, y:GUIDE_GRID_AXIS_LEN, z:0}, 0x46b86a);
+GuideGridAxisY.name = 'GuideGridAxisY';
+const GuideGridAxisZ = createLine({x:0, y:0.01, z:-GUIDE_GRID_AXIS_LEN}, {x:0, y:0.01, z:GUIDE_GRID_AXIS_LEN}, 0x3f7fd6);
+GuideGridAxisZ.name = 'GuideGridAxisZ';
+GuideGridAxisGroup.add(GuideGridAxisX);
+GuideGridAxisGroup.add(GuideGridAxisY);
+GuideGridAxisGroup.add(GuideGridAxisZ);
+GuideGrid.add(GuideGridAxisGroup);
 
 const AddPointGuideGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, 0x88aa88, 0x88aa88);
 AddPointGuideGrid.name = 'AddPointGuideGrid';
@@ -4329,6 +4445,7 @@ scene.add(GuideGrid_Center_z)
 
 GuideLine.visible = false
 GuideGrid.visible = false
+GuideGridAxisGroup.visible = true
 AddPointGuideGrid.visible = false
 GuideGrid_Center_x.visible = false
 GuideGrid_Center_z.visible = false
@@ -4490,6 +4607,21 @@ function syncGridFromHandle() {
   if (!addPointGridHandle || !AddPointGuideGrid) { return; }
   addPointGridY = addPointGridHandle.position.y;
   AddPointGuideGrid.position.copy(addPointGridHandle.position);
+}
+
+function syncGuideGridFromObject(mesh) {
+  if (!GuideGrid) { return; }
+  if (!mesh?.position) {
+    GuideGrid.quaternion.identity();
+    return;
+  }
+  GuideGrid.position.copy(mesh.position);
+  const planeQuat = mesh?.userData?.planeRef?.quaternion;
+  if (planeQuat?.isQuaternion && !move_direction_y) {
+    GuideGrid.quaternion.copy(planeQuat).normalize();
+  } else {
+    GuideGrid.quaternion.identity();
+  }
 }
 
 function pushCreateHistory(action) {
@@ -8809,6 +8941,7 @@ async function search_point() {
       if (guideRailHover) {
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
+        GuideGrid.quaternion.identity();
         GuideGrid.material.color.set(0x88aa88);
         setGuideHoverPin(guideRailHover.point);
       }
@@ -8852,12 +8985,12 @@ async function search_point() {
           AddPointGuideGrid.position.copy(choice_object.position)
           setAddPointGuideGridColor(0x88aa88)
           if (movePlaneMode !== 'change_angle') {
-            GuideGrid.position.copy(choice_object.position)
+            syncGuideGridFromObject(choice_object)
             GuideGrid.material.color.set(0x88aa88)
           }
         } else {
           if (movePlaneMode !== 'change_angle') {
-            GuideGrid.position.copy(choice_object.position)
+            syncGuideGridFromObject(choice_object)
             GuideGrid.material.color.set(0x88aa88)
           }
         }
@@ -8877,6 +9010,7 @@ async function search_point() {
     // dragging = false;
     GuideLine.visible = false
     GuideGrid.visible = false
+    GuideGrid.quaternion.identity();
   }  
 
   // レンダリング
@@ -8902,6 +9036,7 @@ async function onerun_search_point() {
       if (guideRailHover) {
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
+        GuideGrid.quaternion.identity();
         GuideGrid.material.color.set(0x88aa88);
         setGuideHoverPin(guideRailHover.point);
       }
@@ -8945,12 +9080,12 @@ async function onerun_search_point() {
           AddPointGuideGrid.position.copy(choice_object.position)
           setAddPointGuideGridColor(0x88aa88)
           if (movePlaneMode !== 'change_angle') {
-            GuideGrid.position.copy(choice_object.position)
+            syncGuideGridFromObject(choice_object)
             GuideGrid.material.color.set(0x88aa88)
           }
         } else {
           if (movePlaneMode !== 'change_angle') {
-            GuideGrid.position.copy(choice_object.position)
+            syncGuideGridFromObject(choice_object)
             GuideGrid.material.color.set(0x88aa88)
           }
         }
@@ -8970,6 +9105,7 @@ async function onerun_search_point() {
     // dragging = false;
     GuideLine.visible = false
     GuideGrid.visible = false
+    GuideGrid.quaternion.identity();
   }  
 
   // レンダリング
@@ -9010,6 +9146,26 @@ function coord_DisplayTo3D(Axis_num=false){
   if (movePlaneMode === 'change_angle' && changeAngleGridTarget && !move_direction_y) {
     raycaster.setFromCamera(mouse, camera);
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(movePlaneNormal, movePlaneAnchor);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(plane, hit);
+    if (ok) {
+      return hit;
+    }
+  }
+  // add_point(create) 中は、親元ガイドグリッドの面を優先。
+  // guideAddModeActive 中は直前ターゲット(changeAngleGridTarget)を使わず、
+  // 常に親元(AddPointGuideGrid)を使って角度の持ち越しを防ぐ。
+  if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && addPointGridActive && !move_direction_y) {
+    const planeRef = guideAddModeActive
+      ? (AddPointGuideGrid || null)
+      : (changeAngleGridTarget || AddPointGuideGrid || null);
+    const normal = new THREE.Vector3(0, 1, 0);
+    if (planeRef?.quaternion?.isQuaternion) {
+      normal.applyQuaternion(planeRef.quaternion).normalize();
+    }
+    const anchor = planeRef?.position?.clone?.() || addPointGridHandle?.position?.clone?.() || new THREE.Vector3();
+    raycaster.setFromCamera(mouse, camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
     const hit = new THREE.Vector3();
     const ok = raycaster.ray.intersectPlane(plane, hit);
     if (ok) {
@@ -9604,7 +9760,7 @@ function handleDrag() {
   // GuideLine.visible = true
 
   if (!move_direction_y){
-    GuideGrid.position.set(point.x,point.y,point.z)
+    syncGuideGridFromObject(choice_object)
     GuideGrid.material.color.set(0x8888aa)
     // GuideGrid.visible = true
   }
@@ -10093,7 +10249,6 @@ async function handleMouseDown() {
       addPointGridActive = true;
       addPointGridHandle.position.set(point.x, addPointGridY || 0, point.z);
       AddPointGuideGrid.position.set(point.x, addPointGridY || 0, point.z);
-      setAddPointGuideGridVisibleFromUI(true);
       setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
       // 追加: 現在位置を複製グリッドとして保存
       const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
@@ -11859,7 +12014,8 @@ export function UIevent (uiID, toggle){
     }
     addPointGridY = addPointGridHandle.position.y;
     AddPointGuideGrid.position.copy(addPointGridHandle.position);
-    setAddPointGuideGridVisibleFromUI(true);
+    // 追加モードでは実体グリッド(newGrid)のみ表示し、親元グリッドの二重表示を防ぐ。
+    setAddPointGuideGridVisibleFromUI(false);
   } else {
   console.log( 'add _inactive' )
     guideAddModeActive = false;
@@ -12005,6 +12161,7 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
     movePointPanelActive = true
+    move_direction_y = false
     // search_object = false
     editObject = 'STEEL_FRAME'
     // steelFrameMode.clearSelection()
@@ -13088,8 +13245,10 @@ function animate() {
     
     if (!move_direction_y){
       GuideGrid_Center_x.position.copy(choice_object.position)
+      GuideGrid_Center_x.quaternion.copy(GuideGrid.quaternion)
       GuideGrid_Center_x.visible = true
       GuideGrid_Center_z.position.copy(choice_object.position)
+      GuideGrid_Center_z.quaternion.copy(GuideGrid.quaternion)
       GuideGrid_Center_z.visible = true
     }
     renderer.render(scene, cameraSub);

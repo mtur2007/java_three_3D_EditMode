@@ -1157,6 +1157,18 @@
 
               <div id="rotation-panel" role="region" aria-label="回転パネル" style="position: fixed; right: 20px; top: 120px; width: 220px; padding: 12px; background: rgba(255,255,255,0.92); border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.25); z-index: 10002; display: none; pointer-events: auto;">
                 <div id="rotation-panel-title" style="font-size: 12px; font-weight: 700; margin-bottom: 8px;">Rotation</div>
+                <div id="move-point-coordinate-mode" style="display:none; margin-bottom:8px;">
+                  <div style="font-size:10px; color:#2a3442; margin-bottom:4px;">Coordinate</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                    <button id="move-point-coordinate-world" type="button" style="padding:4px 6px; font-size:11px; border:1px solid #9eb7db; background:#eaf2ff; color:#1f3658; border-radius:6px;">World</button>
+                    <button id="move-point-coordinate-grid" type="button" style="padding:4px 6px; font-size:11px; border:1px solid #b8d7c0; background:#eefcf3; color:#1d5a33; border-radius:6px;">Grid</button>
+                  </div>
+                </div>
+                <div id="move-point-axis-legend" style="display:none; margin-bottom:8px; font-size:10px; color:#243247;">
+                  <div style="display:flex; align-items:center; gap:6px; margin:2px 0;"><span style="display:inline-block; width:18px; height:2px; background:#e34c4c;"></span><span>X</span></div>
+                  <div style="display:flex; align-items:center; gap:6px; margin:2px 0;"><span style="display:inline-block; width:18px; height:2px; background:#46b86a;"></span><span>Y</span></div>
+                  <div style="display:flex; align-items:center; gap:6px; margin:2px 0;"><span style="display:inline-block; width:18px; height:2px; background:#3f7fd6;"></span><span>Z</span></div>
+                </div>
                 <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
                   <label id="rotation-label-x" style="font-size: 11px; color: #b23b3b;">X (deg)
                     <input id="rotation-input-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
