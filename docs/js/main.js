@@ -696,15 +696,25 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function getMovePointPanelTargets() {
-    if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'MOVE_EXISTING') {
+    if (objectEditMode !== 'MOVE_EXISTING' && objectEditMode !== 'CONSTRUCT') {
       return [];
     }
-    const selected = steelFrameMode?.getSelectedPointMeshes?.() || [];
-    if (selected.length > 0) {
-      return selected.filter((mesh) => Boolean(mesh?.userData?.steelFramePoint));
+    if (editObject === 'STEEL_FRAME') {
+      const selected = steelFrameMode?.getSelectedPointMeshes?.() || [];
+      if (selected.length > 0) {
+        return selected.filter((mesh) => Boolean(mesh?.userData?.steelFramePoint));
+      }
+      if (choice_object?.userData?.steelFramePoint) {
+        return [choice_object];
+      }
+      return [];
     }
-    if (choice_object?.userData?.steelFramePoint) {
-      return [choice_object];
+    if (editObject === 'DIFFERENCE_SPACE'
+      && (differenceSpaceTransformMode === 'scale' || differenceSpaceTransformMode === 'rotation')) {
+      const selectedDiffPoints = getDifferenceSelectedPointsForTransform();
+      if (selectedDiffPoints.length > 0) {
+        return selectedDiffPoints;
+      }
     }
     return [];
   }
@@ -921,10 +931,12 @@ const threeUi = document.getElementById('three-ui');
       return;
     }
 
+    const differenceContext = (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale');
     const workItems = targets.map((mesh) => {
       const frame = getMovePointGridFrameForMesh(mesh);
-      const useGridFrame = movePointCoordinateMode === 'grid' && Boolean(frame);
-      const pos = useGridFrame ? worldToGridPosition(mesh.position, frame) : mesh.position.clone();
+      const posWorld = getScaleTargetWorldPosition(mesh);
+      const useGridFrame = !differenceContext && movePointCoordinateMode === 'grid' && Boolean(frame);
+      const pos = useGridFrame ? worldToGridPosition(posWorld, frame) : posWorld.clone();
       return { mesh, frame, useGridFrame, pos };
     });
 
@@ -932,24 +944,52 @@ const threeUi = document.getElementById('three-ui');
     workItems.forEach((item) => center.add(item.pos));
     center.multiplyScalar(1 / workItems.length);
 
-    const beforeItems = targets.map((mesh) => ({ mesh, before: mesh.position.clone(), after: null }));
+    const beforeItems = targets.map((mesh) => ({ mesh, before: getScaleTargetWorldPosition(mesh), after: null }));
+    const dirtyMeshes = new Set();
+    const movedPoints = [];
+    if (differenceContext) {
+      beginDifferenceHistorySession();
+      rebuildDifferenceEdgeOverlapConstraints();
+    }
     workItems.forEach((item) => {
       const offset = item.pos.clone().sub(center);
       const scaled = new THREE.Vector3(offset.x * sx, offset.y * sy, offset.z * sz).add(center);
       const nextWorld = item.useGridFrame ? gridToWorldPosition(scaled, item.frame) : scaled;
-      item.mesh.position.copy(nextWorld);
-      syncGuideCurveFromPointMesh(item.mesh);
+      setScaleTargetWorldPosition(item.mesh, nextWorld);
+      if (differenceContext && item.mesh?.userData?.differenceControlPoint) {
+        const parentMesh = item.mesh.userData?.parentDifferenceSpacePlane || item.mesh.parent;
+        if (parentMesh?.userData?.differenceSpacePlane) {
+          dirtyMeshes.add(parentMesh);
+          movedPoints.push(item.mesh);
+        }
+      } else {
+        syncGuideCurveFromPointMesh(item.mesh);
+      }
     });
 
     const movedItems = beforeItems
-      .map((item) => ({ ...item, after: item.mesh.position.clone() }))
+      .map((item) => ({ ...item, after: getScaleTargetWorldPosition(item.mesh) }))
       .filter((item) => vecMoved(item.before, item.after));
     if (movedItems.length > 0) {
-      pushCreateHistory({
-        type: 'move_meshes',
-        items: movedItems,
-        includesGridHandle: movedItems.some((item) => item.mesh === addPointGridHandle),
-      });
+      if (differenceContext) {
+        if (movedPoints.length > 0) {
+          propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+        }
+        const constrained = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+        const finalDirty = constrained || dirtyMeshes;
+        finalDirty.forEach((mesh) => syncDifferenceGeometryFromControlPoints(mesh));
+        autoMergeNearbyDifferencePoints(movedPoints);
+        mergeOverlappedBoundaryControlPoints();
+        refreshDifferencePreview();
+        refreshDifferenceSelectedEdgeHighlights();
+        commitDifferenceHistoryIfNeeded();
+      } else {
+        pushCreateHistory({
+          type: 'move_meshes',
+          items: movedItems,
+          includesGridHandle: movedItems.some((item) => item.mesh === addPointGridHandle),
+        });
+      }
     }
 
     drawingObject();
@@ -1025,8 +1065,8 @@ const threeUi = document.getElementById('three-ui');
 
   function applyRotationFromPanel() {
     if (scalePointPanelActive
-      && editObject === 'STEEL_FRAME'
-      && objectEditMode === 'MOVE_EXISTING'
+      && (editObject === 'STEEL_FRAME' || editObject === 'DIFFERENCE_SPACE')
+      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === 'CONSTRUCT')
       && !pointRotateModeActive
       && movePlaneMode !== 'change_angle') {
       applyScalePointFromPanel();
@@ -1076,6 +1116,9 @@ const threeUi = document.getElementById('three-ui');
         pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
         pointRotatePanelAngles: { x: axDeg, y: ayDeg, z: azDeg },
       };
+      if (editObject === 'DIFFERENCE_SPACE' && ['move', 'rotation'].includes(differenceSpaceTransformMode)) {
+        saveDifferencePointRotateAngleState(differenceSpaceTransformMode);
+      }
       showPointRotationGuideLine(pointRotateTarget);
       updatePointRotateVisuals();
 
@@ -4668,6 +4711,8 @@ const differencePenetrationEdgeRadius = 0.013
 const differenceContactEpsilon = 0.008
 const differenceRayHitEpsilon = 0.003
 const differencePseudoExpandEpsilon = 0.0015
+const differenceDragRefreshIntervalMs = 120
+let differenceLastIntersectionRefreshAt = 0
 let differenceFaceVertexDragActive = false
 let differenceFaceVertexDragMesh = null
 let differenceFaceVertexDragLocalNormal = null
@@ -5410,16 +5455,14 @@ function isPointNearDifferenceSurface(point, tris, eps = differenceContactEpsilo
   return false;
 }
 
-function pointInsideDifferenceMeshStrict(point, tris, eps = differenceRayHitEpsilon) {
-  if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
-  const dir = new THREE.Vector3(0.373, 0.781, 0.499).normalize();
-  const ray = new THREE.Ray(point.clone(), dir);
+function pointInsideDifferenceMeshByRay(point, tris, dir, eps = differenceRayHitEpsilon) {
+  const ray = new THREE.Ray(point.clone(), dir.clone().normalize());
   const hits = [];
   for (let i = 0; i < tris.length; i += 1) {
     const tri = tris[i];
     const hit = ray.intersectTriangle(tri[0], tri[1], tri[2], false, new THREE.Vector3());
     if (!hit) { continue; }
-    const t = hit.clone().sub(point).dot(dir);
+    const t = hit.clone().sub(point).dot(ray.direction);
     if (t <= eps) { continue; }
     const isDup = hits.some((p) => p.distanceToSquared(hit) <= eps * eps);
     if (!isDup) {
@@ -5429,42 +5472,181 @@ function pointInsideDifferenceMeshStrict(point, tris, eps = differenceRayHitEpsi
   return (hits.length % 2) === 1;
 }
 
-function pointInsideDifferenceMeshExpanded(point, tris, expandEps = differencePseudoExpandEpsilon) {
-  if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
-  if (pointInsideDifferenceMeshStrict(point, tris)) { return true; }
-  if (expandEps <= 0) { return false; }
-  // 擬似的に対象体積をわずかに拡張したのと同等の判定にする。
-  const offsets = [
-    new THREE.Vector3(expandEps, 0, 0),
-    new THREE.Vector3(-expandEps, 0, 0),
-    new THREE.Vector3(0, expandEps, 0),
-    new THREE.Vector3(0, -expandEps, 0),
-    new THREE.Vector3(0, 0, expandEps),
-    new THREE.Vector3(0, 0, -expandEps),
+function classifyPointInsideState(point, tris, {
+  rayEps = differenceRayHitEpsilon,
+  surfaceEps = differenceContactEpsilon,
+  expandEps = differencePseudoExpandEpsilon,
+} = {}) {
+  if (!point || !Array.isArray(tris) || tris.length < 1) { return -1; }
+  // 0: boundary(不確定), 1: inside, -1: outside
+  const isNearSurface = isPointNearDifferenceSurface(point, tris, Math.max(1e-4, surfaceEps));
+  // 単一レイだと面向きや頂点付近で揺れるため、複数方向の多数決で inside を決める。
+  const dirs = [
+    new THREE.Vector3(0.373, 0.781, 0.499),
+    new THREE.Vector3(-0.611, 0.522, 0.596),
+    new THREE.Vector3(0.284, -0.739, 0.611),
+    new THREE.Vector3(-0.217, -0.864, -0.454),
+    new THREE.Vector3(0.746, -0.226, -0.626),
   ];
-  for (let i = 0; i < offsets.length; i += 1) {
-    const p = point.clone().add(offsets[i]);
-    if (pointInsideDifferenceMeshStrict(p, tris)) {
-      return true;
+  let insideCount = 0;
+  for (let i = 0; i < dirs.length; i += 1) {
+    if (pointInsideDifferenceMeshByRay(point, tris, dirs[i], rayEps)) {
+      insideCount += 1;
     }
   }
-  return false;
+
+  // 密着時でも判別できるよう、近傍サンプルで強制的に inside/outside を決める。
+  if (isNearSurface) {
+    const nearOffsets = [
+      new THREE.Vector3(expandEps, 0, 0),
+      new THREE.Vector3(-expandEps, 0, 0),
+      new THREE.Vector3(0, expandEps, 0),
+      new THREE.Vector3(0, -expandEps, 0),
+      new THREE.Vector3(0, 0, expandEps),
+      new THREE.Vector3(0, 0, -expandEps),
+    ];
+    let nearInsideVotes = 0;
+    let nearTotalVotes = 0;
+    for (let i = 0; i < nearOffsets.length; i += 1) {
+      const p = point.clone().add(nearOffsets[i]);
+      for (let j = 0; j < dirs.length; j += 1) {
+        nearTotalVotes += 1;
+        if (pointInsideDifferenceMeshByRay(p, tris, dirs[j], rayEps)) {
+          nearInsideVotes += 1;
+        }
+      }
+    }
+    if (nearInsideVotes > (nearTotalVotes * 0.5)) { return 1; }
+    if (nearInsideVotes < (nearTotalVotes * 0.5)) { return -1; }
+    // 同数のみ不確定
+    return 0;
+  }
+
+  if (insideCount >= 4) { return 1; }
+  if (insideCount <= 1) {
+    // ほんの少しだけ擬似拡張判定。inside 確証が高い場合のみ inside にする。
+    if (expandEps > 0) {
+      const offsets = [
+        new THREE.Vector3(expandEps, 0, 0),
+        new THREE.Vector3(-expandEps, 0, 0),
+        new THREE.Vector3(0, expandEps, 0),
+        new THREE.Vector3(0, -expandEps, 0),
+        new THREE.Vector3(0, 0, expandEps),
+        new THREE.Vector3(0, 0, -expandEps),
+      ];
+      let expandedInside = 0;
+      for (let i = 0; i < offsets.length; i += 1) {
+        const p = point.clone().add(offsets[i]);
+        let c = 0;
+        for (let j = 0; j < dirs.length; j += 1) {
+          if (pointInsideDifferenceMeshByRay(p, tris, dirs[j], rayEps)) {
+            c += 1;
+          }
+        }
+        if (c >= 4) {
+          expandedInside += 1;
+        }
+      }
+      if (expandedInside >= 3) { return 1; }
+    }
+    return -1;
+  }
+  return 0;
+}
+
+function pointInsideDifferenceMeshStrict(point, tris, eps = differenceRayHitEpsilon) {
+  return classifyPointInsideState(point, tris, {
+    rayEps: eps,
+    surfaceEps: differenceContactEpsilon,
+    expandEps: differencePseudoExpandEpsilon,
+  }) === 1;
+}
+
+function pointInsideDifferenceMeshExpanded(point, tris, expandEps = differencePseudoExpandEpsilon) {
+  return classifyPointInsideState(point, tris, {
+    rayEps: differenceRayHitEpsilon,
+    surfaceEps: differenceContactEpsilon,
+    expandEps,
+  }) === 1;
 }
 
 function isContactOnlySegment(a, b, tris) {
   if (!a || !b || !Array.isArray(tris) || tris.length < 1) { return false; }
-  const in0 = pointInsideDifferenceMeshStrict(a, tris);
-  const in1 = pointInsideDifferenceMeshStrict(b, tris);
-  if (in0 || in1) { return false; }
+  const s0 = classifyPointInsideState(a, tris);
+  const s1 = classifyPointInsideState(b, tris);
+  if (s0 === 1 || s1 === 1) { return false; }
   const mid = a.clone().lerp(b, 0.5);
-  const inMid = pointInsideDifferenceMeshStrict(mid, tris);
-  if (inMid) { return false; }
+  const sm = classifyPointInsideState(mid, tris);
+  if (sm === 1) { return false; }
   const hitCount = getSegmentTriangleHitCount(a, b, tris, 0.008);
   if (hitCount > 0) { return false; }
-  const near0 = isPointNearDifferenceSurface(a, tris, differenceContactEpsilon);
-  const near1 = isPointNearDifferenceSurface(b, tris, differenceContactEpsilon);
-  const nearMid = isPointNearDifferenceSurface(mid, tris, differenceContactEpsilon);
-  return near0 || near1 || nearMid;
+  // 境界付近のみで、交差ヒットも inside も無いときだけ contact-only 扱い。
+  return s0 === 0 || s1 === 0 || sm === 0;
+}
+
+function getInsideIntervalsOnSegment(a, b, tris, sampleCount = 12, maxDepthOpt = 6) {
+  if (!a || !b || !Array.isArray(tris) || tris.length < 1) { return []; }
+  if (a.distanceToSquared(b) <= 1e-10) { return []; }
+  const n = Math.max(16, sampleCount * 2);
+  const step = 1 / n;
+  const stateAt = (t) => {
+    const p = a.clone().lerp(b, THREE.MathUtils.clamp(t, 0, 1));
+    let s = classifyPointInsideState(p, tris);
+    if (s !== 0) { return s; }
+    // boundary を局所サンプルで inside/outside に寄せる
+    const dt = Math.max(0.001, step * 0.5);
+    const sPrev = classifyPointInsideState(a.clone().lerp(b, Math.max(0, t - dt)), tris);
+    const sNext = classifyPointInsideState(a.clone().lerp(b, Math.min(1, t + dt)), tris);
+    if (sPrev === 1 || sNext === 1) { return 1; }
+    if (sPrev === -1 || sNext === -1) { return -1; }
+    return 0;
+  };
+
+  const tsSet = new Set();
+  for (let i = 0; i <= n; i += 1) {
+    tsSet.add(Number((i * step).toFixed(6)));
+  }
+  const hitTs = getSegmentTriangleHitTs(a, b, tris, 0.004);
+  hitTs.forEach((t) => {
+    tsSet.add(Number(t.toFixed(6)));
+    tsSet.add(Number(Math.max(0, t - step * 0.5).toFixed(6)));
+    tsSet.add(Number(Math.min(1, t + step * 0.5).toFixed(6)));
+  });
+  const ts = Array.from(tsSet).sort((x, y) => x - y);
+  const intervals = [];
+  const maxDepth = Math.max(1, maxDepthOpt);
+  const walk = (t0, t1, s0, s1, depth) => {
+    if ((t1 - t0) <= 1e-5) { return; }
+    const tm = (t0 + t1) * 0.5;
+    const sm = stateAt(tm);
+    const hasInside = s0 === 1 || s1 === 1 || sm === 1;
+    const uncertain = s0 === 0 || s1 === 0 || sm === 0 || s0 !== s1 || s0 !== sm || s1 !== sm;
+    if (uncertain && depth < maxDepth) {
+      walk(t0, tm, s0, sm, depth + 1);
+      walk(tm, t1, sm, s1, depth + 1);
+      return;
+    }
+    if (hasInside) {
+      intervals.push([t0, t1]);
+    }
+  };
+  for (let i = 0; i < ts.length - 1; i += 1) {
+    const t0 = ts[i];
+    const t1 = ts[i + 1];
+    if ((t1 - t0) <= 1e-5) { continue; }
+    walk(t0, t1, stateAt(t0), stateAt(t1), 0);
+  }
+  return mergeUnitIntervals(intervals);
+}
+
+function isDifferenceHeavyDragActive() {
+  return Boolean(
+    differenceControlPointDragActive
+    || differenceFaceVertexDragActive
+    || pointRotateDragging
+    || pointRotateMoveDragging
+    || dragging,
+  );
 }
 
 function pointInsideDifferenceMesh(point, tris, eps = differenceRayHitEpsilon) {
@@ -5788,7 +5970,8 @@ function splitYellowSegmentByOtherSpaces(segA, segB, meshA, meshB, meshes, trisC
     const mid = segA.clone().lerp(segB, (t0 + t1) * 0.5);
     let insideCount = 0;
     targetTrisList.forEach((tris) => {
-      if (pointInsideDifferenceMeshExpanded(mid, tris)) {
+      const sm = classifyPointInsideState(mid, tris);
+      if (sm === 1) {
         insideCount += 1;
       }
     });
@@ -6045,6 +6228,13 @@ function applyDifferenceViewMode() {
 }
 
 function refreshDifferenceIntersectionVisuals() {
+  const now = performance.now();
+  const heavyDrag = isDifferenceHeavyDragActive();
+  if (heavyDrag && (now - differenceLastIntersectionRefreshAt) < differenceDragRefreshIntervalMs) {
+    return;
+  }
+  differenceLastIntersectionRefreshAt = now;
+
   clearDifferenceIntersectionVisuals();
   clearDifferenceClassifiedSegments();
   if (!differenceSpaceModeActive) { return; }
@@ -6059,6 +6249,8 @@ function refreshDifferenceIntersectionVisuals() {
     const d = mesh.geometry?.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 0;
     return Math.max(acc, d);
   }, 0);
+  const insideSampleCount = heavyDrag ? 4 : 8;
+  const insideMaxDepth = heavyDrag ? 2 : 4;
   scene.updateMatrixWorld(true);
   const trisCache = new Map();
   meshes.forEach((mesh) => {
@@ -6088,9 +6280,12 @@ function refreshDifferenceIntersectionVisuals() {
           const p1 = edge.p1;
           if (isContactOnlySegment(p0, p1, targetTris)) { return; }
           const edgeKey = edge.key || getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
-          const in0 = pointInsideDifferenceMeshExpanded(p0, targetTris);
-          const in1 = pointInsideDifferenceMeshExpanded(p1, targetTris);
-          if (in0 && in1) {
+          const insideIntervals = getInsideIntervalsOnSegment(p0, p1, targetTris, insideSampleCount, insideMaxDepth);
+          if (insideIntervals.length < 1) { return; }
+          const onlyFullInside = insideIntervals.length === 1
+            && insideIntervals[0][0] <= 1e-4
+            && insideIntervals[0][1] >= (1 - 1e-4);
+          if (onlyFullInside) {
             differenceClassifiedRedEdgeKeys.add(edgeKey);
             setDifferenceEdgePriority(edgeKey, 3);
             differenceClassifiedRedSegments.push({
@@ -6110,24 +6305,15 @@ function refreshDifferenceIntersectionVisuals() {
             differencePenetrationEdgeLines.push(edgeLine);
             return;
           }
-
-          const hitTs = getSegmentTriangleHitTs(p0, p1, targetTris, 0.006);
-          const hasPartial = in0 || in1 || hitTs.length >= 1 || getSegmentTriangleHitCount(p0, p1, targetTris) >= 2;
-          if (!hasPartial) { return; }
           if (!differenceClassifiedRedEdgeKeys.has(edgeKey)) {
             differenceClassifiedOrangeEdgeKeys.add(edgeKey);
             setDifferenceEdgePriority(edgeKey, 2);
           }
-
-          // 部分侵入は、交点で辺を分割して「内側区間のみ」オレンジ表示する。
-          const ts = [0, ...hitTs, 1];
-          for (let k = 0; k < ts.length - 1; k += 1) {
-            const tA = ts[k];
-            const tB = ts[k + 1];
+          // 部分侵入は、内側区間のみオレンジ表示する。
+          for (let k = 0; k < insideIntervals.length; k += 1) {
+            const tA = insideIntervals[k][0];
+            const tB = insideIntervals[k][1];
             if (tB - tA <= 1e-4) { continue; }
-            const tMid = (tA + tB) * 0.5;
-            const mid = p0.clone().lerp(p1, tMid);
-            if (!pointInsideDifferenceMeshExpanded(mid, targetTris)) { continue; }
             const segA = p0.clone().lerp(p1, tA);
             const segB = p0.clone().lerp(p1, tB);
             differenceClassifiedOrangeSegments.push({
@@ -6754,7 +6940,7 @@ function refreshDifferenceSelectedEdgeHighlights() {
   clearDifferenceSelectedEdgeHighlights();
   refreshDifferenceIntersectionVisuals();
   if (differenceViewMode === 'preview') { return; }
-  if (!differenceSpaceModeActive || differenceSpaceTransformMode !== 'move') { return; }
+  if (!differenceSpaceModeActive || !['move', 'rotation', 'scale'].includes(differenceSpaceTransformMode)) { return; }
   for (const [key, entry] of Array.from(differenceSelectedEdges.entries())) {
     const pa = entry?.pointA;
     const pb = entry?.pointB;
@@ -6777,6 +6963,27 @@ function refreshDifferenceSelectedEdgeHighlights() {
       differenceSelectedEdgeHighlights.push(line);
     });
   });
+}
+
+function getDifferenceSelectedPointsForTransform() {
+  const points = [];
+  const pushUnique = (point) => {
+    if (!point?.userData?.differenceControlPoint || !point?.parent) { return; }
+    if (points.includes(point)) { return; }
+    points.push(point);
+  };
+
+  Array.from(differenceSelectedControlPoints || []).forEach((point) => pushUnique(point));
+  Array.from(differenceSelectedEdges.values()).forEach((entry) => {
+    pushUnique(entry?.pointA);
+    pushUnique(entry?.pointB);
+  });
+  Array.from(differenceSelectedFaces.values()).forEach((entry) => {
+    const facePoints = getDifferenceFaceControlPoints(entry?.mesh, entry?.localNormal, null);
+    if (!Array.isArray(facePoints)) { return; }
+    facePoints.forEach((point) => pushUnique(point));
+  });
+  return points;
 }
 
 function toggleDifferenceEdgeSelection(mesh, pointA, pointB) {
@@ -6969,54 +7176,85 @@ function getDifferenceFaceKey(mesh, localNormal) {
   return `${mesh.id}:${axis}:${sign}`;
 }
 
-function createDifferenceFaceHighlightPlane(mesh, localNormal, color = 0xffd64d, opacity = 0.55, renderOrder = 2500) {
+function createDifferenceFaceHighlightPlane(mesh, localNormal, color = 0xff8a00, opacity = 0.82, renderOrder = 2500, facePointLocal = null) {
   if (!mesh?.isMesh || !mesh?.geometry || !localNormal) { return null; }
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
   const worldNormal = localNormal.clone().applyMatrix3(normalMatrix).normalize();
   if (worldNormal.lengthSq() < 1e-8) { return null; }
-  mesh.geometry.computeBoundingBox?.();
-  const bb = mesh.geometry.boundingBox;
-  if (!bb) { return null; }
-  const size = bb.getSize(new THREE.Vector3());
-  const center = bb.getCenter(new THREE.Vector3());
-  const axis = Math.abs(localNormal.x) > 0.9
-    ? 'x'
-    : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
-
-  let faceCenterLocal = center.clone();
-  let w = 1;
-  let h = 1;
-  if (axis === 'x') {
-    faceCenterLocal.x = center.x + Math.sign(localNormal.x) * (size.x * 0.5);
-    w = Math.max(0.08, size.z * 0.92);
-    h = Math.max(0.08, size.y * 0.92);
-  } else if (axis === 'y') {
-    faceCenterLocal.y = center.y + Math.sign(localNormal.y) * (size.y * 0.5);
-    w = Math.max(0.08, size.x * 0.92);
-    h = Math.max(0.08, size.z * 0.92);
-  } else {
-    faceCenterLocal.z = center.z + Math.sign(localNormal.z) * (size.z * 0.5);
-    w = Math.max(0.08, size.x * 0.92);
-    h = Math.max(0.08, size.y * 0.92);
+  let facePoints = getDifferenceFaceControlPoints(mesh, localNormal, facePointLocal);
+  if ((!Array.isArray(facePoints) || facePoints.length < 3) && facePointLocal) {
+    facePoints = getDifferenceFaceControlPoints(mesh, localNormal, null);
   }
+  if (!Array.isArray(facePoints) || facePoints.length < 3) { return null; }
 
-  const plane = new THREE.Mesh(
-    new THREE.PlaneGeometry(w, h),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity,
-      side: THREE.DoubleSide,
-      depthTest: true,
-      depthWrite: false,
-    }),
-  );
-  const faceCenterWorld = faceCenterLocal.applyMatrix4(mesh.matrixWorld);
-  const lookAtTarget = faceCenterWorld.clone().add(worldNormal);
-  plane.position.copy(faceCenterWorld.clone().add(worldNormal.clone().multiplyScalar(0.01)));
-  plane.lookAt(lookAtTarget);
-  plane.renderOrder = renderOrder;
-  return plane;
+  const worldPoints = [];
+  const dedupeTol = 1e-4;
+  facePoints.forEach((p) => {
+    const w = p?.getWorldPosition?.(new THREE.Vector3());
+    if (!w) { return; }
+    const exists = worldPoints.some((q) => q.distanceToSquared(w) <= dedupeTol);
+    if (!exists) {
+      worldPoints.push(w);
+    }
+  });
+  if (worldPoints.length < 3) { return null; }
+
+  const center = new THREE.Vector3();
+  worldPoints.forEach((p) => center.add(p));
+  center.multiplyScalar(1 / worldPoints.length);
+
+  let refUp = new THREE.Vector3(0, 1, 0);
+  if (Math.abs(worldNormal.dot(refUp)) > 0.96) {
+    refUp = new THREE.Vector3(1, 0, 0);
+  }
+  const axisU = new THREE.Vector3().crossVectors(refUp, worldNormal).normalize();
+  const axisV = new THREE.Vector3().crossVectors(worldNormal, axisU).normalize();
+
+  const ordered = worldPoints
+    .map((p) => {
+      const rel = p.clone().sub(center);
+      const u = rel.dot(axisU);
+      const v = rel.dot(axisV);
+      return { p, a: Math.atan2(v, u) };
+    })
+    .sort((a, b) => a.a - b.a)
+    .map((e) => e.p);
+  if (ordered.length < 3) { return null; }
+
+  const offset = worldNormal.clone().multiplyScalar(0.012);
+  const vertices = [];
+  const centerOffset = center.clone().add(offset);
+  vertices.push(centerOffset.x, centerOffset.y, centerOffset.z);
+  ordered.forEach((p) => {
+    const q = p.clone().add(offset);
+    vertices.push(q.x, q.y, q.z);
+  });
+
+  const indices = [];
+  for (let i = 1; i < ordered.length; i += 1) {
+    indices.push(0, i, i + 1);
+  }
+  if (indices.length < 3) { return null; }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const poly = new THREE.Mesh(geom, mat);
+  poly.renderOrder = renderOrder;
+  return poly;
 }
 
 function refreshDifferenceSelectedFaceHighlights() {
@@ -7026,7 +7264,7 @@ function refreshDifferenceSelectedFaceHighlights() {
     const mesh = entry?.mesh;
     const localNormal = entry?.localNormal?.clone?.();
     if (!mesh?.parent || !localNormal) { return; }
-    const plane = createDifferenceFaceHighlightPlane(mesh, localNormal, 0x67b7ff, 0.42, 2400);
+    const plane = createDifferenceFaceHighlightPlane(mesh, localNormal, 0x0000ff, 0.76, 2400);
     if (!plane) { return; }
     scene.add(plane);
     differenceSelectedFaceHighlights.push(plane);
@@ -7149,6 +7387,11 @@ function toggleDifferenceMoveSelectionFromPending() {
     return true;
   }
   if (differenceMoveHitKind === 'face' && differenceMoveHitFace?.mesh && differenceMoveHitFace?.localNormal) {
+    const selectionKey = buildDifferenceTransformSelectionKey({
+      mesh: differenceMoveHitFace.mesh,
+      localNormal: differenceMoveHitFace.localNormal,
+    });
+    const sameSelection = pointRotateTarget === differenceMoveHitFace.mesh && isSameDifferenceTransformSelection(selectionKey);
     // クリック選択時点で、面を操作対象として確定する。
     pointRotateTarget = differenceMoveHitFace.mesh;
     selectDifferencePlane(pointRotateTarget);
@@ -7157,20 +7400,23 @@ function toggleDifferenceMoveSelectionFromPending() {
     } else {
       pointRotateCenter.copy(pointRotateTarget.position);
     }
-    pointRotateDirection.copy(
-      differenceMoveHitFace.localNormal.clone().applyQuaternion(pointRotateTarget.quaternion).normalize()
-    );
-    pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
-    pointRotateTarget.userData = {
-      ...(pointRotateTarget.userData || {}),
-      pointRotateDirection: pointRotateDirection.clone(),
-      pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
-      pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
-    };
-    pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
-    pointRotateGizmoYawStart = pointRotateGizmoYaw;
-    pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
-    updatePointRotatePanelAnglesFromDirection(pointRotateDirection, { apply: true });
+    if (!sameSelection) {
+      pointRotateDirection.copy(
+        differenceMoveHitFace.localNormal.clone().applyQuaternion(pointRotateTarget.quaternion).normalize()
+      );
+      pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
+      pointRotateTarget.userData = {
+        ...(pointRotateTarget.userData || {}),
+        pointRotateDirection: pointRotateDirection.clone(),
+        pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+        pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
+      };
+      pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+      pointRotateGizmoYawStart = pointRotateGizmoYaw;
+      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      updatePointRotatePanelAnglesFromDirection(pointRotateDirection, { apply: true });
+    }
+    rememberDifferenceTransformSelection(selectionKey);
     updatePointRotateVisuals();
 
     const selected = toggleDifferenceFaceSelection(differenceMoveHitFace.mesh, differenceMoveHitFace.localNormal);
@@ -10280,9 +10526,20 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (scaleDragging) {
+    const draggedPoints = Array.isArray(scaleDragStartPositions)
+      ? scaleDragStartPositions.map((entry) => entry?.mesh).filter((mesh) => mesh?.userData?.differenceControlPoint)
+      : [];
     scaleDragging = false;
     scaleDragStartPositions = [];
-    commitMoveHistoryIfNeeded();
+    if (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale') {
+      autoMergeNearbyDifferencePoints(draggedPoints);
+      mergeOverlappedBoundaryControlPoints();
+      refreshDifferencePreview();
+      refreshDifferenceSelectedEdgeHighlights();
+      commitDifferenceHistoryIfNeeded();
+    } else {
+      commitMoveHistoryIfNeeded();
+    }
     updateScalePointPanelUI({ clearInputs: true });
     efficacy = true;
     return;
@@ -10507,7 +10764,9 @@ async function handleMouseDown() {
     return;
   }
 
-  if (scalePointPanelActive && objectEditMode === 'MOVE_EXISTING' && editObject === 'STEEL_FRAME') {
+  if (scalePointPanelActive
+    && ((objectEditMode === 'MOVE_EXISTING' && editObject === 'STEEL_FRAME')
+      || (objectEditMode === 'CONSTRUCT' && editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale'))) {
     updateScaleGizmo();
     raycaster.setFromCamera(mouse, camera);
     const ringHit = raycaster.intersectObjects(scaleGizmoMeshes, true)[0] || null;
@@ -10520,6 +10779,20 @@ async function handleMouseDown() {
       beginScaleDrag();
       return;
     }
+    if (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale') {
+      const hits = getIntersectObjects();
+      const cpHit = hits.find((h) => h?.object?.userData?.differenceControlPoint) || null;
+      if (cpHit?.object) {
+        toggleDifferenceControlPointSelection(cpHit.object);
+        updateDifferenceSelectionStatus();
+        const mesh = cpHit.object.userData?.parentDifferenceSpacePlane || cpHit.object.parent || null;
+        if (mesh?.userData?.differenceSpacePlane) {
+          selectDifferencePlane(mesh);
+        }
+        updateScalePointPanelUI({ clearInputs: true });
+      }
+      return;
+    }
   }
 
   if (pointRotateModeActive) {
@@ -10527,10 +10800,109 @@ async function handleMouseDown() {
     raycaster.setFromCamera(mouse, camera);
     const gizmoHit = raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null;
     if (gizmoHit && pointRotateTarget) {
-      beginPointRotateDrag(gizmoHit.object);
+      if (gizmoHit.object?.userData?.action === 'rotate_gizmo_y') {
+        beginPointRotateDrag(gizmoHit.object, {
+          gizmoOnly: true,
+          forceAxis: new THREE.Vector3(0, 1, 0),
+        });
+      } else {
+        beginPointRotateDrag(gizmoHit.object, { gizmoOnly: false });
+      }
       return;
     }
     const hits = getIntersectObjects();
+    if (differenceSpaceTransformMode === 'rotation' && editObject === 'DIFFERENCE_SPACE') {
+      const controlPointHit = hits.find((h) => h?.object?.userData?.differenceControlPoint) || null;
+      if (controlPointHit?.object) {
+        toggleDifferenceControlPointSelection(controlPointHit.object);
+        updateDifferenceSelectionStatus();
+        const selectedPoints = getDifferenceSelectedPointsForTransform();
+        const mesh = controlPointHit.object.userData?.parentDifferenceSpacePlane || controlPointHit.object.parent || null;
+        if (mesh?.userData?.differenceSpacePlane) {
+          const selectionKey = buildDifferenceTransformSelectionKey({ mesh, controlPoint: controlPointHit.object });
+          const sameSelection = pointRotateTarget === mesh && isSameDifferenceTransformSelection(selectionKey);
+          pointRotateTarget = mesh;
+          selectDifferencePlane(mesh);
+          if (selectedPoints.length > 0) {
+            const center = new THREE.Vector3();
+            selectedPoints.forEach((point) => center.add(point.getWorldPosition(new THREE.Vector3())));
+            center.multiplyScalar(1 / selectedPoints.length);
+            pointRotateCenter.copy(center);
+          } else {
+            pointRotateCenter.copy(mesh.position);
+          }
+          if (!sameSelection) {
+            pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
+            pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+          }
+          rememberDifferenceTransformSelection(selectionKey);
+          updatePointRotateVisuals();
+        }
+        return;
+      }
+      const faceHit = hits.find((h) => h?.object?.userData?.differenceSpacePlane && h?.face) || null;
+      if (faceHit?.object?.userData?.differenceSpacePlane) {
+        const mesh = faceHit.object;
+        const localNormal = getLocalFaceNormalFromHit(faceHit);
+        const selectionKey = buildDifferenceTransformSelectionKey({ mesh, localNormal });
+        const sameSelection = pointRotateTarget === mesh && isSameDifferenceTransformSelection(selectionKey);
+        const edgeHit = getNearestDifferenceEdgeHitFromFaceHit(faceHit);
+        let edgeSelected = false;
+        if (edgeHit?.pointA && edgeHit?.pointB) {
+          edgeSelected = toggleDifferenceEdgeSelection(mesh, edgeHit.pointA, edgeHit.pointB);
+          if (edgeSelected) {
+            showDifferenceFaceHighlight(faceHit);
+          }
+        }
+        if (!edgeSelected && localNormal) {
+          const faceSelected = toggleDifferenceFaceSelection(mesh, localNormal);
+          if (faceSelected) {
+            showDifferenceFaceHighlight(faceHit);
+          } else {
+            clearDifferenceFaceHighlight();
+          }
+        }
+        updateDifferenceSelectionStatus();
+        const selectedPoints = getDifferenceSelectedPointsForTransform();
+        pointRotateTarget = mesh;
+        selectDifferencePlane(mesh);
+        if (selectedPoints.length > 0) {
+          const center = new THREE.Vector3();
+          selectedPoints.forEach((point) => center.add(point.getWorldPosition(new THREE.Vector3())));
+          center.multiplyScalar(1 / selectedPoints.length);
+          pointRotateCenter.copy(center);
+        } else if (faceHit?.point) {
+          pointRotateCenter.copy(faceHit.point);
+        } else {
+          pointRotateCenter.copy(mesh.position);
+        }
+        if (!sameSelection) {
+          const faceNormalWorld = getWorldFaceNormalFromHit(faceHit);
+          if (faceNormalWorld) {
+            pointRotateDirection.copy(faceNormalWorld).normalize();
+            pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
+          } else {
+            pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
+            pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+          }
+          pointRotateTarget.userData = {
+            ...(pointRotateTarget.userData || {}),
+            pointRotateDirection: pointRotateDirection.clone(),
+            pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+            pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
+            pointRotatePanelAngles: pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 },
+          };
+          pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+          pointRotateGizmoYawStart = pointRotateGizmoYaw;
+          pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+        }
+        rememberDifferenceTransformSelection(selectionKey);
+        updatePointRotateVisuals();
+        showPointRotationGuideLine(pointRotateTarget);
+        syncPointRotatePanelFromTarget();
+        return;
+      }
+    }
     if (differenceSpaceTransformMode === 'move' && editObject === 'DIFFERENCE_SPACE') {
       const moveHit = hits.find((h) => h?.object?.userData?.differenceControlPoint || h?.object?.userData?.differenceSpacePlane) || null;
       const hitObj = moveHit?.object || null;
@@ -10542,6 +10914,11 @@ async function handleMouseDown() {
           ? (hitObj?.userData?.parentDifferenceSpacePlane || hitObj?.parent || null)
           : hitObj;
         if (mesh?.userData?.differenceSpacePlane) {
+          const localNormal = faceHit ? getLocalFaceNormalFromHit(faceHit) : null;
+          const selectionKey = isControlPointHit
+            ? buildDifferenceTransformSelectionKey({ mesh, controlPoint: controlPointHit?.object || null })
+            : buildDifferenceTransformSelectionKey({ mesh, localNormal });
+          const sameSelection = pointRotateTarget === mesh && isSameDifferenceTransformSelection(selectionKey);
           pointRotateTarget = mesh;
           selectDifferencePlane(mesh);
           if (controlPointHit?.object?.userData?.differenceControlPoint) {
@@ -10551,29 +10928,32 @@ async function handleMouseDown() {
           } else {
             pointRotateCenter.copy(mesh.position);
           }
-          if (faceHit?.object?.userData?.differenceSpacePlane) {
-            const faceNormalWorld = getWorldFaceNormalFromHit(faceHit);
-            if (faceNormalWorld) {
-              pointRotateDirection.copy(faceNormalWorld).normalize();
-              pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
-              pointRotateTarget.userData = {
-                ...(pointRotateTarget.userData || {}),
-                pointRotateDirection: pointRotateDirection.clone(),
-                pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
-                pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
-              };
-              pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
-              pointRotateGizmoYawStart = pointRotateGizmoYaw;
-              pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
-              updatePointRotatePanelAnglesFromDirection(pointRotateDirection, { apply: true });
+          if (!sameSelection) {
+            if (faceHit?.object?.userData?.differenceSpacePlane) {
+              const faceNormalWorld = getWorldFaceNormalFromHit(faceHit);
+              if (faceNormalWorld) {
+                pointRotateDirection.copy(faceNormalWorld).normalize();
+                pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
+                pointRotateTarget.userData = {
+                  ...(pointRotateTarget.userData || {}),
+                  pointRotateDirection: pointRotateDirection.clone(),
+                  pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+                  pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
+                };
+                pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+                pointRotateGizmoYawStart = pointRotateGizmoYaw;
+                pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+                updatePointRotatePanelAnglesFromDirection(pointRotateDirection, { apply: true });
+              } else {
+                pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
+                pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+              }
             } else {
               pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
               pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
             }
-          } else {
-            pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
-            pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
           }
+          rememberDifferenceTransformSelection(selectionKey);
           updatePointRotateVisuals();
         }
         differenceMoveClickPending = true;
@@ -10587,7 +10967,7 @@ async function handleMouseDown() {
           clearDifferenceFaceHighlight();
           return;
         }
-        const localNormal = getLocalFaceNormalFromHit(faceHit);
+        const localNormal = faceHit ? getLocalFaceNormalFromHit(faceHit) : null;
         if (localNormal) {
           const edgeHit = getNearestDifferenceEdgeHitFromFaceHit(faceHit);
           let allowEdgePick = false;
@@ -10626,11 +11006,16 @@ async function handleMouseDown() {
     if (controlPointHit?.object?.userData?.differenceControlPoint && differenceSpaceTransformMode === 'move') {
       const mesh = controlPointHit.object.userData?.parentDifferenceSpacePlane || controlPointHit.object.parent || null;
       if (mesh?.userData?.differenceSpacePlane) {
+        const selectionKey = buildDifferenceTransformSelectionKey({ mesh, controlPoint: controlPointHit.object });
+        const sameSelection = pointRotateTarget === mesh && isSameDifferenceTransformSelection(selectionKey);
         pointRotateTarget = mesh;
         selectDifferencePlane(mesh);
         pointRotateCenter.copy(mesh.position);
-        pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
-        pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+        if (!sameSelection) {
+          pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(mesh));
+          pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+        }
+        rememberDifferenceTransformSelection(selectionKey);
         updatePointRotateVisuals();
       }
       beginDifferenceControlPointDrag(controlPointHit.object);
@@ -10639,6 +11024,10 @@ async function handleMouseDown() {
     const hit = hits.find((h) => h?.object?.userData?.steelFramePoint || h?.object?.userData?.differenceSpacePlane);
     if (hit?.object) {
       const pickedFaceNormal = getWorldFaceNormalFromHit(hit);
+      const pickedLocalNormal = getLocalFaceNormalFromHit(hit);
+      const selectionKey = hit.object?.userData?.differenceSpacePlane
+        ? buildDifferenceTransformSelectionKey({ mesh: hit.object, localNormal: pickedLocalNormal })
+        : buildDifferenceTransformSelectionKey({ mesh: hit.object });
       if (hit.object?.userData?.differenceSpacePlane && differenceSpaceTransformMode === 'move') {
         pointRotateTarget = hit.object;
         selectDifferencePlane(pointRotateTarget);
@@ -10648,10 +11037,12 @@ async function handleMouseDown() {
           pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
           updatePointRotateVisuals();
         }
+        rememberDifferenceTransformSelection(selectionKey);
         return;
       }
       if (pointRotateTarget && hit.object === pointRotateTarget) {
-        if (pickedFaceNormal && pointRotateTarget?.userData?.differenceSpacePlane) {
+        const sameSelection = isSameDifferenceTransformSelection(selectionKey);
+        if (!sameSelection && pickedFaceNormal && pointRotateTarget?.userData?.differenceSpacePlane) {
           showDifferenceFaceHighlight(hit);
           pointRotateDirection.copy(pickedFaceNormal).normalize();
           pointRotateBasisQuat.copy(buildBasisQuatFromDirection(pointRotateDirection));
@@ -10666,6 +11057,7 @@ async function handleMouseDown() {
           pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
           updatePointRotateVisuals();
         }
+        rememberDifferenceTransformSelection(selectionKey);
         beginPointRotateMoveDrag();
         return;
       }
@@ -10693,6 +11085,7 @@ async function handleMouseDown() {
       pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
       pointRotateGizmoYawStart = pointRotateGizmoYaw;
       pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      rememberDifferenceTransformSelection(selectionKey);
       updatePointRotateVisuals();
       showPointRotationGuideLine(pointRotateTarget);
       syncPointRotatePanelFromTarget();
@@ -11180,6 +11573,148 @@ let pointRotateGizmoYawStart = 0;
 let pointRotateMoveStartT = 0;
 let pointRotateMoveStartCenter = new THREE.Vector3();
 let pointRotatePanelAnglesStart = { x: 0, y: 0, z: 0 };
+let pointRotateSelectionDragEntries = null;
+let pointRotateSelectionMoveEntries = null;
+let pointRotateGizmoOnly = false;
+let pointRotateLastSelectionKey = null;
+let pointRotateLastSelectionMode = null;
+const DIFFERENCE_ANGLE_STATE_STORAGE_KEY = 'difference_transform_angle_state_v1';
+
+function buildDifferenceTransformSelectionKey({ mesh = null, controlPoint = null, localNormal = null, edge = null } = {}) {
+  if (controlPoint?.userData?.differenceControlPoint) {
+    return `point:${controlPoint.id}`;
+  }
+  if (edge?.mesh && edge?.pointA?.id && edge?.pointB?.id) {
+    const ids = [edge.pointA.id, edge.pointB.id].sort((a, b) => a - b);
+    return `edge:${edge.mesh.id}:${ids[0]}:${ids[1]}`;
+  }
+  if (mesh && localNormal) {
+    const faceKey = getDifferenceFaceKey(mesh, localNormal);
+    return faceKey ? `face:${faceKey}` : `face:${mesh.id}`;
+  }
+  if (mesh) {
+    return `mesh:${mesh.id}`;
+  }
+  return null;
+}
+
+function isSameDifferenceTransformSelection(key) {
+  return Boolean(key)
+    && pointRotateLastSelectionMode === differenceSpaceTransformMode
+    && pointRotateLastSelectionKey === key;
+}
+
+function rememberDifferenceTransformSelection(key) {
+  pointRotateLastSelectionKey = key || null;
+  pointRotateLastSelectionMode = key ? differenceSpaceTransformMode : null;
+}
+
+function defaultDifferenceAngleState() {
+  return {
+    move: {
+      basisQuat: [0, 0, 0, 1],
+      direction: [0, 0, 1],
+      panelAngles: { x: 0, y: 0, z: 0 },
+    },
+    rotation: {
+      basisQuat: [0, 0, 0, 1],
+      direction: [0, 0, 1],
+      panelAngles: { x: 0, y: 0, z: 0 },
+    },
+    scale: {
+      gizmoQuat: [0, 0, 0, 1],
+      direction: [0, 0, 1],
+    },
+  };
+}
+
+function loadDifferenceAngleState() {
+  const fallback = defaultDifferenceAngleState();
+  try {
+    const raw = localStorage.getItem(DIFFERENCE_ANGLE_STATE_STORAGE_KEY);
+    if (!raw) { return fallback; }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') { return fallback; }
+    return {
+      move: { ...fallback.move, ...(parsed.move || {}) },
+      rotation: { ...fallback.rotation, ...(parsed.rotation || {}) },
+      scale: { ...fallback.scale, ...(parsed.scale || {}) },
+    };
+  } catch (err) {
+    return fallback;
+  }
+}
+
+let differenceAngleState = loadDifferenceAngleState();
+
+function persistDifferenceAngleState() {
+  try {
+    localStorage.setItem(DIFFERENCE_ANGLE_STATE_STORAGE_KEY, JSON.stringify(differenceAngleState));
+  } catch (err) {
+    // ignore storage failures
+  }
+}
+
+function saveDifferencePointRotateAngleState(mode = differenceSpaceTransformMode) {
+  if (!['move', 'rotation'].includes(mode)) { return; }
+  const panelAngles = pointRotateTarget?.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
+  differenceAngleState[mode] = {
+    basisQuat: pointRotateBasisQuat.toArray(),
+    direction: pointRotateDirection.toArray(),
+    panelAngles: { x: Number(panelAngles.x) || 0, y: Number(panelAngles.y) || 0, z: Number(panelAngles.z) || 0 },
+  };
+  persistDifferenceAngleState();
+}
+
+function applyDifferencePointRotateAngleState(mode = differenceSpaceTransformMode, { attachToTarget = false } = {}) {
+  if (!['move', 'rotation'].includes(mode)) { return; }
+  const saved = differenceAngleState?.[mode];
+  if (!saved) { return; }
+  if (Array.isArray(saved.basisQuat) && saved.basisQuat.length === 4) {
+    pointRotateBasisQuat.fromArray(saved.basisQuat).normalize();
+  }
+  if (Array.isArray(saved.direction) && saved.direction.length === 3) {
+    pointRotateDirection.fromArray(saved.direction).normalize();
+  } else {
+    pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+  }
+  pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+  pointRotateGizmoYawStart = pointRotateGizmoYaw;
+  pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+  if (attachToTarget && pointRotateTarget) {
+    pointRotateTarget.userData = {
+      ...(pointRotateTarget.userData || {}),
+      pointRotateDirection: pointRotateDirection.clone(),
+      pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
+      pointRotatePanelAngles: { ...(saved.panelAngles || { x: 0, y: 0, z: 0 }) },
+    };
+  }
+  const panel = saved.panelAngles || { x: 0, y: 0, z: 0 };
+  if (rotationInputX) { rotationInputX.value = String(Number(panel.x || 0).toFixed(1)); }
+  if (rotationInputY) { rotationInputY.value = String(Number(panel.y || 0).toFixed(1)); }
+  if (rotationInputZ) { rotationInputZ.value = String(Number(panel.z || 0).toFixed(1)); }
+}
+
+function saveDifferenceScaleAngleState() {
+  differenceAngleState.scale = {
+    gizmoQuat: scaleGizmoQuat.toArray(),
+    direction: scaleDirection.toArray(),
+  };
+  persistDifferenceAngleState();
+}
+
+function applyDifferenceScaleAngleState() {
+  const saved = differenceAngleState?.scale;
+  if (!saved) { return; }
+  if (Array.isArray(saved.gizmoQuat) && saved.gizmoQuat.length === 4) {
+    scaleGizmoQuat.fromArray(saved.gizmoQuat).normalize();
+  }
+  if (Array.isArray(saved.direction) && saved.direction.length === 3) {
+    scaleDirection.fromArray(saved.direction).normalize();
+  } else {
+    scaleDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(scaleGizmoQuat)).normalize();
+  }
+}
 
 function ensurePointRotateGizmo() {
   if (pointRotateGizmoGroup) { return; }
@@ -11188,18 +11723,23 @@ function ensurePointRotateGizmo() {
   const ringRadius = 1.0;
   const ringTube = 0.03;
   const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
-  const makeRing = (color, axis, euler) => {
+  const makeRing = (color, axis, euler, action = 'rotate_gizmo', radiusScale = 1.0) => {
+    const ringGeom = radiusScale === 1.0
+      ? geom
+      : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(ringGeom, mat);
     mesh.rotation.set(euler.x, euler.y, euler.z);
-    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis };
+    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis, action };
     pointRotateGizmoGroup.add(mesh);
     pointRotateGizmoMeshes.push(mesh);
   };
-  // 横方向（yaw: Y軸）
-  makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0));
-  // 縦方向（pitch: X軸）
-  makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0));
+  // 緑: 1本目Yリング（点を回転）
+  makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_points', 1.0);
+  // 黄: 2本目Yリング（ギズモのみ回転）
+  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_gizmo_y', 1.24);
+  // 赤: Xリング（点を回転）
+  makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 'rotate_points', 1.0);
   pointRotateGizmoGroup.visible = false;
   scene.add(pointRotateGizmoGroup);
 }
@@ -11369,7 +11909,7 @@ function showDifferenceFaceHighlight(hit) {
   const worldToLocal = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
   const facePointLocal = hit?.point?.clone?.()?.applyMatrix4?.(worldToLocal) || null;
   clearDifferenceFaceHighlight(false);
-  const plane = createDifferenceFaceHighlightPlane(mesh, localNormal, 0xffd64d, 0.55, 2500);
+  const plane = createDifferenceFaceHighlightPlane(mesh, localNormal, 0xff8a00, 0.84, 2500, facePointLocal);
   if (!plane) { return; }
   scene.add(plane);
   differenceFaceHighlight = plane;
@@ -11383,17 +11923,19 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
   if (!mesh?.userData?.differenceSpacePlane || !localNormal || !worldNormal) { return false; }
   beginDifferenceHistorySession();
   rebuildDifferenceEdgeOverlapConstraints();
+  const gizmoAxisWorld = pointRotateDirection?.clone?.().normalize?.() || new THREE.Vector3();
+  const dragAxisWorld = gizmoAxisWorld.lengthSq() > 1e-8 ? gizmoAxisWorld : worldNormal.clone().normalize();
+  if (dragAxisWorld.lengthSq() < 1e-8) { return false; }
   const axis = Math.abs(localNormal.x) > 0.9
     ? 'x'
     : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
-  const axisDir = worldNormal.clone().normalize();
   differenceFaceVertexDragActive = true;
   differenceFaceVertexDragMesh = mesh;
   differenceFaceVertexDragLocalNormal = localNormal.clone();
   differenceFaceVertexDragAxis = axis;
   const primaryOrigin = hit?.point?.clone?.() || mesh.position.clone();
   differenceFaceVertexDragStartPos.copy(primaryOrigin);
-  differenceFaceVertexDragStartT = getAxisParamFromPointer(primaryOrigin, axisDir);
+  differenceFaceVertexDragStartT = getAxisParamFromPointer(primaryOrigin, dragAxisWorld);
   differenceFaceVertexDragStartLen = 0;
   const faces = Array.isArray(selectedFaces) && selectedFaces.length > 0
     ? selectedFaces
@@ -11431,7 +11973,6 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
       facePoints = getDifferenceFaceControlPoints(m, n, null);
     }
     if (!Array.isArray(facePoints) || facePoints.length < 3) { return null; }
-    const wd = n.clone().applyQuaternion(m.quaternion).normalize();
     const faceOrigin = new THREE.Vector3();
     const points = facePoints.map((p) => {
       const startPos = p.position.clone();
@@ -11443,7 +11984,7 @@ function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
     return {
       mesh: m,
       localNormal: n,
-      axisDir: wd,
+      axisDir: dragAxisWorld.clone(),
       faceOrigin,
       points,
     };
@@ -11574,11 +12115,30 @@ function updateDifferenceFaceVertexDrag() {
   });
 }
 
-function beginPointRotateDrag(axisMesh) {
-  if (pointRotateTarget?.userData?.differenceSpacePlane) {
+function beginPointRotateDrag(axisMesh, { gizmoOnly = false, forceAxis = null } = {}) {
+  pointRotateGizmoOnly = Boolean(gizmoOnly);
+  if (!pointRotateGizmoOnly && pointRotateTarget?.userData?.differenceSpacePlane) {
     beginDifferenceHistorySession();
   }
-  pointRotateAxisLocal = axisMesh?.userData?.axis?.clone?.().normalize?.() || new THREE.Vector3(0, 1, 0);
+  pointRotateSelectionDragEntries = null;
+  if (!pointRotateGizmoOnly && editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'rotation') {
+    const selectedPoints = getDifferenceSelectedPointsForTransform();
+    if (selectedPoints.length > 0) {
+      const selectionCenter = new THREE.Vector3();
+      selectedPoints.forEach((point) => selectionCenter.add(point.getWorldPosition(new THREE.Vector3())));
+      selectionCenter.multiplyScalar(1 / selectedPoints.length);
+      pointRotateCenter.copy(selectionCenter);
+      pointRotateSelectionDragEntries = selectedPoints.map((point) => ({
+        point,
+        parent: point.parent,
+        startWorldPos: point.getWorldPosition(new THREE.Vector3()),
+      }));
+      rebuildDifferenceEdgeOverlapConstraints();
+    }
+  }
+  pointRotateAxisLocal = forceAxis?.clone?.().normalize?.()
+    || axisMesh?.userData?.axis?.clone?.().normalize?.()
+    || new THREE.Vector3(0, 1, 0);
   if (pointRotateAxisLocal.y === 1) {
     pointRotateAxis.copy(new THREE.Vector3(0, 1, 0));
   } else {
@@ -11621,9 +12181,25 @@ function getAxisParamFromPointer(axisOrigin, axisDir) {
 
 function beginPointRotateMoveDrag() {
   if (!pointRotateTarget) { return; }
+  pointRotateSelectionMoveEntries = null;
   if (pointRotateTarget?.userData?.differenceSpacePlane) {
     beginDifferenceHistorySession();
     rebuildDifferenceEdgeOverlapConstraints();
+    if (differenceSpaceTransformMode === 'rotation') {
+      const selectedPoints = Array.from(differenceSelectedControlPoints || [])
+        .filter((point) => point?.userData?.differenceControlPoint && point?.parent);
+      if (selectedPoints.length > 0) {
+        const center = new THREE.Vector3();
+        selectedPoints.forEach((point) => center.add(point.getWorldPosition(new THREE.Vector3())));
+        center.multiplyScalar(1 / selectedPoints.length);
+        pointRotateCenter.copy(center);
+        pointRotateSelectionMoveEntries = selectedPoints.map((point) => ({
+          point,
+          parent: point.parent,
+          startWorldPos: point.getWorldPosition(new THREE.Vector3()),
+        }));
+      }
+    }
   }
   const axisDir = pointRotateDirection.clone().normalize();
   if (axisDir.lengthSq() < 1e-8) { return; }
@@ -11666,11 +12242,44 @@ function updatePointRotateDrag() {
       pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
       pointRotatePanelAngles: panelAngles,
     };
+    if (editObject === 'DIFFERENCE_SPACE' && ['move', 'rotation'].includes(differenceSpaceTransformMode)) {
+      saveDifferencePointRotateAngleState(differenceSpaceTransformMode);
+    }
     if (rotationInputX) { rotationInputX.value = String(panelAngles.x.toFixed(1)); }
     if (rotationInputY) { rotationInputY.value = String(panelAngles.y.toFixed(1)); }
     if (rotationInputZ) { rotationInputZ.value = String(panelAngles.z.toFixed(1)); }
     showPointRotationGuideLine(pointRotateTarget);
-    if (pointRotateTarget?.userData?.differenceSpacePlane) {
+    if (!pointRotateGizmoOnly
+      && editObject === 'DIFFERENCE_SPACE'
+      && differenceSpaceTransformMode === 'rotation'
+      && Array.isArray(pointRotateSelectionDragEntries)
+      && pointRotateSelectionDragEntries.length > 0) {
+      const rotationQuat = new THREE.Quaternion().setFromAxisAngle(pointRotateAxis, angle);
+      const dirtyMeshes = new Set();
+      const movedPoints = [];
+      pointRotateSelectionDragEntries.forEach((entry) => {
+        if (!entry?.point || !entry?.parent) { return; }
+        const rotatedOffset = entry.startWorldPos.clone().sub(pointRotateCenter).applyQuaternion(rotationQuat);
+        const nextWorldPos = pointRotateCenter.clone().add(rotatedOffset);
+        const nextLocalPos = entry.parent.worldToLocal(nextWorldPos.clone());
+        entry.point.position.copy(nextLocalPos);
+        const parentMesh = entry.point.userData?.parentDifferenceSpacePlane || entry.point.parent;
+        if (parentMesh?.userData?.differenceSpacePlane) {
+          dirtyMeshes.add(parentMesh);
+          movedPoints.push(entry.point);
+        }
+      });
+      if (movedPoints.length > 0) {
+        propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+      }
+      for (let i = 0; i < 3; i += 1) {
+        const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+        if (moved < 1) { break; }
+      }
+      dirtyMeshes.forEach((mesh) => syncDifferenceGeometryFromControlPoints(mesh));
+      refreshDifferenceSelectedEdgeHighlights();
+      refreshDifferencePreview();
+    } else if (!pointRotateGizmoOnly && pointRotateTarget?.userData?.differenceSpacePlane) {
       refreshDifferencePreview();
     }
   }
@@ -11685,6 +12294,36 @@ function updatePointRotateMoveDrag() {
   const delta = nowT - pointRotateMoveStartT;
   const nextCenter = pointRotateMoveStartCenter.clone().add(axisDir.multiplyScalar(delta));
   pointRotateCenter.copy(nextCenter);
+  if (editObject === 'DIFFERENCE_SPACE'
+    && differenceSpaceTransformMode === 'rotation'
+    && Array.isArray(pointRotateSelectionMoveEntries)
+    && pointRotateSelectionMoveEntries.length > 0) {
+    const dirtyMeshes = new Set();
+    const movedPoints = [];
+    pointRotateSelectionMoveEntries.forEach((entry) => {
+      if (!entry?.point || !entry?.parent) { return; }
+      const nextWorldPos = entry.startWorldPos.clone().add(pointRotateDirection.clone().multiplyScalar(delta));
+      const nextLocalPos = entry.parent.worldToLocal(nextWorldPos.clone());
+      entry.point.position.copy(nextLocalPos);
+      const parentMesh = entry.point.userData?.parentDifferenceSpacePlane || entry.point.parent;
+      if (parentMesh?.userData?.differenceSpacePlane) {
+        dirtyMeshes.add(parentMesh);
+        movedPoints.push(entry.point);
+      }
+    });
+    if (movedPoints.length > 0) {
+      propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+      if (moved < 1) { break; }
+    }
+    dirtyMeshes.forEach((mesh) => syncDifferenceGeometryFromControlPoints(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
+    refreshDifferencePreview();
+    updatePointRotateVisuals();
+    return;
+  }
   pointRotateTarget.position.copy(nextCenter);
   pointRotateTarget.userData = {
     ...(pointRotateTarget.userData || {}),
@@ -11708,6 +12347,9 @@ function updatePointRotateMoveDrag() {
 function clearPointRotateState() {
   pointRotateDragging = false;
   pointRotateMoveDragging = false;
+  pointRotateSelectionDragEntries = null;
+  pointRotateSelectionMoveEntries = null;
+  pointRotateGizmoOnly = false;
   clearDifferenceMovePending();
   differenceControlPointDragActive = false;
   differenceControlPointDragPoint = null;
@@ -11730,6 +12372,8 @@ function clearPointRotateState() {
   pointRotateGizmoQuat.identity();
   pointRotateGizmoYaw = 0;
   pointRotateGizmoYawStart = 0;
+  pointRotateLastSelectionKey = null;
+  pointRotateLastSelectionMode = null;
   if (pointRotateGizmoGroup) {
     pointRotateGizmoGroup.visible = false;
   }
@@ -12140,30 +12784,66 @@ function getScaleSelectionBasisQuat(meshes) {
   return new THREE.Quaternion();
 }
 
+function getScaleTargetWorldPosition(mesh) {
+  if (mesh?.userData?.differenceControlPoint) {
+    return mesh.getWorldPosition(new THREE.Vector3());
+  }
+  return mesh?.position?.clone ? mesh.position.clone() : new THREE.Vector3();
+}
+
+function setScaleTargetWorldPosition(mesh, worldPos) {
+  if (!mesh || !worldPos) { return; }
+  if (mesh.userData?.differenceControlPoint && mesh.parent) {
+    const local = mesh.parent.worldToLocal(worldPos.clone());
+    mesh.position.copy(local);
+    return;
+  }
+  mesh.position.copy(worldPos);
+}
+
 function updateScaleGizmo() {
   ensureScaleGizmo();
   const meshes = getMovePointPanelTargets();
-  if (!scalePointPanelActive || editObject !== 'STEEL_FRAME' || objectEditMode !== 'MOVE_EXISTING' || meshes.length < 2) {
+  const isSteelFrameScale = (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING');
+  const isDifferenceScale = (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT' && differenceSpaceTransformMode === 'scale');
+  const isDifferenceRotationPreview = (
+    editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CONSTRUCT'
+    && differenceSpaceTransformMode === 'rotation'
+    && pointRotateModeActive
+  );
+  if ((!scalePointPanelActive && !isDifferenceRotationPreview)
+    || (!isSteelFrameScale && !isDifferenceScale && !isDifferenceRotationPreview)
+    || meshes.length < 2) {
     scaleGizmoGroup.visible = false;
     if (scaleArrow) { scaleArrow.visible = false; }
     if (scaleArrowPick) { scaleArrowPick.visible = false; }
     return;
   }
   const center = new THREE.Vector3();
-  meshes.forEach((m) => center.add(m.position));
+  meshes.forEach((m) => center.add(getScaleTargetWorldPosition(m)));
   center.multiplyScalar(1 / meshes.length);
   const basisQuat = getScaleSelectionBasisQuat(meshes);
 
   const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',') + `|${movePointCoordinateMode}`;
+  const useSavedDifferenceScaleAngle = (
+    editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CONSTRUCT'
+    && ['scale', 'rotation'].includes(differenceSpaceTransformMode)
+  );
   if (scaleGizmoIdsKey !== idsKey) {
     scaleGizmoIdsKey = idsKey;
-    scaleGizmoQuat.copy(basisQuat);
-    scaleDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(scaleGizmoQuat).normalize());
+    if (useSavedDifferenceScaleAngle) {
+      applyDifferenceScaleAngleState();
+    } else {
+      scaleGizmoQuat.copy(basisQuat);
+      scaleDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(scaleGizmoQuat).normalize());
+    }
   }
 
   let maxDist = 1.0;
   meshes.forEach((m) => {
-    const d = m.position.distanceTo(center);
+    const d = getScaleTargetWorldPosition(m).distanceTo(center);
     if (d > maxDist) { maxDist = d; }
   });
   scaleGizmoGroup.position.copy(center);
@@ -12229,7 +12909,7 @@ function beginScaleDrag() {
   if (!ok) { return; }
   scaleDragStartAxisT = hit.clone().sub(scaleDragCenter).dot(scaleDragAxisWorld);
 
-  scaleDragStartPositions = meshes.map((mesh) => ({ mesh, pos: mesh.position.clone() }));
+  scaleDragStartPositions = meshes.map((mesh) => ({ mesh, pos: getScaleTargetWorldPosition(mesh) }));
   let span = 0;
   scaleDragStartPositions.forEach(({ pos }) => {
     const proj = pos.clone().sub(scaleDragCenter).dot(scaleDragAxisWorld);
@@ -12240,7 +12920,12 @@ function beginScaleDrag() {
   scaleDragging = true;
   moveClickPending = false;
   shouldToggle = false;
-  moveHistoryStart = captureMoveHistoryStart();
+  if (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale') {
+    beginDifferenceHistorySession();
+    rebuildDifferenceEdgeOverlapConstraints();
+  } else {
+    moveHistoryStart = captureMoveHistoryStart();
+  }
   efficacy = false;
 }
 
@@ -12257,6 +12942,9 @@ function updateScaleRotateDrag() {
   const deltaQuat = new THREE.Quaternion().setFromAxisAngle(scaleRotateAxis, angle);
   scaleGizmoQuat.copy(deltaQuat.multiply(scaleGizmoQuatStart)).normalize();
   scaleDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(scaleGizmoQuat)).normalize();
+  if (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale') {
+    saveDifferenceScaleAngleState();
+  }
   updateScaleGizmo();
 }
 
@@ -12271,14 +12959,25 @@ function updateScaleDrag() {
   const factor = Math.max(0.05, 1 + (delta / scaleDragStartSpan));
   scaleDragCurrentFactor = factor;
 
+  const differenceContext = (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale');
   const curves = new Set();
+  const dirtyMeshes = new Set();
+  const movedPoints = [];
   scaleDragStartPositions.forEach(({ mesh, pos }) => {
     const offset = pos.clone().sub(scaleDragCenter);
     const projLen = offset.dot(scaleDragAxisWorld);
     const proj = scaleDragAxisWorld.clone().multiplyScalar(projLen);
     const perp = offset.clone().sub(proj);
     const world = perp.add(proj.multiplyScalar(factor)).add(scaleDragCenter);
-    mesh.position.copy(world);
+    setScaleTargetWorldPosition(mesh, world);
+    if (differenceContext && mesh?.userData?.differenceControlPoint) {
+      const parentMesh = mesh.userData?.parentDifferenceSpacePlane || mesh.parent;
+      if (parentMesh?.userData?.differenceSpacePlane) {
+        dirtyMeshes.add(parentMesh);
+        movedPoints.push(mesh);
+      }
+      return;
+    }
     if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
       const curve = mesh.userData.guideCurve;
       const idx = mesh.userData.guideControlIndex;
@@ -12289,6 +12988,16 @@ function updateScaleDrag() {
     }
   });
   curves.forEach((curve) => updateGuideCurve(curve));
+  if (differenceContext) {
+    if (movedPoints.length > 0) {
+      propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+    }
+    const constrained = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+    const finalDirty = constrained || dirtyMeshes;
+    finalDirty.forEach((mesh) => syncDifferenceGeometryFromControlPoints(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
+    refreshDifferencePreview();
+  }
 
   if (rotationInputX) { rotationInputX.value = String(Number(factor).toFixed(3)); }
   if (rotationInputY) { rotationInputY.value = ''; }
@@ -13102,6 +13811,13 @@ export function UIevent (uiID, toggle){
     differenceSpaceModeActive = false
     differenceSpaceTransformMode = 'none'
     pointRotateModeActive = false
+    scalePointPanelActive = false
+    scaleDragging = false
+    scaleRotateDragging = false
+    scaleDragStartPositions = []
+    if (scaleGizmoGroup) { scaleGizmoGroup.visible = false; }
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
     clearPointRotateState()
     if (differencePanel) {
       differencePanel.style.display = 'none';
@@ -13140,6 +13856,13 @@ export function UIevent (uiID, toggle){
     differenceSpaceModeActive = false
     differenceSpaceTransformMode = 'none'
     pointRotateModeActive = false
+    scalePointPanelActive = false
+    scaleDragging = false
+    scaleRotateDragging = false
+    scaleDragStartPositions = []
+    if (scaleGizmoGroup) { scaleGizmoGroup.visible = false; }
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
     clearPointRotateState()
     if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT') {
       objectEditMode = 'Standby';
@@ -13181,7 +13904,7 @@ export function UIevent (uiID, toggle){
     differenceHoverFaceKey = null;
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
     refreshDifferenceSelectedEdgeHighlights();
-  }} else if ( uiID === 'move/2' || uiID === 'move_space' || uiID === 'rotation/3' || uiID === 'rotation_space' ){ if ( toggle === 'active' ){
+  }} else if ( uiID === 'move/2' || uiID === 'move_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
     if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
@@ -13191,6 +13914,13 @@ export function UIevent (uiID, toggle){
       differenceShapeSelect.value = 'box';
     }
     pointRotateModeActive = true
+    scalePointPanelActive = false
+    scaleDragging = false
+    scaleRotateDragging = false
+    scaleDragStartPositions = []
+    if (scaleGizmoGroup) { scaleGizmoGroup.visible = false; }
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
     editObject = 'DIFFERENCE_SPACE'
     objectEditMode = 'CONSTRUCT'
     search_object = false
@@ -13199,12 +13929,16 @@ export function UIevent (uiID, toggle){
     differenceSpacePlanes.forEach((mesh) => setDifferencePlaneVisual(mesh, false));
     movePointPanelActive = false;
     setRotationPanelMode('rotation');
+    applyDifferencePointRotateAngleState('move', { attachToTarget: Boolean(pointRotateTarget) });
     setRotationPanelVisible(true);
-    updateDifferenceStatus('面を選択してドラッグで形状を変更します。');
+    updatePointRotateVisuals();
+    updateDifferenceStatus('move: 面を選択してドラッグで形状を変更します。');
     refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
-    differenceSpaceTransformMode = 'none'
+    if (differenceSpaceTransformMode === 'move') {
+      differenceSpaceTransformMode = 'none'
+    }
     pointRotateModeActive = false
     setRotationPanelVisible(false);
     clearPointRotateState()
@@ -13213,6 +13947,93 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
+  }} else if ( uiID === 'rotation/3' || uiID === 'rotation_space' ){ if ( toggle === 'active' ){
+  console.log( uiID + ' _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
+    differenceSpaceModeActive = true
+    differenceSpaceTransformMode = 'rotation'
+    differenceShapeType = 'box'
+    if (differenceShapeSelect) {
+      differenceShapeSelect.value = 'box';
+    }
+    pointRotateModeActive = true
+    scalePointPanelActive = false
+    scaleDragging = false
+    scaleRotateDragging = false
+    scaleDragStartPositions = []
+    if (scaleGizmoGroup) { scaleGizmoGroup.visible = false; }
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
+    editObject = 'DIFFERENCE_SPACE'
+    objectEditMode = 'CONSTRUCT'
+    search_object = false
+    targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+    setMeshListOpacity(targetObjects, 1)
+    differenceSpacePlanes.forEach((mesh) => setDifferencePlaneVisual(mesh, false));
+    movePointPanelActive = false;
+    setRotationPanelMode('rotation');
+    applyDifferencePointRotateAngleState('rotation', { attachToTarget: Boolean(pointRotateTarget) });
+    setRotationPanelVisible(true);
+    updatePointRotateVisuals();
+    updateDifferenceStatus('rotation: 面/点を選択し、ギズモで回転します。');
+    refreshDifferenceSelectedEdgeHighlights();
+  } else {
+  console.log( uiID + ' _inactive' )
+    if (differenceSpaceTransformMode === 'rotation') {
+      differenceSpaceTransformMode = 'none'
+    }
+    pointRotateModeActive = false
+    setRotationPanelVisible(false);
+    clearPointRotateState()
+    if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT') {
+      objectEditMode = 'Standby';
+    }
+    clearDifferenceFaceHighlight();
+    differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    refreshDifferenceSelectedEdgeHighlights();
+  }} else if ( uiID === 'scale/2' || uiID === 'scale_space' ){ if ( toggle === 'active' ){
+  console.log( uiID + ' _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
+    differenceSpaceModeActive = true
+    differenceSpaceTransformMode = 'scale'
+    differenceShapeType = 'box'
+    if (differenceShapeSelect) {
+      differenceShapeSelect.value = 'box';
+    }
+    pointRotateModeActive = false
+    clearPointRotateState()
+    movePointPanelActive = false
+    scalePointPanelActive = true
+    editObject = 'DIFFERENCE_SPACE'
+    objectEditMode = 'CONSTRUCT'
+    search_object = false
+    targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+    setMeshListOpacity(targetObjects, 1)
+    differenceSpacePlanes.forEach((mesh) => setDifferencePlaneVisual(mesh, false));
+    setRotationPanelMode('scale_point');
+    applyDifferenceScaleAngleState();
+    setRotationPanelVisible(true);
+    updateScalePointPanelUI({ clearInputs: true });
+    updateScaleGizmo();
+    updateDifferenceStatus('scale: control pointを複数選択してギズモでスケールします。');
+    refreshDifferenceSelectedEdgeHighlights();
+  } else {
+  console.log( uiID + ' _inactive' )
+    if (differenceSpaceTransformMode === 'scale') {
+      differenceSpaceTransformMode = 'none'
+    }
+    scalePointPanelActive = false
+    scaleDragging = false
+    scaleRotateDragging = false
+    scaleDragStartPositions = []
+    if (scaleGizmoGroup) { scaleGizmoGroup.visible = false; }
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
+    setRotationPanelVisible(false);
+    if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT') {
+      objectEditMode = 'Standby';
+    }
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'tube' || uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -13980,10 +14801,16 @@ function animate() {
   if (movePlaneMode === 'change_angle') {
     updateMovePlaneGizmo();
   }
-  if (scalePointPanelActive) {
+  if (scalePointPanelActive
+    || (editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'rotation'
+      && pointRotateModeActive)) {
     updateScaleGizmo();
   } else if (scaleGizmoGroup) {
     scaleGizmoGroup.visible = false;
+    if (scaleArrow) { scaleArrow.visible = false; }
+    if (scaleArrowPick) { scaleArrowPick.visible = false; }
   }
   syncSinjyukuCityVisibility();
 

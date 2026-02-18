@@ -236,6 +236,8 @@ const uiTree = {
                 'space': {
                     'add': '',
                     'move': '',
+                    'rotation': '',
+                    'scale': '',
                     'tube': '',
                 },
                 'excavation': '',
