@@ -59,6 +59,32 @@ ground.name = 'GroundPlane';
 scene.add(ground);
 
 if (onlyRailAndGround) {
+  // create モード用の都市モデルだけは利用できるようにする
+  const cityLoader = new GLTFLoader();
+  const cityDraco = new DRACOLoader();
+  cityDraco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+  cityLoader.setDRACOLoader(cityDraco);
+  cityLoader.load(
+    'sinjyuku.glb',
+    (gltf) => {
+      const root = gltf.scene || gltf.scenes?.[0];
+      if (!root) { return; }
+      root.rotation.y = 100 * Math.PI / 180;
+      const scale = 0.35;
+      const positionScale = scale / 0.45;
+      root.position.set(145 * positionScale, 40 * positionScale, -175 * positionScale);
+      root.scale.setScalar(scale);
+      root.name = 'sinjyuku_city';
+      root.position.y = 0;
+      root.visible = Boolean(scene?.userData?.createModeWorldFocused);
+      scene.add(root);
+      console.log('[world_creat] sinjyuku_city loaded in onlyRailAndGround mode:', root);
+    },
+    undefined,
+    (err) => {
+      console.error('[world_creat] sinjyuku.glb load failed in onlyRailAndGround mode:', err);
+    },
+  );
   console.info('[world_creat] onlyRailAndGround=true: 地面以外のワールド生成をスキップ');
   return [null, null, null, null];
 }
@@ -311,7 +337,7 @@ loadModelToScene('sinjyuku.glb', { autoCenter: true, autoScaleMax: 10000, scaleI
   .then((root) => {
     root.name = 'sinjyuku_city';
     root.position.y = 0;
-    root.visible = false;
+    root.visible = Boolean(scene?.userData?.createModeWorldFocused);
     console.log('GLB loaded and added to scene:', root);
   })
   .catch((err) => {

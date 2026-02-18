@@ -8,6 +8,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   const pointColor = 0xff0000;
   const selectedPointColor = 0x7be6ff;
   const selectedPoints = [];
+  const selectionBreakMarker = Object.freeze({ __steelFrameSelectionBreak: true });
   const generatedRecords = [];
   let generatedRecordId = 1;
   let active = false;
@@ -296,7 +297,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
 
   function clearSelection() {
-    selectedPoints.forEach((mesh) => setPointColor(mesh, pointColor));
+    selectedPoints.forEach((mesh) => {
+      if (!mesh?.userData?.steelFramePoint) { return; }
+      setPointColor(mesh, pointColor);
+    });
     selectedPoints.length = 0;
   }
 
@@ -310,6 +314,25 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     }
     selectedPoints.push(mesh);
     setPointColor(mesh, selectedPointColor);
+    return true;
+  }
+
+  function appendSelectedPoint(mesh) {
+    if (!mesh || !mesh.userData?.steelFramePoint) { return false; }
+    const idx = selectedPoints.indexOf(mesh);
+    if (idx >= 0) {
+      selectedPoints.splice(idx, 1);
+    }
+    selectedPoints.push(mesh);
+    setPointColor(mesh, selectedPointColor);
+    return true;
+  }
+
+  function appendSelectionBreak() {
+    if (selectedPoints.length === 0) { return false; }
+    const last = selectedPoints[selectedPoints.length - 1];
+    if (last === selectionBreakMarker) { return false; }
+    selectedPoints.push(selectionBreakMarker);
     return true;
   }
 
@@ -331,11 +354,11 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
 
   function getSelectedPointMeshes() {
-    return selectedPoints.slice();
+    return selectedPoints.filter((mesh) => mesh?.userData?.steelFramePoint);
   }
 
   function getSelectedPointOrder() {
-    return selectedPoints.map((mesh, idx) => ({
+    return getSelectedPointMeshes().map((mesh, idx) => ({
       order: idx + 1,
       id: mesh?.id ?? null,
       line: mesh?.userData?.steelFrameLine ?? null,
@@ -345,9 +368,30 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     }));
   }
 
+  function getSelectedPointSequences() {
+    const sequences = [];
+    let current = [];
+    selectedPoints.forEach((item) => {
+      if (item === selectionBreakMarker) {
+        if (current.length > 0) {
+          sequences.push(current);
+          current = [];
+        }
+        return;
+      }
+      if (item?.userData?.steelFramePoint) {
+        current.push(item);
+      }
+    });
+    if (current.length > 0) {
+      sequences.push(current);
+    }
+    return sequences;
+  }
+
   function generateSteelFrame() {
     let targetPoints = lines[currentLineIndex];
-    if (selectedPoints.length >= 2) {
+    if (getSelectedPointMeshes().length >= 2) {
       const selectedLine = [...selectedPoints];
       targetPoints = selectedLine;
     }
@@ -357,13 +401,15 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       return null;
     }
 
-    const pointSnapshot = targetPoints.map((mesh, idx) => ({
+    const pointSnapshot = targetPoints
+      .filter((mesh) => mesh?.userData?.steelFramePoint)
+      .map((mesh, idx) => ({
       order: idx + 1,
       id: mesh?.id ?? null,
       x: mesh?.position?.x ?? null,
       y: mesh?.position?.y ?? null,
       z: mesh?.position?.z ?? null,
-    }));
+      }));
     generatedRecords.push({
       id: generatedRecordId++,
       profile: segmentProfile,
@@ -409,6 +455,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     getGeneratedRecords,
     getPointMeshes: getCurrentPointMeshes,
     getSelectedPointOrder,
+    getSelectedPointSequences,
     isSelectedPoint,
     restorePointColor,
     addExistingPoint,
@@ -418,6 +465,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     setPointsFromTargets,
     startNewLine,
     setAllowPointAppend,
+    appendSelectedPoint,
+    appendSelectionBreak,
     toggleSelectedPoint,
     generateSteelFrame,
   };
