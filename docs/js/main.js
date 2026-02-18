@@ -4665,6 +4665,9 @@ const differenceEdgeOverlapConstraints = []
 const differenceIntersectionPointRadius = 0.035
 const differenceIntersectionLineRadius = 0.01
 const differencePenetrationEdgeRadius = 0.013
+const differenceContactEpsilon = 0.008
+const differenceRayHitEpsilon = 0.003
+const differencePseudoExpandEpsilon = 0.0015
 let differenceFaceVertexDragActive = false
 let differenceFaceVertexDragMesh = null
 let differenceFaceVertexDragLocalNormal = null
@@ -5387,7 +5390,27 @@ function createDifferenceIntersectionLine(a, b, color = 0xffea00, radius = diffe
   return segment;
 }
 
-function pointInsideDifferenceMesh(point, tris, eps = 1e-4) {
+function distancePointToTriangle(point, tri) {
+  if (!point || !Array.isArray(tri) || tri.length < 3) { return Infinity; }
+  const triangle = new THREE.Triangle(tri[0], tri[1], tri[2]);
+  const closest = triangle.closestPointToPoint(point, new THREE.Vector3());
+  return closest.distanceTo(point);
+}
+
+function isPointNearDifferenceSurface(point, tris, eps = differenceContactEpsilon) {
+  if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
+  const epsSq = eps * eps;
+  for (let i = 0; i < tris.length; i += 1) {
+    const tri = tris[i];
+    const d = distancePointToTriangle(point, tri);
+    if (d * d <= epsSq) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pointInsideDifferenceMeshStrict(point, tris, eps = differenceRayHitEpsilon) {
   if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
   const dir = new THREE.Vector3(0.373, 0.781, 0.499).normalize();
   const ray = new THREE.Ray(point.clone(), dir);
@@ -5404,6 +5427,52 @@ function pointInsideDifferenceMesh(point, tris, eps = 1e-4) {
     }
   }
   return (hits.length % 2) === 1;
+}
+
+function pointInsideDifferenceMeshExpanded(point, tris, expandEps = differencePseudoExpandEpsilon) {
+  if (!point || !Array.isArray(tris) || tris.length < 1) { return false; }
+  if (pointInsideDifferenceMeshStrict(point, tris)) { return true; }
+  if (expandEps <= 0) { return false; }
+  // 擬似的に対象体積をわずかに拡張したのと同等の判定にする。
+  const offsets = [
+    new THREE.Vector3(expandEps, 0, 0),
+    new THREE.Vector3(-expandEps, 0, 0),
+    new THREE.Vector3(0, expandEps, 0),
+    new THREE.Vector3(0, -expandEps, 0),
+    new THREE.Vector3(0, 0, expandEps),
+    new THREE.Vector3(0, 0, -expandEps),
+  ];
+  for (let i = 0; i < offsets.length; i += 1) {
+    const p = point.clone().add(offsets[i]);
+    if (pointInsideDifferenceMeshStrict(p, tris)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isContactOnlySegment(a, b, tris) {
+  if (!a || !b || !Array.isArray(tris) || tris.length < 1) { return false; }
+  const in0 = pointInsideDifferenceMeshStrict(a, tris);
+  const in1 = pointInsideDifferenceMeshStrict(b, tris);
+  if (in0 || in1) { return false; }
+  const mid = a.clone().lerp(b, 0.5);
+  const inMid = pointInsideDifferenceMeshStrict(mid, tris);
+  if (inMid) { return false; }
+  const hitCount = getSegmentTriangleHitCount(a, b, tris, 0.008);
+  if (hitCount > 0) { return false; }
+  const near0 = isPointNearDifferenceSurface(a, tris, differenceContactEpsilon);
+  const near1 = isPointNearDifferenceSurface(b, tris, differenceContactEpsilon);
+  const nearMid = isPointNearDifferenceSurface(mid, tris, differenceContactEpsilon);
+  return near0 || near1 || nearMid;
+}
+
+function pointInsideDifferenceMesh(point, tris, eps = differenceRayHitEpsilon) {
+  // 表示補助用: 密着点は inside 扱いに寄せる
+  if (isPointNearDifferenceSurface(point, tris, differenceContactEpsilon)) {
+    return true;
+  }
+  return pointInsideDifferenceMeshStrict(point, tris, eps);
 }
 
 function getSegmentTriangleHitCount(a, b, tris, eps = 0.012) {
@@ -5473,7 +5542,7 @@ function intersectSegmentTriangle(a, b, tri) {
   const hit = ray.intersectTriangle(tri[0], tri[1], tri[2], false, new THREE.Vector3());
   if (!hit) { return null; }
   const t = hit.clone().sub(a).dot(ray.direction);
-  if (t < -1e-5 || t > len + 1e-5) { return null; }
+  if (t < -differenceRayHitEpsilon || t > len + differenceRayHitEpsilon) { return null; }
   return hit;
 }
 
@@ -5679,6 +5748,59 @@ function getSegmentKey(a, b, eps = 0.02) {
   return qa < qb ? `${qa}|${qb}` : `${qb}|${qa}`;
 }
 
+function splitYellowSegmentByOtherSpaces(segA, segB, meshA, meshB, meshes, trisCache) {
+  if (!segA || !segB || !Array.isArray(meshes)) {
+    return [{ a: segA?.clone?.(), b: segB?.clone?.(), cls: 'yellow' }].filter((s) => s.a && s.b);
+  }
+  const segLenSq = segA.distanceToSquared(segB);
+  if (segLenSq <= 1e-10) {
+    return [{ a: segA.clone(), b: segB.clone(), cls: 'yellow' }];
+  }
+  const segBox = new THREE.Box3().setFromPoints([segA, segB]);
+  const breakTs = [0, 1];
+  const targetTrisList = [];
+  for (let i = 0; i < meshes.length; i += 1) {
+    const mesh = meshes[i];
+    if (!mesh?.parent || mesh === meshA || mesh === meshB) { continue; }
+    const box = new THREE.Box3().setFromObject(mesh);
+    if (!segBox.intersectsBox(box)) { continue; }
+    const tris = trisCache.get(mesh) || [];
+    if (tris.length < 1) { continue; }
+    if (isContactOnlySegment(segA, segB, tris)) { continue; }
+    targetTrisList.push(tris);
+    const ts = getSegmentTriangleHitTs(segA, segB, tris, 0.004);
+    ts.forEach((t) => breakTs.push(t));
+  }
+  if (targetTrisList.length < 1) {
+    return [{ a: segA.clone(), b: segB.clone(), cls: 'yellow' }];
+  }
+
+  const uniqTs = Array.from(new Set(breakTs.map((t) => Number(t.toFixed(5)))))
+    .filter((t) => Number.isFinite(t) && t >= 0 && t <= 1)
+    .sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < uniqTs.length - 1; i += 1) {
+    const t0 = uniqTs[i];
+    const t1 = uniqTs[i + 1];
+    if ((t1 - t0) <= 1e-4) { continue; }
+    const a = segA.clone().lerp(segB, t0);
+    const b = segA.clone().lerp(segB, t1);
+    const mid = segA.clone().lerp(segB, (t0 + t1) * 0.5);
+    let insideCount = 0;
+    targetTrisList.forEach((tris) => {
+      if (pointInsideDifferenceMeshExpanded(mid, tris)) {
+        insideCount += 1;
+      }
+    });
+    out.push({
+      a,
+      b,
+      cls: insideCount > 0 ? 'orange' : 'yellow',
+    });
+  }
+  return out.length > 0 ? out : [{ a: segA.clone(), b: segB.clone(), cls: 'yellow' }];
+}
+
 function getDifferenceSourceEdgeKeyByWorldPoints(a, b, eps = 0.01) {
   return getSegmentKey(a, b, Math.max(1e-6, eps));
 }
@@ -5801,18 +5923,12 @@ function mergeUnitIntervals(intervals) {
 function collectHiddenIntervalsOnEdge(edgeA, edgeB, edgeKey, maxDiag = 1) {
   const hiddenSegs = differenceClassifiedOrangeSegments.concat(differenceClassifiedRedSegments);
   if (hiddenSegs.length < 1) { return []; }
-  const lineDistTol = Math.max(0.05, maxDiag * 0.03);
-  const overlapTol = Math.max(0.003, maxDiag * 0.002);
   const intervals = [];
   hiddenSegs.forEach((seg) => {
     const sourceKeys = Array.isArray(seg?.sourceEdgeKeys) ? seg.sourceEdgeKeys : [];
+    // 誤判定防止: 「同じ元辺キー」で一致した区間のみ隠す。
     const byKey = sourceKeys.includes(edgeKey);
-    let byOverlap = false;
-    if (!byKey) {
-      const ov = getSegmentOverlapLengthApprox(edgeA, edgeB, seg.a, seg.b, lineDistTol, 12);
-      byOverlap = ov >= overlapTol;
-    }
-    if (!byKey && !byOverlap) { return; }
+    if (!byKey) { return; }
     const t0 = THREE.MathUtils.clamp(projectPointTOnSegment(seg.a, edgeA, edgeB), 0, 1);
     const t1 = THREE.MathUtils.clamp(projectPointTOnSegment(seg.b, edgeA, edgeB), 0, 1);
     const s = Math.min(t0, t1);
@@ -5829,15 +5945,8 @@ function isDifferencePreviewHiddenEdgeByOverlap(p0, p1, maxDiag = 0) {
   if (rank >= 2 || differenceClassifiedRedEdgeKeys.has(key) || differenceClassifiedOrangeEdgeKeys.has(key)) {
     return true;
   }
-  // 少しでも橙/赤セグメントと重なる辺は preview では隠す。
-  const overlapTol = Math.max(0.003, maxDiag * 0.002);
-  const lineDistTol = Math.max(0.05, maxDiag * 0.03);
-  const allSkip = differenceClassifiedOrangeSegments.concat(differenceClassifiedRedSegments);
-  for (let i = 0; i < allSkip.length; i += 1) {
-    const seg = allSkip[i];
-    const ov = getSegmentOverlapLengthApprox(p0, p1, seg.a, seg.b, lineDistTol, 12);
-    if (ov >= overlapTol) { return true; }
-  }
+  // 誤判定防止: 近傍重なりだけで隠さない（キー一致ベースのみ）。
+  void maxDiag;
   return false;
 }
 
@@ -5924,8 +6033,9 @@ function applyDifferenceViewMode() {
     clearDifferenceFaceHighlight();
     clearDifferencePreviewWireframeLines();
     clearDifferenceIntersectionVisuals();
-    // move 系は加工後の可視線のみ再描画（tube 系は DifferencePreviewCutter をそのまま表示）。
-    if (differenceSpaceModeActive && differenceSpaceTransformMode === 'move') {
+    // move/add 系は加工後の可視線を再描画（tube 系は DifferencePreviewCutter をそのまま表示）。
+    if (differenceSpaceModeActive
+      && (differenceSpaceTransformMode === 'move' || differenceSpaceTransformMode === 'add')) {
       refreshDifferenceIntersectionVisuals();
     }
   } else {
@@ -5938,8 +6048,10 @@ function refreshDifferenceIntersectionVisuals() {
   clearDifferenceIntersectionVisuals();
   clearDifferenceClassifiedSegments();
   if (!differenceSpaceModeActive) { return; }
-  // preview でも分類（黄/橙/赤）は必要。
-  if (differenceSpaceTransformMode !== 'move' && differenceViewMode !== 'preview') { return; }
+  // preview でも分類（黄/橙/赤）は必要。add/move で同じ計算を使う。
+  if (differenceSpaceTransformMode !== 'move'
+    && differenceSpaceTransformMode !== 'add'
+    && differenceViewMode !== 'preview') { return; }
   const meshes = differenceSpacePlanes.filter((m) => m?.parent && m?.geometry);
   if (meshes.length < 2) { return; }
   const maxDiag = meshes.reduce((acc, mesh) => {
@@ -5948,6 +6060,10 @@ function refreshDifferenceIntersectionVisuals() {
     return Math.max(acc, d);
   }, 0);
   scene.updateMatrixWorld(true);
+  const trisCache = new Map();
+  meshes.forEach((mesh) => {
+    trisCache.set(mesh, getDifferenceMeshTrianglesWorld(mesh));
+  });
   for (let i = 0; i < meshes.length; i += 1) {
     const a = meshes[i];
     const boxA = new THREE.Box3().setFromObject(a);
@@ -5964,15 +6080,16 @@ function refreshDifferenceIntersectionVisuals() {
       const b = meshes[j];
       const boxB = new THREE.Box3().setFromObject(b);
       if (!boxA.intersectsBox(boxB)) { continue; }
-      const trisA = getDifferenceMeshTrianglesWorld(a);
-      const trisB = getDifferenceMeshTrianglesWorld(b);
+      const trisA = trisCache.get(a) || [];
+      const trisB = trisCache.get(b) || [];
       const drawPenetrationEdges = (edges, targetTris) => {
         edges.forEach((edge) => {
           const p0 = edge.p0;
           const p1 = edge.p1;
+          if (isContactOnlySegment(p0, p1, targetTris)) { return; }
           const edgeKey = edge.key || getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
-          const in0 = pointInsideDifferenceMesh(p0, targetTris);
-          const in1 = pointInsideDifferenceMesh(p1, targetTris);
+          const in0 = pointInsideDifferenceMeshExpanded(p0, targetTris);
+          const in1 = pointInsideDifferenceMeshExpanded(p1, targetTris);
           if (in0 && in1) {
             differenceClassifiedRedEdgeKeys.add(edgeKey);
             setDifferenceEdgePriority(edgeKey, 3);
@@ -6010,7 +6127,7 @@ function refreshDifferenceIntersectionVisuals() {
             if (tB - tA <= 1e-4) { continue; }
             const tMid = (tA + tB) * 0.5;
             const mid = p0.clone().lerp(p1, tMid);
-            if (!pointInsideDifferenceMesh(mid, targetTris)) { continue; }
+            if (!pointInsideDifferenceMeshExpanded(mid, targetTris)) { continue; }
             const segA = p0.clone().lerp(p1, tA);
             const segB = p0.clone().lerp(p1, tB);
             differenceClassifiedOrangeSegments.push({
@@ -6073,16 +6190,37 @@ function refreshDifferenceIntersectionVisuals() {
 
       segmentMap.forEach((seg) => {
         const sourceEdgeKeys = collectSourceEdgeKeysForSegment(seg.a, seg.b, pairEdges, maxDiag);
-        sourceEdgeKeys.forEach((k) => setDifferenceEdgePriority(k, 1));
-        differenceClassifiedYellowSegments.push({
-          a: seg.a.clone(),
-          b: seg.b.clone(),
-          sourceEdgeKeys,
+        const pieces = splitYellowSegmentByOtherSpaces(seg.a, seg.b, a, b, meshes, trisCache);
+        pieces.forEach((piece) => {
+          if (!piece?.a || !piece?.b) { return; }
+          let color = 0xffea00;
+          if (piece.cls === 'orange') {
+            color = 0xff9800;
+            sourceEdgeKeys.forEach((k) => {
+              if (!k) { return; }
+              if (!differenceClassifiedRedEdgeKeys.has(k)) {
+                differenceClassifiedOrangeEdgeKeys.add(k);
+                setDifferenceEdgePriority(k, 2);
+              }
+            });
+            differenceClassifiedOrangeSegments.push({
+              a: piece.a.clone(),
+              b: piece.b.clone(),
+              sourceEdgeKeys,
+            });
+          } else {
+            sourceEdgeKeys.forEach((k) => setDifferenceEdgePriority(k, 1));
+            differenceClassifiedYellowSegments.push({
+              a: piece.a.clone(),
+              b: piece.b.clone(),
+              sourceEdgeKeys,
+            });
+          }
+          const line = createDifferenceIntersectionLine(piece.a, piece.b, color, differenceIntersectionLineRadius, 2470);
+          if (!line) { return; }
+          scene.add(line);
+          differenceFaceFaceIntersectionLines.push(line);
         });
-        const line = createDifferenceIntersectionLine(seg.a, seg.b, 0xffea00, differenceIntersectionLineRadius, 2470);
-        if (!line) { return; }
-        scene.add(line);
-        differenceFaceFaceIntersectionLines.push(line);
       });
     }
   }
@@ -6800,21 +6938,18 @@ function toggleDifferenceControlPointSelection(point) {
   setDifferenceControlPointVisual(point, 0x7be6ff);
 }
 
-function highlightDifferenceFaceControlPoints(mesh, localNormal) {
+function highlightDifferenceFaceControlPoints(mesh, localNormal, facePointLocal = null) {
   if (!mesh || !localNormal) { return; }
-  const axis = Math.abs(localNormal.x) > 0.9
-    ? 'x'
-    : (Math.abs(localNormal.y) > 0.9 ? 'y' : 'z');
-  const sign = localNormal[axis] >= 0 ? 1 : -1;
   resetDifferenceControlPointsHighlight(mesh);
-  mesh.children.forEach((child) => {
+  let facePoints = getDifferenceFaceControlPoints(mesh, localNormal, facePointLocal);
+  if (!Array.isArray(facePoints) || facePoints.length < 3) {
+    facePoints = getDifferenceFaceControlPoints(mesh, localNormal, null);
+  }
+  if (!Array.isArray(facePoints) || facePoints.length < 1) { return; }
+  facePoints.forEach((child) => {
     if (!child?.userData?.differenceControlPoint || !child?.material?.color) { return; }
-    const v = child.position[axis] || 0;
     if (isDifferenceControlPointSelected(child)) { return; }
-    if (isGroupedDifferenceControlPoint(child)) { return; }
-    if ((sign > 0 && v > 0) || (sign < 0 && v < 0)) {
-      child.material.color.set(0xffd64d);
-    }
+    child.material.color.set(0xffd64d);
   });
 }
 
@@ -11231,12 +11366,14 @@ function showDifferenceFaceHighlight(hit) {
   if (!mesh?.isMesh || !mesh?.geometry) { return; }
   const localNormal = getLocalFaceNormalFromHit(hit);
   if (!localNormal) { return; }
+  const worldToLocal = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+  const facePointLocal = hit?.point?.clone?.()?.applyMatrix4?.(worldToLocal) || null;
   clearDifferenceFaceHighlight(false);
   const plane = createDifferenceFaceHighlightPlane(mesh, localNormal, 0xffd64d, 0.55, 2500);
   if (!plane) { return; }
   scene.add(plane);
   differenceFaceHighlight = plane;
-  highlightDifferenceFaceControlPoints(mesh, localNormal);
+  highlightDifferenceFaceControlPoints(mesh, localNormal, facePointLocal);
 }
 
 function beginDifferenceFaceVertexDrag(hit, selectedFaces = null) {
