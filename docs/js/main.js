@@ -199,6 +199,12 @@ const threeUi = document.getElementById('three-ui');
   const rotationInputX = document.getElementById('rotation-input-x');
   const rotationInputY = document.getElementById('rotation-input-y');
   const rotationInputZ = document.getElementById('rotation-input-z');
+  const rotationInputXGhost = document.getElementById('rotation-input-x-ghost');
+  const rotationInputYGhost = document.getElementById('rotation-input-y-ghost');
+  const rotationInputZGhost = document.getElementById('rotation-input-z-ghost');
+  const rotationInputXMask = document.getElementById('rotation-input-x-mask');
+  const rotationInputYMask = document.getElementById('rotation-input-y-mask');
+  const rotationInputZMask = document.getElementById('rotation-input-z-mask');
   const rotationApplyBtn = document.getElementById('rotation-apply');
   const rotationSelectionInfo = document.getElementById('rotation-selection-info');
   const movePointCoordinateModeRow = document.getElementById('move-point-coordinate-mode');
@@ -223,6 +229,89 @@ const threeUi = document.getElementById('three-ui');
   const railConstructionCards = Array.from(document.querySelectorAll('[data-rail-construction-category]'));
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
+  const ghostMeasureCanvas = document.createElement('canvas');
+  const ghostMeasureCtx = ghostMeasureCanvas.getContext('2d');
+
+  function alignGhostToInput(inputEl, ghostEl) {
+    if (!inputEl || !ghostEl) { return; }
+    const cs = window.getComputedStyle(inputEl);
+    const padLeft = parseFloat(cs.paddingLeft || '0') || 0;
+    const borderLeft = parseFloat(cs.borderLeftWidth || '0') || 0;
+    const textIndent = parseFloat(cs.textIndent || '0') || 0;
+    ghostEl.style.left = `${padLeft + borderLeft + textIndent}px`;
+    ghostEl.style.fontSize = cs.fontSize || '';
+    ghostEl.style.fontFamily = cs.fontFamily || '';
+    ghostEl.style.lineHeight = cs.lineHeight || '';
+  }
+
+  function syncInputMask(inputEl, maskEl) {
+    if (!inputEl || !maskEl || !ghostMeasureCtx) { return; }
+    const cs = window.getComputedStyle(inputEl);
+    const padLeft = parseFloat(cs.paddingLeft || '0') || 0;
+    const borderLeft = parseFloat(cs.borderLeftWidth || '0') || 0;
+    const textIndent = parseFloat(cs.textIndent || '0') || 0;
+    const font = `${cs.fontStyle} ${cs.fontVariant} ${cs.fontWeight} ${cs.fontSize} / ${cs.lineHeight} ${cs.fontFamily}`;
+    ghostMeasureCtx.font = font;
+    const value = String(inputEl.value ?? '');
+    const textWidth = value ? ghostMeasureCtx.measureText(value).width : 0;
+    const letterSpacing = parseFloat(cs.letterSpacing || '0');
+    const spacingWidth = Number.isFinite(letterSpacing) && value.length > 1
+      ? letterSpacing * (value.length - 1)
+      : 0;
+    const width = Math.max(0, Math.round(textWidth + spacingWidth));
+    maskEl.style.left = `${padLeft + borderLeft + textIndent}px`;
+    maskEl.style.height = cs.lineHeight && cs.lineHeight !== 'normal' ? cs.lineHeight : cs.fontSize;
+    maskEl.style.width = `${width}px`;
+  }
+
+  function shouldShowGhostForInput(inputEl, ghostEl) {
+    if (!inputEl || !ghostEl) { return false; }
+    const rawInput = String(inputEl.value ?? '').trim();
+    if (!rawInput) { return true; }
+    const hint = String(ghostEl.textContent ?? '').trim();
+    if (!hint) { return false; }
+    return hint.startsWith(rawInput);
+  }
+
+  function applyGhostVisibility(inputEl, ghostEl, maskEl) {
+    const visible = shouldShowGhostForInput(inputEl, ghostEl);
+    if (ghostEl) {
+      ghostEl.style.opacity = visible ? '1' : '0';
+    }
+    if (maskEl) {
+      maskEl.style.opacity = visible ? '1' : '0';
+    }
+  }
+
+  function syncRotationInputGhostHints() {
+    alignGhostToInput(rotationInputX, rotationInputXGhost);
+    alignGhostToInput(rotationInputY, rotationInputYGhost);
+    alignGhostToInput(rotationInputZ, rotationInputZGhost);
+    if (rotationInputXGhost) { rotationInputXGhost.textContent = rotationInputX?.placeholder || ''; }
+    if (rotationInputYGhost) { rotationInputYGhost.textContent = rotationInputY?.placeholder || ''; }
+    if (rotationInputZGhost) { rotationInputZGhost.textContent = rotationInputZ?.placeholder || ''; }
+    syncInputMask(rotationInputX, rotationInputXMask);
+    syncInputMask(rotationInputY, rotationInputYMask);
+    syncInputMask(rotationInputZ, rotationInputZMask);
+    applyGhostVisibility(rotationInputX, rotationInputXGhost, rotationInputXMask);
+    applyGhostVisibility(rotationInputY, rotationInputYGhost, rotationInputYMask);
+    applyGhostVisibility(rotationInputZ, rotationInputZGhost, rotationInputZMask);
+  }
+
+  [
+    [rotationInputX, rotationInputXMask],
+    [rotationInputY, rotationInputYMask],
+    [rotationInputZ, rotationInputZMask],
+  ].forEach(([inputEl, maskEl]) => {
+    if (!inputEl || !maskEl) { return; }
+    const ghostEl = inputEl === rotationInputX
+      ? rotationInputXGhost
+      : (inputEl === rotationInputY ? rotationInputYGhost : rotationInputZGhost);
+    inputEl.addEventListener('input', () => {
+      syncInputMask(inputEl, maskEl);
+      applyGhostVisibility(inputEl, ghostEl, maskEl);
+    });
+  });
   let uiHiddenByHotkey = false;
   let panelClampQueued = false;
 
@@ -320,7 +409,11 @@ const threeUi = document.getElementById('three-ui');
   let movePointPanelActive = false;
   let scalePointPanelActive = false;
   let copyModeActive = false;
+  let styleModeActive = false;
   const copySelectedObjects = new Set();
+  const styleSelectedObjects = new Set();
+  const copyObjectRegistry = new Map();
+  let copyObjectRegistrySeq = 1;
   let steelFrameCopyGroupSeq = 1;
   let movePointCoordinateMode = 'world';
   let selectedConstructionProfile = null;
@@ -658,12 +751,13 @@ const threeUi = document.getElementById('three-ui');
     const isScalePoint = mode === 'scale_point';
     const isMovePointRotation = mode === 'move_point_rotation';
     const isCopyMode = mode === 'copy_mode';
+    const isStyleMode = mode === 'style_mode';
     if (rotationPanelTitle) {
       rotationPanelTitle.textContent = isMovePoint
         ? 'Move Point'
         : (isScalePoint
           ? 'Scale Point'
-          : (isMovePointRotation ? 'Point Rotate' : (isCopyMode ? 'Copy' : 'Rotation')));
+          : (isMovePointRotation ? 'Point Rotate' : (isCopyMode ? 'Copy' : (isStyleMode ? 'Style' : 'Rotation'))));
     }
     const axisSuffix = isMovePoint
       ? (movePointCoordinateMode === 'grid' ? ' (grid)' : ' (world)')
@@ -671,16 +765,20 @@ const threeUi = document.getElementById('three-ui');
       ? ' (scale)'
       : ' (deg)';
     if (rotationLabelX) {
-      rotationLabelX.childNodes[0].nodeValue = isCopyMode ? 'Offset X' : `X${axisSuffix}`;
+      rotationLabelX.childNodes[0].nodeValue = isStyleMode ? '横梁 幅' : (isCopyMode ? 'Offset X' : `X${axisSuffix}`);
     }
     if (rotationLabelY) {
-      rotationLabelY.childNodes[0].nodeValue = isCopyMode ? 'Offset Y' : `Y${axisSuffix}`;
+      rotationLabelY.childNodes[0].nodeValue = isStyleMode ? '縦梁 高さ' : (isCopyMode ? 'Offset Y' : `Y${axisSuffix}`);
     }
     if (rotationLabelZ) {
-      rotationLabelZ.childNodes[0].nodeValue = isMovePointRotation ? 'Len' : (isCopyMode ? 'Offset Z' : `Z${axisSuffix}`);
+      rotationLabelZ.childNodes[0].nodeValue = isStyleMode
+        ? '梁 厚み'
+        : (isMovePointRotation ? 'Len' : (isCopyMode ? 'Offset Z' : `Z${axisSuffix}`));
     }
     if (rotationApplyBtn) {
-      rotationApplyBtn.textContent = isCopyMode ? 'コピー実行' : (isMovePoint ? '座標適用' : (isScalePoint ? 'スケール適用' : '適用'));
+      rotationApplyBtn.textContent = isStyleMode
+        ? 'スタイル適用'
+        : (isCopyMode ? 'コピー実行' : (isMovePoint ? '座標適用' : (isScalePoint ? 'スケール適用' : '適用')));
     }
     if (movePointCoordinateModeRow) {
       movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
@@ -688,6 +786,7 @@ const threeUi = document.getElementById('three-ui');
     if (movePointAxisLegend) {
       movePointAxisLegend.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
     }
+    syncRotationInputGhostHints();
   }
 
   function setCopyObjectVisual(mesh, selected) {
@@ -725,6 +824,49 @@ const threeUi = document.getElementById('three-ui');
     steelFrameMode?.clearSelection?.();
   }
 
+  function clearStyleSelection() {
+    styleSelectedObjects.forEach((mesh) => setCopyObjectVisual(mesh, false));
+    styleSelectedObjects.clear();
+  }
+
+  function ensureCopyObjectRefId(mesh) {
+    if (!mesh) { return null; }
+    const current = mesh?.userData?.copyObjectRefId;
+    if (current) { return current; }
+    const next = `copy_obj_${copyObjectRegistrySeq}`;
+    copyObjectRegistrySeq += 1;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      copyObjectRefId: next,
+    };
+    return next;
+  }
+
+  function registerCopyObject(mesh) {
+    if (!mesh || mesh?.name !== 'SteelFrameSegment') { return null; }
+    const refId = ensureCopyObjectRefId(mesh);
+    if (!refId) { return null; }
+    copyObjectRegistry.set(refId, mesh);
+    return refId;
+  }
+
+  function unregisterCopyObject(mesh) {
+    const refId = mesh?.userData?.copyObjectRefId;
+    if (!refId) { return false; }
+    return copyObjectRegistry.delete(refId);
+  }
+
+  function resolveCopySourceObject(mesh) {
+    if (!mesh) { return null; }
+    const refId = mesh?.userData?.copyObjectRefId;
+    if (!refId) { return mesh; }
+    const registered = copyObjectRegistry.get(refId);
+    if (registered === mesh) { return mesh; }
+    if (registered?.parent) { return registered; }
+    copyObjectRegistry.set(refId, mesh);
+    return mesh;
+  }
+
   function clearCopiedStateFromSegmentsByPoints(points) {
     const pointSet = new Set(
       (Array.isArray(points) ? points : []).filter((mesh) => mesh?.userData?.steelFramePoint)
@@ -757,6 +899,7 @@ const threeUi = document.getElementById('three-ui');
       if (!obj?.parent) { return; }
       if (obj?.name !== 'SteelFrameSegment') { return; }
       if (obj?.userData?.steelFramePoint) { return; }
+      registerCopyObject(obj);
       out.push(obj);
     });
     return out;
@@ -777,7 +920,9 @@ const threeUi = document.getElementById('three-ui');
 
   function resolveSelectableHitObject(mesh) {
     const decoRoot = mesh?.userData?.decorationRoot || mesh;
-    if (!copyModeActive || objectEditMode !== 'COPY') {
+    const inConstructionObjectSelectMode = (copyModeActive && objectEditMode === 'COPY')
+      || (styleModeActive && objectEditMode === 'STYLE');
+    if (!inConstructionObjectSelectMode) {
       return decoRoot;
     }
     return resolveCopySelectableFromHit(decoRoot) || decoRoot;
@@ -785,6 +930,12 @@ const threeUi = document.getElementById('three-ui');
 
   function isCopySelectableMesh(mesh) {
     return Boolean(resolveCopySelectableFromHit(mesh));
+  }
+
+  function isStyleSelectableMesh(mesh) {
+    const target = resolveCopySelectableFromHit(mesh);
+    if (!target || target?.userData?.steelFramePoint) { return false; }
+    return target?.name === 'SteelFrameSegment';
   }
 
   function toggleCopySelection(mesh) {
@@ -801,6 +952,112 @@ const threeUi = document.getElementById('three-ui');
     copySelectedObjects.add(target);
     setCopyObjectVisual(target, true);
     return true;
+  }
+
+  function toggleStyleSelection(mesh) {
+    const target = resolveCopySelectableFromHit(mesh);
+    if (!target || target?.userData?.steelFramePoint || target?.name !== 'SteelFrameSegment') { return false; }
+    if (styleSelectedObjects.has(target)) {
+      styleSelectedObjects.delete(target);
+      setCopyObjectVisual(target, false);
+      return false;
+    }
+    if (target?.userData?.steelFrameCopiedObject) {
+      const ok = window.confirm('コピーされた構築物のスタイルを変更しますか？');
+      if (!ok) { return false; }
+    }
+    styleSelectedObjects.add(target);
+    setCopyObjectVisual(target, true);
+    return true;
+  }
+
+  function updateStylePanelUI({ clearInputs = false } = {}) {
+    if (!styleModeActive) { return; }
+    setRotationPanelMode('style_mode');
+    setRotationPanelVisible(true);
+    const selected = Array.from(styleSelectedObjects).filter((mesh) => mesh?.parent);
+    const first = selected[0] || null;
+    const style = steelFrameMode?.getSegmentStyle?.(first) || null;
+    if (rotationInputX) {
+      if (clearInputs) { rotationInputX.value = ''; }
+      rotationInputX.placeholder = style ? String(Number(style.beamWidthHorizontal).toFixed(3)) : '0.280';
+    }
+    if (rotationInputY) {
+      if (clearInputs) { rotationInputY.value = ''; }
+      rotationInputY.placeholder = style ? String(Number(style.beamHeightVertical).toFixed(3)) : '0.280';
+    }
+    if (rotationInputZ) {
+      if (clearInputs) { rotationInputZ.value = ''; }
+      rotationInputZ.placeholder = style ? String(Number(style.beamThickness).toFixed(3)) : '0.070';
+    }
+    if (rotationSelectionInfo) {
+      rotationSelectionInfo.textContent = [
+        `選択構造物: ${selected.length}`,
+        '対象: H/T/L beam',
+        'X: 横梁 幅',
+        'Y: 縦梁 高さ',
+        'Z: 梁 厚み',
+        '※ コピー物は適用前に確認ダイアログを表示',
+      ].join('\n');
+    }
+    syncRotationInputGhostHints();
+  }
+
+  function applyStyleFromPanel() {
+    if (!styleModeActive) { return; }
+    const targets = Array.from(styleSelectedObjects).filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment');
+    if (targets.length < 1) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '構造物が未選択です。beamを選択してください。';
+      }
+      return;
+    }
+    const parseOrUndefined = (raw) => {
+      const text = String(raw ?? '').trim();
+      if (!text) { return undefined; }
+      const n = Number(text);
+      if (!Number.isFinite(n) || n <= 0) { return null; }
+      return n;
+    };
+    const x = parseOrUndefined(rotationInputX?.value);
+    const y = parseOrUndefined(rotationInputY?.value);
+    const z = parseOrUndefined(rotationInputZ?.value);
+    if (x === null || y === null || z === null) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '入力は正の数値のみ有効です。';
+      }
+      return;
+    }
+    if (x === undefined && y === undefined && z === undefined) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '入力が空です。変更値を入力してください。';
+      }
+      return;
+    }
+    const stylePatch = {};
+    if (x !== undefined) { stylePatch.beamWidthHorizontal = x; }
+    if (y !== undefined) { stylePatch.beamHeightVertical = y; }
+    if (z !== undefined) { stylePatch.beamThickness = z; }
+    const result = steelFrameMode?.applySegmentStyle?.(targets, stylePatch);
+    if (!result || result.rebuilt < 1) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '適用対象がありません（H/T/L beamを選択してください）。';
+      }
+      return;
+    }
+    if (Array.isArray(result?.meshes) && result.meshes.length > 0) {
+      clearStyleSelection();
+      result.meshes.forEach((mesh) => {
+        if (!mesh?.parent) { return; }
+        styleSelectedObjects.add(mesh);
+        setCopyObjectVisual(mesh, true);
+      });
+      if (choice_object && !choice_object.parent) {
+        choice_object = result.meshes[0] || false;
+      }
+    }
+    refreshCreateTargetsForSearch();
+    updateStylePanelUI({ clearInputs: true });
   }
 
   function parseCopyOffsetInput(raw, fallback = 0) {
@@ -838,6 +1095,7 @@ const threeUi = document.getElementById('three-ui');
         'Offset X/Y/Z は複製位置のずらし量',
       ].join('\n');
     }
+    syncRotationInputGhostHints();
   }
 
   function cloneLedBoardDecoration(source, offset) {
@@ -873,7 +1131,9 @@ const threeUi = document.getElementById('three-ui');
     }
     const offset = new THREE.Vector3(dx, dy, dz);
     const srcPoints = steelFrameMode?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
-    const srcObjects = Array.from(copySelectedObjects).filter((mesh) => mesh?.parent);
+    const srcObjects = Array.from(copySelectedObjects)
+      .map((mesh) => resolveCopySourceObject(mesh))
+      .filter((mesh) => mesh?.parent);
     const copiedObjectGroupId = srcObjects.length > 0 ? allocateSteelFrameCopyGroupId() : null;
     if (srcPoints.length < 1 && srcObjects.length < 1) {
       if (rotationSelectionInfo) {
@@ -952,11 +1212,13 @@ const threeUi = document.getElementById('three-ui');
             node.material = node.material.clone();
           }
         });
+        const sourceRefId = ensureCopyObjectRefId(src);
         cloned.userData = {
           ...(src.userData || {}),
           steelFrameSegmentPointRefs: copiedPointRefs,
           steelFrameCopyGroupId: copiedObjectGroupId || src?.userData?.steelFrameCopyGroupId || null,
           steelFrameCopiedObject: true,
+          copyObjectSourceRefId: sourceRefId || null,
         };
       }
       if (!cloned) { return; }
@@ -965,6 +1227,7 @@ const threeUi = document.getElementById('three-ui');
         setCopyObjectVisual(cloned, false);
       }
       if (cloned?.name === 'SteelFrameSegment') {
+        registerCopyObject(cloned);
         steelFrameMode?.addExistingSegmentMesh?.(cloned);
       }
       objectItems.push(cloned);
@@ -1012,6 +1275,9 @@ const threeUi = document.getElementById('three-ui');
     rotationPanel.style.display = visible ? 'block' : 'none';
     if (visible) {
       scheduleClampUiPanels();
+    }
+    if (visible) {
+      syncRotationInputGhostHints();
     }
   }
 
@@ -1226,6 +1492,7 @@ const threeUi = document.getElementById('three-ui');
         ].join('\n');
       }
     }
+    syncRotationInputGhostHints();
   }
 
   function refreshPointEditPanelUI({ clearInputs = false } = {}) {
@@ -1295,6 +1562,7 @@ const threeUi = document.getElementById('three-ui');
         ].join('\n');
       }
     }
+    syncRotationInputGhostHints();
   }
 
   function applyScalePointFromPanel() {
@@ -1468,6 +1736,10 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function applyRotationFromPanel() {
+    if (styleModeActive && editObject === 'STEEL_FRAME' && objectEditMode === 'STYLE') {
+      applyStyleFromPanel();
+      return;
+    }
     if (copyModeActive && editObject === 'STEEL_FRAME' && objectEditMode === 'COPY') {
       runCopySelectionFromPanel();
       return;
@@ -1561,6 +1833,7 @@ const threeUi = document.getElementById('three-ui');
           rotationInputZ.placeholder = String(azDeg);
         }
       }
+      syncRotationInputGhostHints();
       return;
     }
 
@@ -5375,6 +5648,8 @@ function vecMoved(a, b, eps = HISTORY_EPS) {
       targetObjects = steelFrameMode.getAllPointMeshes().concat(activeDecorations);
     } else if (objectEditMode === 'COPY') {
       targetObjects = steelFrameMode.getAllPointMeshes().concat(constructionObjects);
+    } else if (objectEditMode === 'STYLE') {
+      targetObjects = constructionObjects;
     }
   }
 
@@ -5575,6 +5850,7 @@ function applyCreateHistory(action, mode) {
             mesh.parent.remove(mesh);
           }
           if (mesh?.name === 'SteelFrameSegment') {
+            unregisterCopyObject(mesh);
             steelFrameMode?.removeExistingSegmentMesh?.(mesh);
           }
         });
@@ -5587,6 +5863,7 @@ function applyCreateHistory(action, mode) {
             scene.add(mesh);
           }
           if (mesh?.name === 'SteelFrameSegment') {
+            registerCopyObject(mesh);
             steelFrameMode?.addExistingSegmentMesh?.(mesh);
           }
         });
@@ -10392,6 +10669,10 @@ function resetChoiceObjectColor(mesh) {
     setCopyObjectVisual(mesh, true);
     return;
   }
+  if (styleModeActive && styleSelectedObjects.has(mesh)) {
+    setCopyObjectVisual(mesh, true);
+    return;
+  }
   if (mesh?.userData?.decorationType === 'led_board') {
     if (mesh?.material?.color) {
       mesh.material.color.set(mesh?.userData?.baseColor || 0x1f2228);
@@ -11105,6 +11386,7 @@ function syncChangeAnglePanelFromBasis({ writeValue = false } = {}) {
     }
     rotationInputZ.placeholder = String(Number(azDeg.toFixed(1)));
   }
+  syncRotationInputGhostHints();
 }
 
 function saveChangeAnglePanelAngles(state, { writeValue = true } = {}) {
@@ -11133,6 +11415,7 @@ function saveChangeAnglePanelAngles(state, { writeValue = true } = {}) {
     rotationInputZ.value = writeValue ? String(next.z.toFixed(1)) : '';
     rotationInputZ.placeholder = String(Number(next.z.toFixed(1)));
   }
+  syncRotationInputGhostHints();
 }
 
 function updateMovePlaneNormal() {
@@ -11745,6 +12028,15 @@ async function handleMouseDown() {
     if (choice_object && isCopySelectableMesh(choice_object)) {
       toggleCopySelection(choice_object);
       updateCopyPanelUI({ clearInputs: false });
+    }
+    return;
+  }
+
+  if (styleModeActive && editObject === 'STEEL_FRAME' && objectEditMode === 'STYLE') {
+    await onerun_search_point();
+    if (choice_object && isStyleSelectableMesh(choice_object)) {
+      toggleStyleSelection(choice_object);
+      updateStylePanelUI({ clearInputs: false });
     }
     return;
   }
@@ -12892,6 +13184,7 @@ function syncPointRotatePanelFromTarget() {
       rotationInputZ.placeholder = String(state.z ?? 0);
     }
   }
+  syncRotationInputGhostHints();
 }
 
 function updatePointRotatePanelAnglesFromDirection(direction, { apply = false } = {}) {
@@ -14757,9 +15050,13 @@ export function UIevent (uiID, toggle){
     clearPointRotateState();
     copyModeActive = false;
     clearCopySelection();
+    styleModeActive = false;
+    clearStyleSelection();
   }} else if ( uiID === 'copy' ){ if ( toggle === 'active' ){
   console.log( 'copy _active' )
     copyModeActive = true
+    styleModeActive = false
+    clearStyleSelection()
     movePointPanelActive = false
     scalePointPanelActive = false
     pointRotateModeActive = false
@@ -14784,6 +15081,37 @@ export function UIevent (uiID, toggle){
     setRotationPanelVisible(false);
     search_object = false
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'COPY') {
+      objectEditMode = 'Standby'
+    }
+  }} else if ( uiID === 'style' ){ if ( toggle === 'active' ){
+  console.log( 'style _active' )
+    styleModeActive = true
+    copyModeActive = false
+    clearCopySelection()
+    movePointPanelActive = false
+    scalePointPanelActive = false
+    pointRotateModeActive = false
+    clearPointRotateState()
+    editObject = 'STEEL_FRAME'
+    steelFrameMode.setAllowPointAppend(false)
+    objectEditMode = 'STYLE'
+    targetObjects = getConstructionCopyTargets()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    search_object = true
+    setRotationPanelMode('style_mode');
+    setRotationPanelVisible(true);
+    updateStylePanelUI({ clearInputs: true });
+    search_point()
+
+  } else {
+  console.log( 'style _inactive' )
+    styleModeActive = false
+    clearStyleSelection()
+    setRotationPanelMode('rotation');
+    setRotationPanelVisible(false);
+    search_object = false
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'STYLE') {
       objectEditMode = 'Standby'
     }
   }} else if ( uiID === 'scale' ){ if ( toggle === 'active' ){

@@ -52,6 +52,38 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
   let segmentProfile = 'round';
 
+  function getDefaultBeamStyle(profile) {
+    const p = String(profile || '').toLowerCase();
+    if (p === 'h_beam' || p === 't_beam' || p === 'l_beam') {
+      return {
+        beamWidthHorizontal: 0.28,
+        beamHeightVertical: 0.28,
+        beamThickness: 0.07,
+      };
+    }
+    return null;
+  }
+
+  function normalizeBeamStyle(profile, rawStyle = null) {
+    const base = getDefaultBeamStyle(profile);
+    if (!base) { return null; }
+    const merged = {
+      beamWidthHorizontal: Number(rawStyle?.beamWidthHorizontal),
+      beamHeightVertical: Number(rawStyle?.beamHeightVertical),
+      beamThickness: Number(rawStyle?.beamThickness),
+    };
+    const width = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.02, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
+    const height = Number.isFinite(merged.beamHeightVertical) ? Math.max(0.02, merged.beamHeightVertical) : base.beamHeightVertical;
+    const maxThickness = Math.max(0.01, Math.min(width, height) * 0.45);
+    const thicknessRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
+    const thickness = THREE.MathUtils.clamp(thicknessRaw, 0.01, maxThickness);
+    return {
+      beamWidthHorizontal: width,
+      beamHeightVertical: height,
+      beamThickness: thickness,
+    };
+  }
+
   function setMeshColorRecursive(obj, colorHex) {
     if (!obj) { return; }
     const paint = (mat) => mat?.color?.setHex?.(colorHex);
@@ -147,16 +179,17 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return mesh;
   }
 
-  function createHBeamSegmentMesh(start, end) {
+  function createHBeamSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
     const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
-    const totalWidth = 0.28;
-    const totalHeight = 0.28;
-    const webThickness = 0.08;
-    const flangeThickness = 0.06;
+    const dims = normalizeBeamStyle('h_beam', style);
+    const totalWidth = dims.beamWidthHorizontal;
+    const totalHeight = dims.beamHeightVertical;
+    const webThickness = dims.beamThickness;
+    const flangeThickness = dims.beamThickness;
     const webHeight = Math.max(0.01, totalHeight - flangeThickness * 2);
     const flangeOffset = (totalHeight * 0.5) - (flangeThickness * 0.5);
 
@@ -196,16 +229,17 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return group;
   }
 
-  function createTBeamSegmentMesh(start, end) {
+  function createTBeamSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
     const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
-    const totalWidth = 0.28;
-    const totalHeight = 0.28;
-    const webThickness = 0.08;
-    const flangeThickness = 0.06;
+    const dims = normalizeBeamStyle('t_beam', style);
+    const totalWidth = dims.beamWidthHorizontal;
+    const totalHeight = dims.beamHeightVertical;
+    const webThickness = dims.beamThickness;
+    const flangeThickness = dims.beamThickness;
     const webHeight = Math.max(0.01, totalHeight - flangeThickness);
 
     const material = createCreatStandardMaterial(0x8a8f98);
@@ -239,15 +273,16 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return group;
   }
 
-  function createLBeamSegmentMesh(start, end) {
+  function createLBeamSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
     const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
-    const totalWidth = 0.28;
-    const totalHeight = 0.28;
-    const legThickness = 0.07;
+    const dims = normalizeBeamStyle('l_beam', style);
+    const totalWidth = dims.beamWidthHorizontal;
+    const totalHeight = dims.beamHeightVertical;
+    const legThickness = dims.beamThickness;
 
     const material = createCreatStandardMaterial(0x8a8f98);
     const group = new THREE.Group();
@@ -277,26 +312,26 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return group;
   }
 
-  function createSegmentMesh(start, end) {
-    if (segmentProfile === 'tubular') {
+  function createSegmentMesh(start, end, { profile = segmentProfile, style = null } = {}) {
+    if (profile === 'tubular') {
       return createTubularLightSegmentMesh(start, end);
     }
-    if (segmentProfile === 'h_beam') {
-      return createHBeamSegmentMesh(start, end);
+    if (profile === 'h_beam') {
+      return createHBeamSegmentMesh(start, end, style);
     }
-    if (segmentProfile === 't_beam') {
-      return createTBeamSegmentMesh(start, end);
+    if (profile === 't_beam') {
+      return createTBeamSegmentMesh(start, end, style);
     }
-    if (segmentProfile === 'l_beam') {
-      return createLBeamSegmentMesh(start, end);
+    if (profile === 'l_beam') {
+      return createLBeamSegmentMesh(start, end, style);
     }
     return createRoundBarSegmentMesh(start, end);
   }
 
-  function createSegmentMeshWithProfile(start, end, profile) {
+  function createSegmentMeshWithProfile(start, end, profile, style = null) {
     const prevProfile = segmentProfile;
     setSegmentProfile(profile);
-    const mesh = createSegmentMesh(start, end);
+    const mesh = createSegmentMesh(start, end, { profile, style });
     segmentProfile = prevProfile;
     return mesh;
   }
@@ -326,12 +361,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       const start = startMesh?.position;
       const end = endMesh?.position;
       if (!start || !end) { continue; }
-      const mesh = createSegmentMesh(start, end);
+      const segmentStyle = normalizeBeamStyle(segmentProfile, null);
+      const mesh = createSegmentMesh(start, end, { profile: segmentProfile, style: segmentStyle });
       if (!mesh) { continue; }
       mesh.userData = {
         ...(mesh.userData || {}),
         steelFrameSegmentPointRefs: [startMesh, endMesh].filter((item) => item?.userData?.steelFramePoint),
         steelFrameSegmentProfile: segmentProfile,
+        steelFrameSegmentStyle: segmentStyle ? { ...segmentStyle } : null,
       };
       scene.add(mesh);
       segmentMeshes.push(mesh);
@@ -361,7 +398,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         return;
       }
       const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
-      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile);
+      const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
+      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
       if (!rebuiltMesh) {
         if (srcMesh?.parent) {
           srcMesh.parent.remove(srcMesh);
@@ -373,6 +411,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         ...(srcMesh.userData || {}),
         steelFrameSegmentPointRefs: [startMesh, endMesh],
         steelFrameSegmentProfile: profile,
+        steelFrameSegmentStyle: style ? { ...style } : null,
       };
       rebuiltMesh.visible = srcMesh.visible;
       scene.add(rebuiltMesh);
@@ -409,12 +448,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       const end = endMesh.position;
       if (!start || !end) { continue; }
       const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
-      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile);
+      const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
+      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
       if (!rebuiltMesh) { continue; }
       rebuiltMesh.userData = {
         ...(srcMesh.userData || {}),
         steelFrameSegmentPointRefs: [startMesh, endMesh],
         steelFrameSegmentProfile: profile,
+        steelFrameSegmentStyle: style ? { ...style } : null,
       };
       if (replaceSegmentMesh(srcMesh, rebuiltMesh, i)) {
         rebuilt += 1;
@@ -553,6 +594,93 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     if (idx < 0) { return false; }
     segmentMeshes.splice(idx, 1);
     return true;
+  }
+
+  function getSegmentStyle(mesh) {
+    if (!mesh || mesh.name !== segmentName) { return null; }
+    const profile = mesh?.userData?.steelFrameSegmentProfile || null;
+    const style = normalizeBeamStyle(profile, mesh?.userData?.steelFrameSegmentStyle || null);
+    if (!style) { return null; }
+    return { ...style };
+  }
+
+  function applySegmentStyle(meshes, stylePatch = {}) {
+    const targets = Array.isArray(meshes) ? meshes : [];
+    const unique = Array.from(new Set(targets.filter((mesh) => mesh?.name === segmentName)));
+    if (unique.length < 1) {
+      return { updated: 0, rebuilt: 0, points: [] };
+    }
+    const points = [];
+    let updated = 0;
+    unique.forEach((mesh) => {
+      const profile = mesh?.userData?.steelFrameSegmentProfile || null;
+      const current = normalizeBeamStyle(profile, mesh?.userData?.steelFrameSegmentStyle || null);
+      if (!current) { return; }
+      const next = normalizeBeamStyle(profile, {
+        ...current,
+        ...stylePatch,
+      });
+      if (!next) { return; }
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        steelFrameSegmentStyle: { ...next },
+      };
+      const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        ? mesh.userData.steelFrameSegmentPointRefs
+        : [];
+      refs.forEach((pointMesh) => {
+        if (pointMesh?.userData?.steelFramePoint) {
+          points.push(pointMesh);
+        }
+      });
+      updated += 1;
+    });
+    const rebuildResult = rebuildSegmentsForMeshes(unique);
+    const mapping = rebuildResult?.mapping instanceof Map ? rebuildResult.mapping : new Map();
+    const nextMeshes = unique.map((mesh) => mapping.get(mesh) || mesh).filter(Boolean);
+    return {
+      updated,
+      rebuilt: Number(rebuildResult?.rebuilt) || 0,
+      meshes: nextMeshes,
+      points: Array.from(new Set(points)),
+    };
+  }
+
+  function rebuildSegmentsForMeshes(meshes) {
+    const targets = Array.isArray(meshes) ? meshes : [];
+    const unique = Array.from(new Set(targets.filter((mesh) => mesh?.name === segmentName)));
+    let rebuilt = 0;
+    const mapping = new Map();
+    unique.forEach((srcMesh) => {
+      const idx = segmentMeshes.indexOf(srcMesh);
+      if (idx < 0) { return; }
+      const refs = Array.isArray(srcMesh?.userData?.steelFrameSegmentPointRefs)
+        ? srcMesh.userData.steelFrameSegmentPointRefs
+        : [];
+      const startMesh = refs[0];
+      const endMesh = refs[1];
+      const start = startMesh?.position;
+      const end = endMesh?.position;
+      if (!start || !end) { return; }
+      const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
+      const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
+      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      if (!rebuiltMesh) { return; }
+      rebuiltMesh.userData = {
+        ...(srcMesh.userData || {}),
+        steelFrameSegmentPointRefs: [startMesh, endMesh],
+        steelFrameSegmentProfile: profile,
+        steelFrameSegmentStyle: style ? { ...style } : null,
+      };
+      if (replaceSegmentMesh(srcMesh, rebuiltMesh, idx)) {
+        rebuilt += 1;
+        mapping.set(srcMesh, rebuiltMesh);
+      }
+    });
+    if (rebuilt > 0) {
+      setActive(active);
+    }
+    return { rebuilt, mapping };
   }
 
   function clearSelection() {
@@ -736,5 +864,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     generateSteelFrame,
     rebuildSegmentsFromPoints,
     rebuildSegmentsForPoints,
+    rebuildSegmentsForMeshes,
+    getSegmentStyle,
+    applySegmentStyle,
   };
 }

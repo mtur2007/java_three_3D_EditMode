@@ -230,6 +230,7 @@ const uiTree = {
               'search': '',
               'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '', 'scale': '' },
               'copy': '',
+              'style': '',
               'construction': {
                   'pillar': { 'Round_bar': '', 'H_beam': '', 'T_beam': '', 'L_beam': '' },
                   'rite': { 'tubular': '' },

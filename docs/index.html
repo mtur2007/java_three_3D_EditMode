@@ -660,6 +660,46 @@
   #rotation-apply {
     border-radius: 8px;
   }
+  #rotation-panel .panel-input-wrap {
+    position: relative;
+    width: 100%;
+  }
+  #rotation-panel .panel-input-mask {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 8px;
+    height: 1.2em;
+    background: #ffffff;
+    pointer-events: none;
+    z-index: 2;
+    width: 0;
+    border-radius: 2px;
+  }
+  #rotation-panel .panel-input-ghost {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: rgba(118, 118, 118, 0.62);
+    font-weight: 400;
+    pointer-events: none;
+    z-index: 1;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: calc(100% - 16px);
+  }
+  #rotation-panel input::placeholder {
+    color: transparent;
+  }
+  #rotation-panel input {
+    position: relative;
+    z-index: 3;
+    font-weight: 600;
+    background: transparent;
+  }
   #rotation-apply {
     border: 1px solid rgba(160, 194, 252, 0.45);
     background: linear-gradient(135deg, #2a84ff, #246fd9);
@@ -1172,13 +1212,25 @@
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
                   <label id="rotation-label-x" style="font-size: 11px; color: #b23b3b;">X (deg)
-                    <input id="rotation-input-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
+                    <div class="panel-input-wrap">
+                      <span id="rotation-input-x-mask" class="panel-input-mask"></span>
+                      <span id="rotation-input-x-ghost" class="panel-input-ghost">0</span>
+                      <input id="rotation-input-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
+                    </div>
                   </label>
                   <label id="rotation-label-y" style="font-size: 11px; color: #2f8f57;">Y (deg)
-                    <input id="rotation-input-y" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
+                    <div class="panel-input-wrap">
+                      <span id="rotation-input-y-mask" class="panel-input-mask"></span>
+                      <span id="rotation-input-y-ghost" class="panel-input-ghost">0</span>
+                      <input id="rotation-input-y" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
+                    </div>
                   </label>
                   <label id="rotation-label-z" style="font-size: 11px; color: #2f6fb8;">Z (deg)
-                    <input id="rotation-input-z" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
+                    <div class="panel-input-wrap">
+                      <span id="rotation-input-z-mask" class="panel-input-mask"></span>
+                      <span id="rotation-input-z-ghost" class="panel-input-ghost">0</span>
+                      <input id="rotation-input-z" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
+                    </div>
                   </label>
                 </div>
                 <button id="rotation-apply" style="margin-top: 8px; width: 100%; padding: 6px 8px;">適用</button>
@@ -1829,6 +1881,7 @@ window.addEventListener('load', () => {
     'rotation/2': 'ポイント回転',
     'move_point': 'ポイント移動',
     'copy': 'コピー',
+    'style': 'スタイル編集',
     'scale': 'ポイントスケール',
     'change_angle': '移動平面の角度変更',
     'x_z': '平面(XZ軸) 移動',
