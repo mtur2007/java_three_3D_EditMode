@@ -219,18 +219,21 @@ const uiTree = {
         },
         'creat': {
             'view': '',
-            'add_point': {
-                'x_z_move': '',
-                'y_add': '',
-                'template': '',
-                'guide': { 'add': '', 'change_angle': '' },
-            },
-            'rotation': '',
-            'search': '',
-            'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '', 'scale': '' },
-            'construction': {
-                'pillar': { 'Round_bar': '', 'H_beam': '' },
-                'rite': { 'tubular': '' },
+            'decoration': {
+              'add_point': {
+                  'x_z_move': '',
+                  'y_add': '',
+                  'template': '',
+                  'guide': { 'add': '', 'change_angle': '' },
+              },
+              'rotation': '',
+              'search': '',
+              'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '', 'scale': '' },
+              'copy': '',
+              'construction': {
+                  'pillar': { 'Round_bar': '', 'H_beam': '', 'T_beam': '', 'L_beam': '' },
+                  'rite': { 'tubular': '' },
+              },
             },
             'Difference': {
                 'space': {

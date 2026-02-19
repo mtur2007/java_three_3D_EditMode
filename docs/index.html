@@ -1118,6 +1118,7 @@
                 <button id = 'construction' style = 'top: 190px; left:90px;' > 🏗️ </button>
 
               </div>
+              <button id="difference-body-select" class="control-square-button" style="position: fixed; left: 20px; top: 104px; z-index: 120; padding: 6px 10px; font-size: 12px; display: none;">body</button>
 
               <!-- ランダム立体交差ボタンは非表示に変更 -->
 
@@ -1195,6 +1196,14 @@
                   <button class="construction-card" data-construction-profile="h_beam" type="button" aria-pressed="false">
                     <img alt="H形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='20' y='14' width='80' height='12' fill='%23859bb8'/%3E%3Crect x='53' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='20' y='46' width='80' height='12' fill='%23859bb8'/%3E%3C/svg%3E">
                     <span>H形鋼</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="t_beam" type="button" aria-pressed="false">
+                    <img alt="T形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='18' y='14' width='84' height='12' fill='%23859bb8'/%3E%3Crect x='53' y='26' width='14' height='32' fill='%23859bb8'/%3E%3C/svg%3E">
+                    <span>T形鋼</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="l_beam" type="button" aria-pressed="false">
+                    <img alt="L形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='22' y='46' width='76' height='12' fill='%23859bb8'/%3E%3C/svg%3E">
+                    <span>L形鋼</span>
                   </button>
                   <button class="construction-card" data-construction-profile="tubular" type="button" aria-pressed="false">
                     <img alt="ライト管" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='14' y='28' width='92' height='16' rx='8' fill='%23f8fbff' stroke='%239bb8d6' stroke-width='4'/%3E%3Crect x='96' y='26' width='10' height='20' fill='%23d9ebff'/%3E%3C/svg%3E">
@@ -1302,6 +1311,18 @@
                     </div>
                     <div class="guide-name">オブジェクト F</div>
                     <div class="guide-meta">円形軌道（仮）</div>
+                  </button>
+                  <button class="guide-card" data-guide-template="led_board">
+                    <div class="guide-preview" aria-hidden="true">
+                      <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+                        <rect x="8" y="7" width="84" height="26" rx="2" ry="2" fill="none" stroke="#8bb4ff" stroke-width="2" />
+                        <rect x="12" y="11" width="76" height="6" fill="#5e789b" />
+                        <rect x="12" y="20" width="76" height="4" fill="#34ff79" />
+                        <rect x="12" y="26" width="58" height="4" fill="#ff5f5f" />
+                      </svg>
+                    </div>
+                    <div class="guide-name">電光掲示板</div>
+                    <div class="guide-meta">文字編集対応</div>
                   </button>
                 </div>
               </div>
@@ -1807,6 +1828,7 @@ window.addEventListener('load', () => {
     'search': '角度サーチ',
     'rotation/2': 'ポイント回転',
     'move_point': 'ポイント移動',
+    'copy': 'コピー',
     'scale': 'ポイントスケール',
     'change_angle': '移動平面の角度変更',
     'x_z': '平面(XZ軸) 移動',
@@ -1828,6 +1850,8 @@ window.addEventListener('load', () => {
 
     'Round_bar': '丸鋼',
     'H_beam': 'H形鋼',
+    'T_beam': 'T形鋼',
+    'L_beam': 'L形鋼',
     'rite': 'ライト',
     'tubular': '管',
 
