@@ -815,6 +815,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return lines[currentLineIndex];
   }
 
+  function getSegmentMeshes() {
+    return segmentMeshes.slice();
+  }
+
   function setAllowPointAppend(next) {
     allowPointAppend = Boolean(next);
   }
@@ -843,6 +847,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     getAllPointMeshes,
     getSelectedPointMeshes,
     getCurrentPointMeshes,
+    getSegmentMeshes,
     getGeneratedRecords,
     getPointMeshes: getCurrentPointMeshes,
     getSelectedPointOrder,

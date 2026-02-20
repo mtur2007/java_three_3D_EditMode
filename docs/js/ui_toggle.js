@@ -221,10 +221,14 @@ const uiTree = {
             'view': '',
             'decoration': {
               'add_point': {
-                  'x_z_move': '',
-                  'y_add': '',
                   'template': '',
-                  'guide': { 'add': '', 'change_angle': '' },
+                  'guide': {
+                      'add': '',
+                      'change_angle': '',
+                      'miller': '',
+                      'x_z_move': '',
+                      'y_add': '',
+                  },
               },
               'rotation': '',
               'search': '',
