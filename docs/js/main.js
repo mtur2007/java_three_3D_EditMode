@@ -2019,11 +2019,7 @@ const threeUi = document.getElementById('three-ui');
 
   function createGuideRailPickMesh(curve) {
     const tube = new THREE.TubeGeometry(curve, 60, GUIDE_TUBE_RADIUS, 10, curve?.closed === true);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x6d86ff,
-      transparent: true,
-      opacity: 0.35,
-    });
+    const mat = createRaycastOnlyMaterial({ side: THREE.FrontSide });
     const mesh = new THREE.Mesh(tube, mat);
     mesh.name = 'GuideRailPick';
     mesh.userData.isGuideRail = true;
@@ -4241,6 +4237,11 @@ function buildCreateModePayload() {
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
+  const baseGuideGrid = serializeBaseGuideGridState();
+  const guideGridStates = guideAddGrids
+    .filter((grid) => grid?.parent)
+    .map((grid) => serializeGuideGridState(grid))
+    .filter(Boolean);
 
   return {
     meta: {
@@ -4259,6 +4260,8 @@ function buildCreateModePayload() {
       differencePathType,
     },
     uiState,
+    baseGuideGrid,
+    guideAddGrids: guideGridStates,
     differenceSpaces: spaces,
   };
 }
@@ -4369,6 +4372,14 @@ function applyCreateModePayload(payload) {
   }
   clearCreateHistory();
   clearDifferenceHistory();
+  const baseGuideGrid = (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
+    ? payload.baseGuideGrid
+    : null;
+  const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  applyBaseGuideGridState(baseGuideGrid);
+  clearGuideAddGridsForImport();
+  guideGridStates.forEach((state) => addGuideGridFromState(state));
+  changeAngleGridTarget = guideAddGrids.length > 0 ? guideAddGrids[guideAddGrids.length - 1] : null;
   const spaces = Array.isArray(payload.differenceSpaces) ? payload.differenceSpaces : [];
   clearDifferenceSpacesForImport();
   spaces.forEach((rawSpace) => {
@@ -4411,7 +4422,7 @@ function applyCreateModePayload(payload) {
   targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
   setMeshListOpacity(targetObjects, 1);
   refreshDifferencePreview();
-  updateDifferenceStatus(`map_data 読込完了: 空間 ${differenceSpacePlanes.length} 件`);
+  updateDifferenceStatus(`map_data 読込完了: 空間 ${differenceSpacePlanes.length} 件 / ガイド ${guideAddGrids.length} 件`);
   updateDifferenceUnifyButtonState();
 
   if (payload.uiState && typeof payload.uiState === 'object') {
@@ -5490,7 +5501,7 @@ GuideGrid_Center_z.visible = false
 
 const addPointGridHandle = new THREE.Mesh(
   new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
-  new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
+  createRaycastOnlyMaterial()
 );
 addPointGridHandle.name = 'AddPointGridHandle';
 addPointGridHandle.rotation.x = -Math.PI / 2;
@@ -5505,6 +5516,129 @@ function setGuideAddGridColor(grid, color) {
   } else if (grid.material.color) {
     grid.material.color.set(color);
   }
+}
+
+const GUIDE_GRID_PICK_OFFSET = 0.02;
+const GIZMO_PICK_OFFSET = 0.04;
+function createRaycastOnlyMaterial({ side = THREE.DoubleSide } = {}) {
+  const mat = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    side,
+    depthWrite: false,
+    depthTest: false,
+  });
+  mat.colorWrite = false;
+  return mat;
+}
+
+function syncGuidePickMeshFromGrid(grid, pick) {
+  if (!grid || !pick) { return; }
+  const planeNormal = new THREE.Vector3(0, 1, 0).applyQuaternion(grid.quaternion).normalize();
+  pick.position.copy(grid.position).addScaledVector(planeNormal, -GUIDE_GRID_PICK_OFFSET);
+  pick.quaternion.copy(grid.quaternion).multiply(addPointGridBaseQuat);
+  pick.updateMatrixWorld(true);
+}
+
+function serializeGuideGridState(grid) {
+  if (!grid?.position || !grid?.quaternion) { return null; }
+  const angles = grid?.userData?.changeAnglePanelAngles;
+  return {
+    position: [grid.position.x, grid.position.y, grid.position.z],
+    quaternion: [grid.quaternion.x, grid.quaternion.y, grid.quaternion.z, grid.quaternion.w],
+    changeAnglePanelAngles: angles
+      ? {
+        x: Number(angles.x) || 0,
+        y: Number(angles.y) || 0,
+        z: Number(angles.z) || 0,
+      }
+      : null,
+  };
+}
+
+function serializeBaseGuideGridState() {
+  return serializeGuideGridState(AddPointGuideGrid);
+}
+
+function applyBaseGuideGridState(state) {
+  if (!state || typeof state !== 'object') { return; }
+  const pos = Array.isArray(state.position) ? state.position : [0, 0, 0];
+  const quat = Array.isArray(state.quaternion) ? state.quaternion : [0, 0, 0, 1];
+  const p = new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+  const q = new THREE.Quaternion(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1).normalize();
+  AddPointGuideGrid.position.copy(p);
+  AddPointGuideGrid.quaternion.copy(q);
+  AddPointGuideGrid.updateMatrixWorld(true);
+  addPointGridHandle.position.copy(p);
+  addPointGridHandle.quaternion.copy(q).multiply(addPointGridBaseQuat);
+  addPointGridHandle.updateMatrixWorld(true);
+  addPointGridY = p.y;
+  addPointGridInitialized = true;
+  if (state.changeAnglePanelAngles && typeof state.changeAnglePanelAngles === 'object') {
+    AddPointGuideGrid.userData = {
+      ...(AddPointGuideGrid.userData || {}),
+      changeAnglePanelAngles: {
+        x: Number(state.changeAnglePanelAngles.x) || 0,
+        y: Number(state.changeAnglePanelAngles.y) || 0,
+        z: Number(state.changeAnglePanelAngles.z) || 0,
+      },
+    };
+  }
+}
+
+function clearGuideAddGridsForImport() {
+  guideAddGridPicks.forEach((pick) => {
+    if (pick?.parent) { pick.parent.remove(pick); }
+    pick?.geometry?.dispose?.();
+    if (Array.isArray(pick?.material)) {
+      pick.material.forEach((m) => m?.dispose?.());
+    } else {
+      pick?.material?.dispose?.();
+    }
+  });
+  guideAddGrids.forEach((grid) => {
+    if (grid?.parent) { grid.parent.remove(grid); }
+    grid?.geometry?.dispose?.();
+    if (Array.isArray(grid?.material)) {
+      grid.material.forEach((m) => m?.dispose?.());
+    } else {
+      grid?.material?.dispose?.();
+    }
+  });
+  guideAddGridPicks.length = 0;
+  guideAddGrids.length = 0;
+  changeAngleGridTarget = null;
+}
+
+function addGuideGridFromState(state) {
+  const pos = Array.isArray(state?.position) ? state.position : [0, 0, 0];
+  const quat = Array.isArray(state?.quaternion) ? state.quaternion : [0, 0, 0, 1];
+  const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
+  newGrid.name = 'AddPointGuideGridClone';
+  newGrid.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+  newGrid.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1).normalize();
+  if (state?.changeAnglePanelAngles && typeof state.changeAnglePanelAngles === 'object') {
+    newGrid.userData = {
+      ...(newGrid.userData || {}),
+      changeAnglePanelAngles: {
+        x: Number(state.changeAnglePanelAngles.x) || 0,
+        y: Number(state.changeAnglePanelAngles.y) || 0,
+        z: Number(state.changeAnglePanelAngles.z) || 0,
+      },
+    };
+  }
+  scene.add(newGrid);
+  guideAddGrids.push(newGrid);
+  const pick = new THREE.Mesh(
+    new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
+    createRaycastOnlyMaterial()
+  );
+  pick.name = 'GuideAddGridPick';
+  syncGuidePickMeshFromGrid(newGrid, pick);
+  pick.userData = { ...pick.userData, guideAddGrid: newGrid };
+  newGrid.userData = { ...(newGrid.userData || {}), pickMesh: pick };
+  scene.add(pick);
+  guideAddGridPicks.push(pick);
 }
 
 console.log(new THREE.Vector3(5.5, y, -50))
@@ -11447,9 +11581,7 @@ function updateMovePlaneNormal() {
       changeAngleGridTarget.updateMatrixWorld(true);
       const pick = changeAngleGridTarget.userData?.pickMesh;
       if (pick) {
-        pick.position.copy(changeAngleGridTarget.position);
-        pick.quaternion.copy(changeAngleGridTarget.quaternion).multiply(addPointGridBaseQuat);
-        pick.updateMatrixWorld(true);
+        syncGuidePickMeshFromGrid(changeAngleGridTarget, pick);
       }
     }
   }
@@ -11475,9 +11607,15 @@ function ensureMovePlaneGizmo() {
   const makeRing = (color, axis) => {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.userData = { ...(mesh.userData || {}), isMovePlaneGizmo: true, axis };
+    const pick = new THREE.Mesh(
+      geom,
+      createRaycastOnlyMaterial()
+    );
+    pick.position.y = -GIZMO_PICK_OFFSET;
+    pick.userData = { ...(pick.userData || {}), isMovePlaneGizmo: true, axis };
     movePlaneGizmoGroup.add(mesh);
-    movePlaneGizmoMeshes.push(mesh);
+    movePlaneGizmoGroup.add(pick);
+    movePlaneGizmoMeshes.push(pick);
     return mesh;
   };
 
@@ -11581,9 +11719,7 @@ function updateMovePlaneRotateDrag() {
     addPointGridHandle.updateMatrixWorld(true);
     const pick = changeAngleGridTarget.userData?.pickMesh;
     if (pick) {
-      pick.position.copy(changeAngleGridTarget.position);
-      pick.quaternion.copy(changeAngleGridTarget.quaternion).multiply(addPointGridBaseQuat);
-      pick.updateMatrixWorld(true);
+      syncGuidePickMeshFromGrid(changeAngleGridTarget, pick);
     }
   }
   // ギズモは平面に追従させず、Y回転時のみワールドY基準で回す
@@ -12518,14 +12654,13 @@ async function handleMouseDown() {
       newGrid.quaternion.copy(AddPointGuideGrid.quaternion);
       scene.add(newGrid);
       guideAddGrids.push(newGrid);
-      const pick = new THREE.Mesh(
-        new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
-      );
-      pick.name = 'GuideAddGridPick';
-      pick.position.copy(newGrid.position);
-      pick.quaternion.copy(newGrid.quaternion).multiply(addPointGridBaseQuat);
-      pick.userData = { ...pick.userData, guideAddGrid: newGrid };
+  const pick = new THREE.Mesh(
+    new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
+    createRaycastOnlyMaterial()
+  );
+  pick.name = 'GuideAddGridPick';
+  syncGuidePickMeshFromGrid(newGrid, pick);
+  pick.userData = { ...pick.userData, guideAddGrid: newGrid };
       newGrid.userData = { ...newGrid.userData, pickMesh: pick };
       scene.add(pick);
       guideAddGridPicks.push(pick);
@@ -13138,10 +13273,17 @@ function ensurePointRotateGizmo() {
       : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     const mesh = new THREE.Mesh(ringGeom, mat);
+    const pick = new THREE.Mesh(
+      ringGeom,
+      createRaycastOnlyMaterial()
+    );
     mesh.rotation.set(euler.x, euler.y, euler.z);
-    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis, action };
+    pick.rotation.set(euler.x, euler.y, euler.z);
+    pick.position.y = -GIZMO_PICK_OFFSET;
+    pick.userData = { ...(pick.userData || {}), isPointRotateGizmo: true, axis, action };
     pointRotateGizmoGroup.add(mesh);
-    pointRotateGizmoMeshes.push(mesh);
+    pointRotateGizmoGroup.add(pick);
+    pointRotateGizmoMeshes.push(pick);
   };
   // 緑: 1本目Yリング（点を回転）
   makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_points', 1.0);
@@ -14148,9 +14290,15 @@ function ensureRotateGizmo() {
   const makeRing = (color, axis) => {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.userData = { ...(mesh.userData || {}), isRotateGizmo: true, axis };
+    const pick = new THREE.Mesh(
+      geom,
+      createRaycastOnlyMaterial()
+    );
+    pick.position.y = -GIZMO_PICK_OFFSET;
+    pick.userData = { ...(pick.userData || {}), isRotateGizmo: true, axis };
     rotateGizmoGroup.add(mesh);
-    rotateGizmoMeshes.push(mesh);
+    rotateGizmoGroup.add(pick);
+    rotateGizmoMeshes.push(pick);
     return mesh;
   };
 
@@ -14183,10 +14331,17 @@ function ensureScaleGizmo() {
       : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     const mesh = new THREE.Mesh(geom, mat);
+    const pick = new THREE.Mesh(
+      geom,
+      createRaycastOnlyMaterial()
+    );
     mesh.rotation.set(euler.x, euler.y, euler.z);
-    mesh.userData = { ...(mesh.userData || {}), isScaleGizmo: true, axis };
+    pick.rotation.set(euler.x, euler.y, euler.z);
+    pick.position.y = -GIZMO_PICK_OFFSET;
+    pick.userData = { ...(pick.userData || {}), isScaleGizmo: true, axis };
     scaleGizmoGroup.add(mesh);
-    scaleGizmoMeshes.push(mesh);
+    scaleGizmoGroup.add(pick);
+    scaleGizmoMeshes.push(pick);
   };
 
   // 横方向（yaw: Y軸）1本目
@@ -14205,7 +14360,7 @@ function ensureScaleGizmo() {
 
   scaleArrowPick = new THREE.Mesh(
     new THREE.CylinderGeometry(0.18, 0.18, 1, 8),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    createRaycastOnlyMaterial({ side: THREE.FrontSide })
   );
   scaleArrowPick.name = 'ScaleArrowPick';
   scaleArrowPick.visible = false;
@@ -14292,6 +14447,7 @@ function updateScaleGizmo() {
   if (scaleArrowPick) {
     scaleArrowPick.visible = true;
     scaleArrowPick.position.copy(center.clone().add(scaleDirection.clone().multiplyScalar(arrowLen * 0.45)));
+    scaleArrowPick.position.y -= GIZMO_PICK_OFFSET;
     scaleArrowPick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), scaleDirection.clone().normalize());
     scaleArrowPick.scale.set(1, arrowLen * 0.9, 1);
   }
