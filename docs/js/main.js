@@ -750,6 +750,7 @@ const threeUi = document.getElementById('three-ui');
     const isMovePoint = mode === 'move_point';
     const isScalePoint = mode === 'scale_point';
     const isMovePointRotation = mode === 'move_point_rotation';
+    const isDecorationRotation = mode === 'rotation_decoration';
     const isCopyMode = mode === 'copy_mode';
     const isStyleMode = mode === 'style_mode';
     if (rotationPanelTitle) {
@@ -757,7 +758,9 @@ const threeUi = document.getElementById('three-ui');
         ? 'Move Point'
         : (isScalePoint
           ? 'Scale Point'
-          : (isMovePointRotation ? 'Point Rotate' : (isCopyMode ? 'Copy' : (isStyleMode ? 'Style' : 'Rotation'))));
+          : (isMovePointRotation
+            ? 'Point Rotate'
+            : (isDecorationRotation ? 'Decoration Rotate' : (isCopyMode ? 'Copy' : (isStyleMode ? 'Style' : 'Rotation')))));
     }
     const axisSuffix = isMovePoint
       ? (movePointCoordinateMode === 'grid' ? ' (grid)' : ' (world)')
@@ -773,7 +776,9 @@ const threeUi = document.getElementById('three-ui');
     if (rotationLabelZ) {
       rotationLabelZ.childNodes[0].nodeValue = isStyleMode
         ? '梁 厚み'
-        : (isMovePointRotation ? 'Len' : (isCopyMode ? 'Offset Z' : `Z${axisSuffix}`));
+        : (isMovePointRotation
+          ? 'Len'
+          : (isDecorationRotation ? `Z${axisSuffix}` : (isCopyMode ? 'Offset Y2' : `Y2${axisSuffix}`)));
     }
     if (rotationApplyBtn) {
       rotationApplyBtn.textContent = isStyleMode
@@ -919,7 +924,18 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function resolveSelectableHitObject(mesh) {
-    const decoRoot = mesh?.userData?.decorationRoot || mesh;
+    let decoRoot = mesh?.userData?.decorationRoot || null;
+    if (!decoRoot) {
+      let cur = mesh;
+      while (cur) {
+        if (cur?.userData?.decorationType) {
+          decoRoot = cur;
+          break;
+        }
+        cur = cur.parent || null;
+      }
+    }
+    decoRoot = decoRoot || mesh;
     const inConstructionObjectSelectMode = (copyModeActive && objectEditMode === 'COPY')
       || (styleModeActive && objectEditMode === 'STYLE');
     if (!inConstructionObjectSelectMode) {
@@ -1763,7 +1779,9 @@ const threeUi = document.getElementById('three-ui');
     if (pointRotateModeActive && pointRotateTarget) {
       const degToRad = Math.PI / 180;
       const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
-      const isMovePointRotate = editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING';
+      const isMovePointRotate = editObject === 'STEEL_FRAME'
+        && objectEditMode === 'MOVE_EXISTING'
+        && Boolean(pointRotateTarget?.userData?.steelFramePoint);
       const xRaw = rotationInputX?.value?.trim?.() ?? '';
       const yRaw = rotationInputY?.value?.trim?.() ?? '';
       const zRaw = rotationInputZ?.value?.trim?.() ?? '';
@@ -1781,34 +1799,61 @@ const threeUi = document.getElementById('three-ui');
         return parsed;
       })();
       const nextQuat = new THREE.Quaternion();
-      if (Math.abs(axDeg) > 1e-6) {
-        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
-        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, axDeg * degToRad);
-        nextQuat.copy(qx.multiply(nextQuat)).normalize();
-      }
-      if (Math.abs(ayDeg) > 1e-6) {
-        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ayDeg * degToRad);
-        nextQuat.copy(qy.multiply(nextQuat)).normalize();
-      }
-      if (!isMovePointRotate && Math.abs(azDeg) > 1e-6) {
-        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
-        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, azDeg * degToRad);
-        nextQuat.copy(qz.multiply(nextQuat)).normalize();
+      const isDecorationRotate = !isMovePointRotate && isDecorationRotationContext(pointRotateTarget);
+      if (isDecorationRotate) {
+        const baseQuat = getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true });
+        nextQuat.copy(buildDecorationQuatFromPanelAngles(pointRotateTarget, {
+          x: axDeg,
+          y: ayDeg,
+          z: azDeg,
+        }));
+        debugDecorationRotationLog('apply-panel', {
+          id: pointRotateTarget?.id,
+          input: { x: axDeg, y: ayDeg, z: azDeg },
+          baseQuat: baseQuat.toArray(),
+        });
+      } else {
+        if (Math.abs(axDeg) > 1e-6) {
+          const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
+          const qx = new THREE.Quaternion().setFromAxisAngle(axisX, axDeg * degToRad);
+          nextQuat.copy(qx.multiply(nextQuat)).normalize();
+        }
+        if (Math.abs(ayDeg) > 1e-6) {
+          const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ayDeg * degToRad);
+          nextQuat.copy(qy.multiply(nextQuat)).normalize();
+        }
+        if (!isMovePointRotate && Math.abs(azDeg) > 1e-6) {
+          const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
+          const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, azDeg * degToRad);
+          nextQuat.copy(qz.multiply(nextQuat)).normalize();
+        }
       }
       pointRotateBasisQuat.copy(nextQuat);
 
       pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
       pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
       pointRotateGizmoYawStart = pointRotateGizmoYaw;
-      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
-      const nextPanelZDeg = isMovePointRotate ? (Number(state.z) || 0) : azDeg;
+      if (isDecorationRotationContext(pointRotateTarget)) {
+        pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true })).normalize();
+      } else {
+        pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      }
+      const normalizedPanelAngles = (!isMovePointRotate && isDecorationRotationContext(pointRotateTarget))
+        ? { x: axDeg, y: ayDeg, z: azDeg }
+        : { x: axDeg, y: ayDeg, z: (isMovePointRotate ? (Number(state.z) || 0) : azDeg) };
       pointRotateTarget.userData = {
         ...(pointRotateTarget.userData || {}),
         pointRotateDirection: pointRotateDirection.clone(),
         pointRotateBasisQuat: pointRotateBasisQuat.toArray(),
         pointRotateLen: nextLen,
-        pointRotatePanelAngles: { x: axDeg, y: ayDeg, z: nextPanelZDeg },
+        pointRotatePanelAngles: normalizedPanelAngles,
       };
+      if (!isMovePointRotate
+        && pointRotateTarget?.userData?.decorationType
+        && pointRotateTarget?.quaternion?.isQuaternion) {
+        pointRotateTarget.quaternion.copy(pointRotateBasisQuat).normalize();
+        pointRotateTarget.updateMatrixWorld(true);
+      }
       if (isMovePointRotate) {
         pointRotateTarget.position.add(pointRotateDirection.clone().multiplyScalar(nextLen));
         pointRotateCenter.copy(pointRotateTarget.position);
@@ -1822,22 +1867,25 @@ const threeUi = document.getElementById('three-ui');
       showPointRotationGuideLine(pointRotateTarget);
       updatePointRotateVisuals();
 
-      if (rotationInputX) { rotationInputX.value = String(Number(axDeg).toFixed(1)); rotationInputX.placeholder = String(axDeg); }
-      if (rotationInputY) { rotationInputY.value = String(Number(ayDeg).toFixed(1)); rotationInputY.placeholder = String(ayDeg); }
+      if (rotationInputX) { rotationInputX.value = String(Number(normalizedPanelAngles.x).toFixed(1)); rotationInputX.placeholder = String(normalizedPanelAngles.x); }
+      if (rotationInputY) { rotationInputY.value = String(Number(normalizedPanelAngles.y).toFixed(1)); rotationInputY.placeholder = String(normalizedPanelAngles.y); }
       if (rotationInputZ) {
         if (isMovePointRotate) {
           rotationInputZ.value = String(Number(nextLen).toFixed(3));
           rotationInputZ.placeholder = String(Number(nextLen).toFixed(3));
         } else {
-          rotationInputZ.value = String(Number(azDeg).toFixed(1));
-          rotationInputZ.placeholder = String(azDeg);
+          rotationInputZ.value = String(Number(normalizedPanelAngles.z).toFixed(1));
+          rotationInputZ.placeholder = String(normalizedPanelAngles.z);
         }
       }
       syncRotationInputGhostHints();
       return;
     }
 
-    const meshes = ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
+    const isDecorationRotate = false;
+    const meshes = isDecorationRotate
+      ? [rotateTargetObject]
+      : ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
     if (movePlaneMode === 'change_angle') {
       const degToRad = Math.PI / 180;
       const state = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
@@ -1885,34 +1933,82 @@ const threeUi = document.getElementById('three-ui');
     const dz = azDeg - rotatePanelState.angles.z;
     rotatePanelState.angles = { x: axDeg, y: ayDeg, z: azDeg };
 
-    const center = new THREE.Vector3();
-    meshes.forEach((m) => center.add(m.position));
-    center.multiplyScalar(1 / meshes.length);
-
-    const rotateByAxis = (axis, rad) => {
-      if (Math.abs(rad) < 1e-6) return;
-      meshes.forEach((m) => {
-        const offset = m.position.clone().sub(center);
-        offset.applyAxisAngle(axis, rad);
-        m.position.copy(center.clone().add(offset));
-      });
-    };
-
-    rotateByAxis(new THREE.Vector3(1, 0, 0), dx * degToRad);
-    rotateByAxis(new THREE.Vector3(0, 1, 0), dy * degToRad);
-    rotateByAxis(new THREE.Vector3(0, 0, 1), dz * degToRad);
-    const curves = new Set();
-    meshes.forEach((m) => {
-      if (m?.userData?.guideCurve) {
-        const curve = m.userData.guideCurve;
-        const idx = m.userData.guideControlIndex;
-        if (curve?.userData?.controlPoints && typeof idx === 'number') {
-          curve.userData.controlPoints[idx] = m.position.clone();
-          curves.add(curve);
-        }
+    if (isDecorationRotate) {
+      const target = rotateTargetObject;
+      const state = target.userData?.pointRotatePanelAngles || rotatePanelState.angles;
+      const xDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(state?.x) || 0);
+      const yDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(state?.y) || 0);
+      const zDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(state?.z) || 0);
+      const nextQuat = new THREE.Quaternion();
+      if (Math.abs(xDeg) > 1e-6) {
+        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
+        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, xDeg * degToRad);
+        nextQuat.copy(qx.multiply(nextQuat)).normalize();
       }
-    });
-    curves.forEach((curve) => updateGuideCurve(curve));
+      if (Math.abs(yDeg) > 1e-6) {
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yDeg * degToRad);
+        nextQuat.copy(qy.multiply(nextQuat)).normalize();
+      }
+      if (Math.abs(zDeg) > 1e-6) {
+        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
+        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, zDeg * degToRad);
+        nextQuat.copy(qz.multiply(nextQuat)).normalize();
+      }
+      target.quaternion.copy(nextQuat).normalize();
+      const normalizedPanelAngles = getRotationPanelAnglesFromQuaternion(target.quaternion);
+      rotatePanelState.angles = normalizedPanelAngles;
+      target.userData = {
+        ...(target.userData || {}),
+        pointRotateBasisQuat: nextQuat.toArray(),
+        pointRotateDirection: new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize(),
+        pointRotatePanelAngles: normalizedPanelAngles,
+      };
+      target.updateMatrixWorld(true);
+      if (rotationInputX) {
+        rotationInputX.value = String(Number(normalizedPanelAngles.x).toFixed(1));
+        rotationInputX.placeholder = String(Number(normalizedPanelAngles.x).toFixed(1));
+      }
+      if (rotationInputY) {
+        rotationInputY.value = String(Number(normalizedPanelAngles.y).toFixed(1));
+        rotationInputY.placeholder = String(Number(normalizedPanelAngles.y).toFixed(1));
+      }
+      if (rotationInputZ) {
+        rotationInputZ.value = String(Number(normalizedPanelAngles.z).toFixed(1));
+        rotationInputZ.placeholder = String(Number(normalizedPanelAngles.z).toFixed(1));
+      }
+      syncRotationInputGhostHints();
+      updateRotateGizmo();
+      return;
+    } else {
+      const center = new THREE.Vector3();
+      meshes.forEach((m) => center.add(m.position));
+      center.multiplyScalar(1 / meshes.length);
+
+      const rotateByAxis = (axis, rad) => {
+        if (Math.abs(rad) < 1e-6) return;
+        meshes.forEach((m) => {
+          const offset = m.position.clone().sub(center);
+          offset.applyAxisAngle(axis, rad);
+          m.position.copy(center.clone().add(offset));
+        });
+      };
+
+      rotateByAxis(new THREE.Vector3(1, 0, 0), dx * degToRad);
+      rotateByAxis(new THREE.Vector3(0, 1, 0), dy * degToRad);
+      rotateByAxis(new THREE.Vector3(0, 0, 1), dz * degToRad);
+      const curves = new Set();
+      meshes.forEach((m) => {
+        if (m?.userData?.guideCurve) {
+          const curve = m.userData.guideCurve;
+          const idx = m.userData.guideControlIndex;
+          if (curve?.userData?.controlPoints && typeof idx === 'number') {
+            curve.userData.controlPoints[idx] = m.position.clone();
+            curves.add(curve);
+          }
+        }
+      });
+      curves.forEach((curve) => updateGuideCurve(curve));
+    }
 
     if (rotationInputX) {
       rotationInputX.value = '';
@@ -12188,15 +12284,59 @@ async function handleMouseDown() {
 
   if (objectEditMode === ROTATE_MODE) {
     raycaster.setFromCamera(mouse, camera);
-    const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
-    if (gizmoHit) {
-      beginRotateDrag(gizmoHit.object);
-      return;
+    if (rotateTargetObject?.userData?.decorationType) {
+      rotateTargetObject = null;
+    }
+    const decorationPointRotateActive = pointRotateModeActive && pointRotateTarget?.userData?.decorationType;
+    if (decorationPointRotateActive) {
+      const pointGizmoHit = raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null;
+      if (pointGizmoHit) {
+        beginPointRotateDrag(pointGizmoHit.object, { gizmoOnly: false });
+        return;
+      }
+    } else {
+      const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
+      if (gizmoHit) {
+        beginRotateDrag(gizmoHit.object);
+        return;
+      }
     }
     const hits = getIntersectObjects();
-    const hit = hits.find((h) => h?.object?.userData?.steelFramePoint);
+    const hit = hits.find((h) => {
+      const obj = resolveSelectableHitObject(h?.object) || h?.object;
+      return Boolean(obj?.userData?.steelFramePoint) || Boolean(obj?.userData?.decorationType);
+    });
     if (hit?.object) {
-      steelFrameMode.toggleSelectedPoint(hit.object);
+      const obj = resolveSelectableHitObject(hit.object) || hit.object;
+      if (obj?.userData?.steelFramePoint) {
+        pointRotateModeActive = false;
+        pointRotateTarget = null;
+        rotateTargetObject = null;
+        steelFrameMode.toggleSelectedPoint(obj);
+        setRotationPanelMode('rotation');
+        updatePointRotateVisuals();
+      } else if (obj?.userData?.decorationType) {
+        steelFrameMode.clearSelection?.();
+        rotateTargetObject = null;
+        rotatePanelState.idsKey = '';
+        rotatePanelState.angles = { x: 0, y: 0, z: 0 };
+        setRotationPanelMode('rotation_decoration');
+        pointRotateModeActive = true;
+        pointRotateTarget = obj;
+        pointRotateCenter.copy(obj.position);
+        pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(obj));
+        pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+        pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+        pointRotateGizmoYawStart = pointRotateGizmoYaw;
+        pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(obj, { ensure: true })).normalize();
+        const panelFromState = obj.userData?.pointRotatePanelAngles;
+        obj.userData = {
+          ...(obj.userData || {}),
+          pointRotatePanelAngles: panelFromState || getRotationPanelAnglesFromTargetQuat(obj, pointRotateBasisQuat),
+        };
+        syncPointRotatePanelFromTarget();
+        updatePointRotateVisuals();
+      }
       updateRotateGizmo();
     }
     return;
@@ -12549,15 +12689,21 @@ async function handleMouseDown() {
       beginDifferenceControlPointDrag(controlPointHit.object);
       return;
     }
-    const hit = hits.find((h) => h?.object?.userData?.steelFramePoint || h?.object?.userData?.differenceSpacePlane);
+    const hit = hits.find((h) => {
+      const obj = resolveSelectableHitObject(h?.object);
+      return obj?.userData?.steelFramePoint
+        || obj?.userData?.differenceSpacePlane
+        || obj?.userData?.decorationType;
+    });
     if (hit?.object) {
+      const resolvedHitObject = resolveSelectableHitObject(hit.object) || hit.object;
       const pickedFaceNormal = getWorldFaceNormalFromHit(hit);
       const pickedLocalNormal = getLocalFaceNormalFromHit(hit);
-      const selectionKey = hit.object?.userData?.differenceSpacePlane
-        ? buildDifferenceTransformSelectionKey({ mesh: hit.object, localNormal: pickedLocalNormal })
-        : buildDifferenceTransformSelectionKey({ mesh: hit.object });
-      if (hit.object?.userData?.differenceSpacePlane && differenceSpaceTransformMode === 'move') {
-        pointRotateTarget = hit.object;
+      const selectionKey = resolvedHitObject?.userData?.differenceSpacePlane
+        ? buildDifferenceTransformSelectionKey({ mesh: resolvedHitObject, localNormal: pickedLocalNormal })
+        : buildDifferenceTransformSelectionKey({ mesh: resolvedHitObject });
+      if (resolvedHitObject?.userData?.differenceSpacePlane && differenceSpaceTransformMode === 'move') {
+        pointRotateTarget = resolvedHitObject;
         selectDifferencePlane(pointRotateTarget);
         if (beginDifferenceFaceVertexDrag(hit)) {
           pointRotateCenter.copy(pointRotateTarget.position);
@@ -12568,7 +12714,7 @@ async function handleMouseDown() {
         rememberDifferenceTransformSelection(selectionKey);
         return;
       }
-      if (pointRotateTarget && hit.object === pointRotateTarget) {
+      if (pointRotateTarget && resolvedHitObject === pointRotateTarget) {
         const sameSelection = isSameDifferenceTransformSelection(selectionKey);
         if (!sameSelection && pickedFaceNormal && pointRotateTarget?.userData?.differenceSpacePlane) {
           showDifferenceFaceHighlight(hit);
@@ -12589,7 +12735,7 @@ async function handleMouseDown() {
         beginPointRotateMoveDrag();
         return;
       }
-      pointRotateTarget = hit.object;
+      pointRotateTarget = resolvedHitObject;
       if (pointRotateTarget?.userData?.differenceSpacePlane) {
         selectDifferencePlane(pointRotateTarget);
         showDifferenceFaceHighlight(hit);
@@ -12609,10 +12755,18 @@ async function handleMouseDown() {
         pointRotateFaceNormalWorld: pointRotateDirection.toArray(),
         pointRotatePanelAngles: pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 },
       };
-      // 再計算時は Y 軸固定で表示姿勢を復元する
-      pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
-      pointRotateGizmoYawStart = pointRotateGizmoYaw;
-      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      if (isDecorationRotationContext(pointRotateTarget)) {
+        pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true })).normalize();
+        pointRotateTarget.userData = {
+          ...(pointRotateTarget.userData || {}),
+          pointRotatePanelAngles: getRotationPanelAnglesFromTargetQuat(pointRotateTarget, pointRotateBasisQuat),
+        };
+      } else {
+        // 再計算時は Y 軸固定で表示姿勢を復元する
+        pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
+        pointRotateGizmoYawStart = pointRotateGizmoYaw;
+        pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+      }
       rememberDifferenceTransformSelection(selectionKey);
       updatePointRotateVisuals();
       showPointRotationGuideLine(pointRotateTarget);
@@ -13070,6 +13224,11 @@ let rotateAxis = new THREE.Vector3(0, 1, 0);
 let rotateCenter = new THREE.Vector3();
 let rotateStartVector = new THREE.Vector3();
 let rotateStartPositions = [];
+let rotateTargetObject = null;
+let rotateTargetStartQuaternion = new THREE.Quaternion();
+let rotateAxisLocal = new THREE.Vector3(0, 1, 0);
+let rotateDragAction = 'rotate_points';
+let rotatePanelAnglesStart = { x: 0, y: 0, z: 0 };
 const rotatePlane = new THREE.Plane();
 let rotatePanelState = {
   idsKey: '',
@@ -13111,17 +13270,22 @@ let pointRotateStartVector = new THREE.Vector3();
 let pointRotateAxisLocal = null;
 let pointRotateBasisQuat = new THREE.Quaternion();
 let pointRotateBasisQuatStart = new THREE.Quaternion();
+let pointRotateRelativeQuatStart = new THREE.Quaternion();
 let pointRotateGizmoQuat = new THREE.Quaternion();
 let pointRotateGizmoYaw = 0;
 let pointRotateGizmoYawStart = 0;
 let pointRotateMoveStartT = 0;
 let pointRotateMoveStartCenter = new THREE.Vector3();
 let pointRotatePanelAnglesStart = { x: 0, y: 0, z: 0 };
+let pointRotateDragAction = 'rotate_points';
+let pointRotateTargetStartQuaternion = new THREE.Quaternion();
 let pointRotateSelectionDragEntries = null;
 let pointRotateSelectionMoveEntries = null;
 let pointRotateGizmoOnly = false;
 let pointRotateLastSelectionKey = null;
 let pointRotateLastSelectionMode = null;
+const decorationRotationBaseQuatMap = new WeakMap();
+const DEBUG_DECORATION_ROTATE_LOG = false;
 const DIFFERENCE_ANGLE_STATE_STORAGE_KEY = 'difference_transform_angle_state_v1';
 
 function buildDifferenceTransformSelectionKey({ mesh = null, controlPoint = null, localNormal = null, edge = null } = {}) {
@@ -13278,6 +13442,7 @@ function ensurePointRotateGizmo() {
       createRaycastOnlyMaterial()
     );
     mesh.rotation.set(euler.x, euler.y, euler.z);
+    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis, action };
     pick.rotation.set(euler.x, euler.y, euler.z);
     pick.position.y = -GIZMO_PICK_OFFSET;
     pick.userData = { ...(pick.userData || {}), isPointRotateGizmo: true, axis, action };
@@ -13285,9 +13450,9 @@ function ensurePointRotateGizmo() {
     pointRotateGizmoGroup.add(pick);
     pointRotateGizmoMeshes.push(pick);
   };
-  // 緑: 1本目Yリング（点を回転）
+  // 緑: Yリング（点を回転）
   makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_points', 1.0);
-  // 黄: 2本目Yリング（ギズモのみ回転）
+  // 黄: 2本目Yリング（Difference rotation のみ使用）
   makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_gizmo_y', 1.24);
   // 赤: Xリング（点を回転）
   makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 'rotate_points', 1.0);
@@ -13306,7 +13471,10 @@ function ensurePointRotateArrow() {
 function syncPointRotatePanelFromTarget() {
   if (!pointRotateTarget) { return; }
   const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
-  const isMovePointRotate = editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && pointRotateModeActive;
+  const isMovePointRotate = editObject === 'STEEL_FRAME'
+    && objectEditMode === 'MOVE_EXISTING'
+    && pointRotateModeActive
+    && Boolean(pointRotateTarget?.userData?.steelFramePoint);
   const rawLen = Number(pointRotateTarget.userData?.pointRotateLen);
   const safeLen = Number.isFinite(rawLen) ? rawLen : 0;
   if (rotationInputX) {
@@ -13354,8 +13522,66 @@ function updatePointRotatePanelAnglesFromDirection(direction, { apply = false } 
   }
 }
 
+function isDecorationRotationContext(target = pointRotateTarget) {
+  return editObject === 'STEEL_FRAME'
+    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)
+    && Boolean(target?.userData?.decorationType);
+}
+
+function getDecorationRotationBaseQuat(target, { ensure = true } = {}) {
+  const base = new THREE.Quaternion();
+  if (!target) { return base; }
+  const cached = decorationRotationBaseQuatMap.get(target);
+  if (cached?.isQuaternion) {
+    base.copy(cached).normalize();
+    return base;
+  }
+  const saved = target?.userData?.pointRotateInitialBasisQuat;
+  if (Array.isArray(saved) && saved.length === 4) {
+    const arr = saved.map((v) => Number(v));
+    if (arr.every((v) => Number.isFinite(v))) {
+      base.fromArray(arr).normalize();
+      decorationRotationBaseQuatMap.set(target, base.clone());
+      return base;
+    }
+  }
+  if (target?.quaternion?.isQuaternion) {
+    base.copy(target.quaternion).normalize();
+  } else {
+    base.identity();
+  }
+  debugDecorationRotationLog('capture-base', {
+    id: target?.id,
+    baseQuat: base.toArray(),
+    ensure,
+  });
+  if (ensure) {
+    target.userData = {
+      ...(target.userData || {}),
+      pointRotateInitialBasisQuat: base.toArray(),
+    };
+  }
+  decorationRotationBaseQuatMap.set(target, base.clone());
+  return base;
+}
+
+function debugDecorationRotationLog(tag, payload = {}) {
+  if (!DEBUG_DECORATION_ROTATE_LOG) { return; }
+  console.log(`[decoration-rotate] ${tag}`, payload);
+}
+
 function loadPointRotateBasisFromTarget(target) {
   const q = new THREE.Quaternion();
+  if (isDecorationRotationContext(target) && target?.quaternion?.isQuaternion) {
+    q.copy(target.quaternion).normalize();
+    const base = getDecorationRotationBaseQuat(target, { ensure: true });
+    target.userData = {
+      ...(target.userData || {}),
+      pointRotateInitialBasisQuat: base.toArray(),
+      pointRotateBasisQuat: q.toArray(),
+    };
+    return q;
+  }
   const savedQuat = target?.userData?.pointRotateBasisQuat;
 
   // Backward-compatible restore:
@@ -13411,6 +13637,24 @@ function updatePointRotateVisuals() {
   pointRotateGizmoGroup.visible = active;
   pointRotateArrow.visible = active;
   if (!active) { return; }
+  const showSecondaryY = (
+    editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CONSTRUCT'
+    && differenceSpaceTransformMode === 'rotation'
+  ) || (
+    editObject === 'STEEL_FRAME'
+    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)
+    && pointRotateModeActive
+    && Boolean(pointRotateTarget?.userData?.decorationType)
+  );
+  pointRotateGizmoGroup.children.forEach((child) => {
+    if (!child?.userData?.isPointRotateGizmo) { return; }
+    if (child.userData.action === 'rotate_gizmo_y') {
+      child.visible = showSecondaryY;
+    } else {
+      child.visible = true;
+    }
+  });
   pointRotateGizmoGroup.position.copy(pointRotateCenter);
   pointRotateGizmoGroup.quaternion.copy(pointRotateGizmoQuat);
   pointRotateGizmoGroup.scale.setScalar(1.2);
@@ -13676,6 +13920,12 @@ function updateDifferenceFaceVertexDrag() {
 
 function beginPointRotateDrag(axisMesh, { gizmoOnly = false, forceAxis = null } = {}) {
   pointRotateGizmoOnly = Boolean(gizmoOnly);
+  pointRotateDragAction = axisMesh?.userData?.action || 'rotate_points';
+  if (pointRotateTarget?.quaternion?.isQuaternion) {
+    pointRotateTargetStartQuaternion.copy(pointRotateTarget.quaternion);
+  } else {
+    pointRotateTargetStartQuaternion.identity();
+  }
   if (!pointRotateGizmoOnly && pointRotateTarget?.userData?.differenceSpacePlane) {
     beginDifferenceHistorySession();
   }
@@ -13698,8 +13948,14 @@ function beginPointRotateDrag(axisMesh, { gizmoOnly = false, forceAxis = null } 
   pointRotateAxisLocal = forceAxis?.clone?.().normalize?.()
     || axisMesh?.userData?.axis?.clone?.().normalize?.()
     || new THREE.Vector3(0, 1, 0);
-  if (pointRotateAxisLocal.y === 1) {
+  if (isDecorationRotationContext(pointRotateTarget) && pointRotateDragAction === 'rotate_gizmo_y') {
+    pointRotateAxisLocal = new THREE.Vector3(0, 0, 1);
+  }
+  if (pointRotateAxisLocal.y === 1 && !isDecorationRotationContext(pointRotateTarget)) {
     pointRotateAxis.copy(new THREE.Vector3(0, 1, 0));
+  } else if (isDecorationRotationContext(pointRotateTarget)) {
+    const baseQuat = getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true });
+    pointRotateAxis.copy(pointRotateAxisLocal.clone().applyQuaternion(baseQuat).normalize());
   } else {
     pointRotateAxis.copy(pointRotateAxisLocal.clone().applyQuaternion(pointRotateBasisQuat).normalize());
   }
@@ -13710,11 +13966,29 @@ function beginPointRotateDrag(axisMesh, { gizmoOnly = false, forceAxis = null } 
   if (!ok) { return; }
   pointRotateStartVector.copy(hit).sub(pointRotateCenter).normalize();
   pointRotateBasisQuatStart.copy(pointRotateBasisQuat);
+  if (isDecorationRotationContext(pointRotateTarget)) {
+    const baseQuat = getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true });
+    pointRotateRelativeQuatStart.copy(
+      baseQuat.clone().invert().multiply(pointRotateBasisQuat.clone()).normalize()
+    );
+  } else {
+    pointRotateRelativeQuatStart.identity();
+  }
   pointRotatePanelAnglesStart = pointRotateTarget?.userData?.pointRotatePanelAngles
     ? { ...pointRotateTarget.userData.pointRotatePanelAngles }
     : { x: 0, y: 0, z: 0 };
   if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1) {
     pointRotateGizmoYawStart = pointRotateGizmoYaw;
+  }
+  if (isDecorationRotationContext(pointRotateTarget)) {
+    debugDecorationRotationLog('begin-gizmo', {
+      id: pointRotateTarget?.id,
+      action: pointRotateDragAction,
+      gizmoOnly: pointRotateGizmoOnly,
+      axisLocal: pointRotateAxisLocal ? pointRotateAxisLocal.toArray() : null,
+      axisWorld: pointRotateAxis ? pointRotateAxis.toArray() : null,
+      panelStart: { ...pointRotatePanelAnglesStart },
+    });
   }
   pointRotateDragging = true;
   efficacy = false;
@@ -13778,26 +14052,53 @@ function updatePointRotateDrag() {
   const dot = pointRotateStartVector.dot(current);
   const angle = Math.atan2(cross.dot(pointRotateAxis), dot);
   const angleDeg = angle * (180 / Math.PI);
+  const isDecorationRotateContext = isDecorationRotationContext(pointRotateTarget);
   const deltaQuat = new THREE.Quaternion().setFromAxisAngle(pointRotateAxis, angle);
-  pointRotateBasisQuat.copy(deltaQuat.multiply(pointRotateBasisQuatStart)).normalize();
-  pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
-  if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1) {
-    pointRotateGizmoYaw = pointRotateGizmoYawStart + angle;
-    pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+  if (!isDecorationRotateContext) {
+    pointRotateBasisQuat.copy(deltaQuat.multiply(pointRotateBasisQuatStart)).normalize();
   }
   if (pointRotateTarget) {
-    const isMovePointRotate = editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING';
+    const isMovePointRotate = editObject === 'STEEL_FRAME'
+      && objectEditMode === 'MOVE_EXISTING'
+      && Boolean(pointRotateTarget?.userData?.steelFramePoint);
     const currentLen = (() => {
       const raw = Number(pointRotateTarget?.userData?.pointRotateLen);
       return Number.isFinite(raw) ? raw : 0;
     })();
-    const panelAngles = { ...pointRotatePanelAnglesStart };
-    if (pointRotateAxisLocal?.x === 1) {
+    let panelAngles = { ...pointRotatePanelAnglesStart };
+    if (isDecorationRotateContext && !isMovePointRotate) {
+      if (pointRotateAxisLocal?.x === 1) {
+        panelAngles.x = pointRotatePanelAnglesStart.x + angleDeg;
+      } else if (pointRotateAxisLocal?.y === 1) {
+        panelAngles.y = pointRotatePanelAnglesStart.y + angleDeg;
+      } else if (pointRotateAxisLocal?.z === 1) {
+        panelAngles.z = pointRotatePanelAnglesStart.z + angleDeg;
+      }
+      pointRotateBasisQuat.copy(buildDecorationQuatFromPanelAngles(pointRotateTarget, panelAngles));
+      debugDecorationRotationLog('drag', {
+        id: pointRotateTarget?.id,
+        axisLocal: pointRotateAxisLocal ? pointRotateAxisLocal.toArray() : null,
+        angleDeg,
+        panelAngles: { ...panelAngles },
+      });
+    } else if (pointRotateAxisLocal?.x === 1) {
       panelAngles.x = pointRotatePanelAnglesStart.x + angleDeg;
     } else if (pointRotateAxisLocal?.y === 1) {
-      panelAngles.y = pointRotatePanelAnglesStart.y + angleDeg;
+      if (pointRotateDragAction === 'rotate_gizmo_y') {
+        panelAngles.z = pointRotatePanelAnglesStart.z + angleDeg;
+      } else {
+        panelAngles.y = pointRotatePanelAnglesStart.y + angleDeg;
+      }
     } else if (pointRotateAxisLocal?.z === 1) {
       panelAngles.z = pointRotatePanelAnglesStart.z + angleDeg;
+    }
+    pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+    if (pointRotateAxisLocal && pointRotateAxisLocal.y === 1 && !isDecorationRotateContext) {
+      pointRotateGizmoYaw = pointRotateGizmoYawStart + angle;
+      pointRotateGizmoQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), pointRotateGizmoYaw);
+    }
+    if (isDecorationRotateContext) {
+      pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(pointRotateTarget, { ensure: true })).normalize();
     }
 
     pointRotateTarget.userData = {
@@ -13807,18 +14108,37 @@ function updatePointRotateDrag() {
       pointRotateLen: currentLen,
       pointRotatePanelAngles: panelAngles,
     };
+    if (!pointRotateGizmoOnly
+      && pointRotateTarget?.userData?.decorationType
+      && pointRotateTarget?.quaternion?.isQuaternion) {
+      pointRotateTarget.quaternion.copy(pointRotateBasisQuat).normalize();
+      pointRotateTarget.updateMatrixWorld(true);
+    }
     if (editObject === 'DIFFERENCE_SPACE' && ['move', 'rotation'].includes(differenceSpaceTransformMode)) {
       saveDifferencePointRotateAngleState(differenceSpaceTransformMode);
     }
-    if (rotationInputX) { rotationInputX.value = String(panelAngles.x.toFixed(1)); }
-    if (rotationInputY) { rotationInputY.value = String(panelAngles.y.toFixed(1)); }
+    if (rotationInputX) {
+      const xText = String(panelAngles.x.toFixed(1));
+      rotationInputX.value = xText;
+      rotationInputX.placeholder = xText;
+    }
+    if (rotationInputY) {
+      const yText = String(panelAngles.y.toFixed(1));
+      rotationInputY.value = yText;
+      rotationInputY.placeholder = yText;
+    }
     if (rotationInputZ) {
       if (isMovePointRotate) {
-        rotationInputZ.value = String(Number(currentLen).toFixed(3));
+        const zLenText = String(Number(currentLen).toFixed(3));
+        rotationInputZ.value = zLenText;
+        rotationInputZ.placeholder = zLenText;
       } else {
-        rotationInputZ.value = String(panelAngles.z.toFixed(1));
+        const zText = String(panelAngles.z.toFixed(1));
+        rotationInputZ.value = zText;
+        rotationInputZ.placeholder = zText;
       }
     }
+    syncRotationInputGhostHints();
     showPointRotationGuideLine(pointRotateTarget);
     if (!pointRotateGizmoOnly
       && editObject === 'DIFFERENCE_SPACE'
@@ -13943,6 +14263,7 @@ function clearPointRotateState() {
   pointRotateAxisLocal = null;
   pointRotateBasisQuat.identity();
   pointRotateBasisQuatStart.identity();
+  pointRotateRelativeQuatStart.identity();
   pointRotateGizmoQuat.identity();
   pointRotateGizmoYaw = 0;
   pointRotateGizmoYawStart = 0;
@@ -14287,26 +14608,29 @@ function ensureRotateGizmo() {
   const ringTube = 0.03;
   const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
 
-  const makeRing = (color, axis) => {
+  const makeRing = (color, axis, euler, radiusScale = 1.0, action = 'rotate_points') => {
+    const ringGeom = radiusScale === 1.0
+      ? geom
+      : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(ringGeom, mat);
     const pick = new THREE.Mesh(
-      geom,
+      ringGeom,
       createRaycastOnlyMaterial()
     );
+    mesh.rotation.set(euler.x, euler.y, euler.z);
+    pick.rotation.set(euler.x, euler.y, euler.z);
     pick.position.y = -GIZMO_PICK_OFFSET;
-    pick.userData = { ...(pick.userData || {}), isRotateGizmo: true, axis };
+    pick.userData = { ...(pick.userData || {}), isRotateGizmo: true, axis, action };
     rotateGizmoGroup.add(mesh);
     rotateGizmoGroup.add(pick);
     rotateGizmoMeshes.push(pick);
-    return mesh;
   };
 
-  const ringX = makeRing(0xff5c5c, new THREE.Vector3(1, 0, 0));
-  ringX.rotation.y = Math.PI / 2;
-  const ringY = makeRing(0x5cff88, new THREE.Vector3(0, 1, 0));
-  ringY.rotation.x = Math.PI / 2;
-  const ringZ = makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1));
+  makeRing(0xff5c5c, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 1.0, 'rotate_points');
+  makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.0, 'rotate_points');
+  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.24, 'rotate_gizmo_y');
+  makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1), new THREE.Euler(0, 0, 0), 1.0, 'rotate_points');
 
   rotateGizmoGroup.visible = false;
   scene.add(rotateGizmoGroup);
@@ -14315,6 +14639,49 @@ function ensureRotateGizmo() {
 function getRotateSelectionMeshes() {
   if (!steelFrameMode?.getSelectedPointMeshes) { return []; }
   return steelFrameMode.getSelectedPointMeshes();
+}
+
+function getRotationPanelAnglesFromQuaternion(quat) {
+  const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
+  return {
+    x: THREE.MathUtils.radToDeg(euler.x),
+    y: THREE.MathUtils.radToDeg(euler.y),
+    z: THREE.MathUtils.radToDeg(euler.z),
+  };
+}
+
+function getRotationPanelAnglesFromTargetQuat(target, quat) {
+  if (isDecorationRotationContext(target)) {
+    const base = getDecorationRotationBaseQuat(target, { ensure: true });
+    const rel = base.clone().invert().multiply(quat.clone()).normalize();
+    return getRotationPanelAnglesFromQuaternion(rel);
+  }
+  return getRotationPanelAnglesFromQuaternion(quat);
+}
+
+function buildDecorationQuatFromPanelAngles(target, panelAngles = { x: 0, y: 0, z: 0 }) {
+  const baseQuat = getDecorationRotationBaseQuat(target, { ensure: true });
+  const degToRad = Math.PI / 180;
+  const xDeg = Number(panelAngles?.x) || 0;
+  const yDeg = Number(panelAngles?.y) || 0;
+  const zDeg = Number(panelAngles?.z) || 0;
+  const rel = new THREE.Quaternion();
+  if (Math.abs(xDeg) > 1e-6) {
+    const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(rel).normalize();
+    const qx = new THREE.Quaternion().setFromAxisAngle(axisX, xDeg * degToRad);
+    rel.copy(qx.multiply(rel)).normalize();
+  }
+  if (Math.abs(yDeg) > 1e-6) {
+    const axisY = new THREE.Vector3(0, 1, 0).applyQuaternion(rel).normalize();
+    const qy = new THREE.Quaternion().setFromAxisAngle(axisY, yDeg * degToRad);
+    rel.copy(qy.multiply(rel)).normalize();
+  }
+  if (Math.abs(zDeg) > 1e-6) {
+    const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(rel).normalize();
+    const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, zDeg * degToRad);
+    rel.copy(qz.multiply(rel)).normalize();
+  }
+  return baseQuat.clone().multiply(rel).normalize();
 }
 
 function ensureScaleGizmo() {
@@ -14344,10 +14711,8 @@ function ensureScaleGizmo() {
     scaleGizmoMeshes.push(pick);
   };
 
-  // 横方向（yaw: Y軸）1本目
+  // 横方向（yaw: Y軸）
   makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0));
-  // 横方向（yaw: Y軸）2本目
-  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.24);
   // 縦方向（pitch: X軸）
   makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0));
   scaleGizmoGroup.visible = false;
@@ -14635,8 +15000,29 @@ function updateRotationSelectionInfo() {
 
 function updateRotateGizmo() {
   ensureRotateGizmo();
+  if (objectEditMode !== ROTATE_MODE) {
+    rotateGizmoGroup.visible = false;
+    updateRotationSelectionInfo();
+    return;
+  }
+  if (pointRotateModeActive && pointRotateTarget?.userData?.decorationType) {
+    rotateGizmoGroup.visible = false;
+    updateRotationSelectionInfo();
+    return;
+  }
+  if (rotateTargetObject?.parent && rotateTargetObject?.quaternion?.isQuaternion) {
+    rotateCenter.copy(rotateTargetObject.position);
+    rotateGizmoGroup.position.copy(rotateCenter);
+    rotateGizmoGroup.quaternion.copy(rotateTargetObject.quaternion);
+    rotateGizmoGroup.scale.setScalar(1.6);
+    rotateGizmoGroup.visible = true;
+    if (rotationInputX) rotationInputX.placeholder = String(Number(rotatePanelState.angles.x || 0).toFixed(1));
+    if (rotationInputY) rotationInputY.placeholder = String(Number(rotatePanelState.angles.y || 0).toFixed(1));
+    if (rotationInputZ) rotationInputZ.placeholder = String(Number(rotatePanelState.angles.z || 0).toFixed(1));
+    return;
+  }
   const meshes = getRotateSelectionMeshes();
-  if (objectEditMode !== ROTATE_MODE || meshes.length < 2) {
+  if (meshes.length < 2) {
     rotateGizmoGroup.visible = false;
     updateRotationSelectionInfo();
     return;
@@ -14673,9 +15059,23 @@ function updateRotateGizmo() {
 }
 
 function beginRotateDrag(axisMesh) {
-  const meshes = ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
-  if (meshes.length < 2) { return; }
-  rotateAxis = axisMesh.userData.axis.clone();
+  const isDecorationRotate = false;
+  const meshes = isDecorationRotate
+    ? [rotateTargetObject]
+    : ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
+  if (meshes.length < (isDecorationRotate ? 1 : 2)) { return; }
+  rotateAxisLocal = axisMesh?.userData?.axis?.clone?.()?.normalize?.() || new THREE.Vector3(0, 1, 0);
+  rotateDragAction = axisMesh?.userData?.action || 'rotate_points';
+  rotatePanelAnglesStart = {
+    x: Number(rotatePanelState?.angles?.x) || 0,
+    y: Number(rotatePanelState?.angles?.y) || 0,
+    z: Number(rotatePanelState?.angles?.z) || 0,
+  };
+  rotateAxis = rotateAxisLocal.clone();
+  if (isDecorationRotate) {
+    rotateAxis.applyQuaternion(rotateTargetObject.quaternion).normalize();
+    rotateTargetStartQuaternion.copy(rotateTargetObject.quaternion);
+  }
   rotateCenter = rotateGizmoGroup.position.clone();
   rotatePlane.setFromNormalAndCoplanarPoint(rotateAxis, rotateCenter);
   raycaster.setFromCamera(mouse, camera);
@@ -14684,6 +15084,13 @@ function beginRotateDrag(axisMesh) {
   if (!ok) { return; }
   rotateStartVector.copy(hit).sub(rotateCenter).normalize();
   rotateStartPositions = meshes.map((m) => ({ mesh: m, pos: m.position.clone() }));
+  // console.log('[rotate-gizmo] begin', {
+  //   isDecorationRotate,
+  //   axisLocal: rotateAxisLocal ? rotateAxisLocal.toArray() : null,
+  //   axisWorld: rotateAxis ? rotateAxis.toArray() : null,
+  //   center: rotateCenter ? rotateCenter.toArray() : null,
+  //   targets: meshes.map((m) => m?.id).filter(Boolean),
+  // });
   rotateDragging = true;
   efficacy = false;
 }
@@ -14697,6 +15104,30 @@ function updateRotateDrag() {
   const cross = new THREE.Vector3().crossVectors(rotateStartVector, current);
   const dot = rotateStartVector.dot(current);
   const angle = Math.atan2(cross.dot(rotateAxis), dot);
+  // console.log('[rotate-gizmo] drag', {
+  //   angleDeg: Number((angle * 180 / Math.PI).toFixed(3)),
+  //   axisWorld: rotateAxis ? rotateAxis.toArray() : null,
+  // });
+  const isDecorationRotate = false;
+  if (isDecorationRotate) {
+    const dq = new THREE.Quaternion().setFromAxisAngle(rotateAxis, angle);
+    rotateTargetObject.quaternion.copy(dq.multiply(rotateTargetStartQuaternion).normalize());
+    const panelAngles = getRotationPanelAnglesFromQuaternion(rotateTargetObject.quaternion);
+    rotatePanelState.angles = panelAngles;
+    rotateTargetObject.userData = {
+      ...(rotateTargetObject.userData || {}),
+      pointRotateBasisQuat: rotateTargetObject.quaternion.toArray(),
+      pointRotateDirection: new THREE.Vector3(0, 0, 1).applyQuaternion(rotateTargetObject.quaternion).normalize(),
+      pointRotatePanelAngles: panelAngles,
+    };
+    if (rotationInputX) { rotationInputX.value = String(panelAngles.x.toFixed(1)); }
+    if (rotationInputY) { rotationInputY.value = String(panelAngles.y.toFixed(1)); }
+    if (rotationInputZ) { rotationInputZ.value = String(panelAngles.z.toFixed(1)); }
+    syncRotationInputGhostHints();
+    rotateTargetObject.updateMatrixWorld(true);
+    updateRotateGizmo();
+    return;
+  }
 
   rotateStartPositions.forEach(({ mesh, pos }) => {
     const offset = pos.clone().sub(rotateCenter);
@@ -14710,6 +15141,36 @@ function updateRotateDrag() {
       }
     }
   });
+  const angleDeg = angle * (180 / Math.PI);
+  const panelAngles = { ...rotatePanelAnglesStart };
+  if (rotateAxisLocal?.x === 1) {
+    panelAngles.x = rotatePanelAnglesStart.x + angleDeg;
+  } else if (rotateAxisLocal?.y === 1) {
+    if (rotateDragAction === 'rotate_gizmo_y') {
+      panelAngles.z = rotatePanelAnglesStart.z + angleDeg;
+    } else {
+      panelAngles.y = rotatePanelAnglesStart.y + angleDeg;
+    }
+  } else if (rotateAxisLocal?.z === 1) {
+    panelAngles.z = rotatePanelAnglesStart.z + angleDeg;
+  }
+  rotatePanelState.angles = panelAngles;
+  if (rotationInputX) {
+    const xText = String(panelAngles.x.toFixed(1));
+    rotationInputX.value = xText;
+    rotationInputX.placeholder = xText;
+  }
+  if (rotationInputY) {
+    const yText = String(panelAngles.y.toFixed(1));
+    rotationInputY.value = yText;
+    rotationInputY.placeholder = yText;
+  }
+  if (rotationInputZ) {
+    const zText = String(panelAngles.z.toFixed(1));
+    rotationInputZ.value = zText;
+    rotationInputZ.placeholder = zText;
+  }
+  syncRotationInputGhostHints();
   // update curves once per drag step
   const curves = new Set();
   rotateStartPositions.forEach(({ mesh }) => {
@@ -15117,11 +15578,16 @@ export function UIevent (uiID, toggle){
     movePointPanelActive = false
     setRotationPanelMode('rotation');
     angleSearchModeActive = false
+    pointRotateModeActive = false
+    clearPointRotateState()
+    rotateTargetObject = null
+    rotatePanelState.idsKey = ''
+    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
     editObject = 'STEEL_FRAME'
     objectEditMode = ROTATE_MODE
     search_object = true
     steelFrameMode.setAllowPointAppend(false)
-    targetObjects = steelFrameMode.getAllPointMeshes()
+    targetObjects = steelFrameMode.getAllPointMeshes().concat(decorationObjects.filter((mesh) => mesh?.parent))
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     updateRotateGizmo()
@@ -15131,6 +15597,11 @@ export function UIevent (uiID, toggle){
   console.log( 'rotation _inactive' )
     angleSearchModeActive = false
     rotateDragging = false
+    pointRotateModeActive = false
+    clearPointRotateState()
+    rotateTargetObject = null
+    rotatePanelState.idsKey = ''
+    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
     if (rotateGizmoGroup) {
       rotateGizmoGroup.visible = false;
     }
