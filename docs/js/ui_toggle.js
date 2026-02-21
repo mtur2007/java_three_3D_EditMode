@@ -225,7 +225,10 @@ const uiTree = {
                   'guide': {
                       'add': '',
                       'change_angle': '',
-                      'miller': '',
+                      'miller': {
+                          'miller_add': '',
+                          'Influence': '',
+                      },
                       'x_z_move': '',
                       'y_add': '',
                   },

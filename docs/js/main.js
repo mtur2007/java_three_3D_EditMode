@@ -615,6 +615,14 @@ const threeUi = document.getElementById('three-ui');
           return g;
         }
       }
+      let fromScene = null;
+      scene.traverse((obj) => {
+        if (fromScene) { return; }
+        if (!obj?.userData?.guideMirrorLocked) { return; }
+        if (!obj?.userData?.guideMirrorCoordFrame || !obj?.userData?.mirroredFromEdge) { return; }
+        fromScene = obj;
+      });
+      if (fromScene) { return fromScene; }
       return null;
     })();
     const frameRaw = guideCoordinateFrameOverride
@@ -669,8 +677,9 @@ const threeUi = document.getElementById('three-ui');
       const hasRefs = Array.isArray(obj?.userData?.steelFrameSegmentPointRefs)
         && obj.userData.steelFrameSegmentPointRefs.length >= 2;
       const isByName = obj?.name === 'SteelFrameSegment';
+      const isSteelFrameNamed = typeof obj?.name === 'string' && obj.name.startsWith('SteelFrame');
       const isByProfile = Boolean(obj?.userData?.steelFrameSegmentProfile);
-      if (!(hasRefs || isByName || isByProfile)) { return; }
+      if (!(hasRefs || isByName || isByProfile || isSteelFrameNamed)) { return; }
       seen.add(obj.id);
       out.push(obj);
     };
@@ -683,6 +692,7 @@ const threeUi = document.getElementById('three-ui');
       if (!obj?.parent) { return; }
       pushUnique(obj);
     });
+    console.log('[mirror][construction] collect segments', { count: out.length });
     return out.filter((obj) => obj?.parent);
   }
 
@@ -1255,12 +1265,27 @@ const threeUi = document.getElementById('three-ui');
     return null;
   }
 
-  function resolveSelectableHitObject(mesh) {
-    const guideGrid = mesh?.userData?.guideAddGrid || null;
-    if (guideGrid) {
-      if (guideGrid?.userData?.guideMirrorLocked) {
-        return null;
+  function resolveGuideGridFromHit(mesh) {
+    if (!mesh) { return null; }
+    if (mesh?.userData?.guideGridPickMesh && mesh?.userData?.guideAddGrid) {
+      return mesh.userData.guideAddGrid;
+    }
+    let cur = mesh;
+    while (cur) {
+      if (cur?.userData?.guideGridPickMesh && cur?.userData?.guideAddGrid) {
+        return cur.userData.guideAddGrid;
       }
+      if (cur?.userData?.guideAddGrid && cur !== mesh) {
+        return cur.userData.guideAddGrid;
+      }
+      cur = cur.parent || null;
+    }
+    return null;
+  }
+
+  function resolveSelectableHitObject(mesh) {
+    const guideGrid = resolveGuideGridFromHit(mesh);
+    if (guideGrid) {
       return guideGrid;
     }
     let decoRoot = mesh?.userData?.decorationRoot || null;
@@ -6011,6 +6036,40 @@ function syncGuidePickMeshFromGrid(grid, pick) {
   pick.updateMatrixWorld(true);
 }
 
+function applyGuideGridHitSpec(grid, pick = null) {
+  if (!grid) { return; }
+  // GridHelper と同じ運用: 可視グリッドではなく専用 pickMesh のみをヒット対象にする。
+  grid.raycast = function noopGuideGridRaycast() {};
+  grid.userData = {
+    ...(grid.userData || {}),
+    guideGridHitSpec: 'pick_only',
+  };
+  if (!pick) { return; }
+  pick.userData = {
+    ...(pick.userData || {}),
+    guideAddGrid: grid,
+    guideGridPickMesh: true,
+  };
+}
+
+function pickGuideGridFromPointer() {
+  const pickTargets = guideAddGridPicks.filter((p) => p?.parent);
+  if (pickTargets.length < 1) { return null; }
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObjects(pickTargets, true)[0] || null;
+  if (!hit?.object) { return null; }
+  return resolveGuideGridFromHit(hit.object);
+}
+
+function pickGuideGridHitFromPointer() {
+  const pickTargets = guideAddGridPicks.filter((p) => p?.parent);
+  if (pickTargets.length < 1) { return { hit: null, grid: null }; }
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObjects(pickTargets, true)[0] || null;
+  const grid = hit?.object ? resolveGuideGridFromHit(hit.object) : null;
+  return { hit, grid };
+}
+
 function isGuideGridEditable(grid) {
   return Boolean(grid) && !Boolean(grid?.userData?.guideMirrorLocked);
 }
@@ -6114,41 +6173,34 @@ function clearGuideAddGridsForImport() {
 function addGuideGridFromState(state) {
   const pos = Array.isArray(state?.position) ? state.position : [0, 0, 0];
   const quat = Array.isArray(state?.quaternion) ? state.quaternion : [0, 0, 0, 1];
-  const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
-  newGrid.name = 'AddPointGuideGridClone';
-  newGrid.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
-  newGrid.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1).normalize();
-  if (state?.changeAnglePanelAngles && typeof state.changeAnglePanelAngles === 'object') {
-    newGrid.userData = {
-      ...(newGrid.userData || {}),
+  const rect = state?.guideRectSize && typeof state.guideRectSize === 'object'
+    ? state.guideRectSize
+    : null;
+  const gridPos = new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+  const gridQuat = new THREE.Quaternion(
+    Number(quat[0]) || 0,
+    Number(quat[1]) || 0,
+    Number(quat[2]) || 0,
+    Number(quat[3]) || 1
+  ).normalize();
+  const stateUserData = (state?.changeAnglePanelAngles && typeof state.changeAnglePanelAngles === 'object')
+    ? {
       changeAnglePanelAngles: {
         x: Number(state.changeAnglePanelAngles.x) || 0,
         y: Number(state.changeAnglePanelAngles.y) || 0,
         z: Number(state.changeAnglePanelAngles.z) || 0,
       },
-    };
-  }
-  const rect = state?.guideRectSize && typeof state.guideRectSize === 'object'
-    ? state.guideRectSize
-    : null;
-  setGuideGridRectSize(
-    newGrid,
-    Number(rect?.width) || ADD_POINT_GRID_SIZE,
-    Number(rect?.height) || ADD_POINT_GRID_SIZE
-  );
-  scene.add(newGrid);
-  guideAddGrids.push(newGrid);
-  const pick = new THREE.Mesh(
-    new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
-    createRaycastOnlyMaterial()
-  );
-  pick.name = 'GuideAddGridPick';
-  syncGuidePickMeshFromGrid(newGrid, pick);
-  pick.userData = { ...pick.userData, guideAddGrid: newGrid };
-  newGrid.userData = { ...(newGrid.userData || {}), pickMesh: pick };
-  applyGuideGridStoredSize(newGrid, pick);
-  scene.add(pick);
-  guideAddGridPicks.push(pick);
+    }
+    : {};
+  createGuideGridWithPick({
+    name: 'AddPointGuideGridClone',
+    color: GUIDE_ADD_GRID_COLOR,
+    position: gridPos,
+    quaternion: gridQuat,
+    width: Number(rect?.width) || ADD_POINT_GRID_SIZE,
+    height: Number(rect?.height) || ADD_POINT_GRID_SIZE,
+    userData: stateUserData,
+  });
 }
 
 console.log(new THREE.Vector3(5.5, y, -50))
@@ -6242,8 +6294,14 @@ let guideRectangleDragAxis = null
 const guideRectangleDragPlane = new THREE.Plane()
 let guideMillerModeActive = false
 let guideMillerSelectedEdge = null
+let guideMillerAddModeActive = false
+let guideMillerInfluenceModeActive = false
 let guideCoordinateFrameOverride = null
 let guideCoordinateEdgeOverride = null
+const guideMillerInfluencePlanes = []
+let guideMillerInfluenceSelectedPlane = null
+let guideMillerInfluenceSelectedGrid = null
+let guideMillerApplyButton = null
 const differenceCsgEvaluator = new Evaluator()
 const differenceCsgOperation = HOLLOW_SUBTRACTION
 let addPointGridActive = false
@@ -9091,32 +9149,73 @@ function clearGuideGridAddPending() {
   guideGridAddShouldCreate = false;
 }
 
-function performGuideGridAddFromPointer() {
-  if (!(editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && guideAddModeActive)) { return false; }
-  const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
-  addPointGridActive = true;
-  setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
-  const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, GUIDE_ADD_GRID_COLOR, GUIDE_ADD_GRID_COLOR);
-  newGrid.name = 'AddPointGuideGridClone';
-  newGrid.position.copy(point);
-  newGrid.quaternion.copy(AddPointGuideGrid.quaternion);
-  setGuideGridRectSize(newGrid, guideRectangleWidth, guideRectangleHeight);
-  applyGuideGridStoredSize(newGrid, null);
-  scene.add(newGrid);
-  guideAddGrids.push(newGrid);
+function createGuideGridWithPick({
+  name = 'AddPointGuideGridClone',
+  color = GUIDE_ADD_GRID_COLOR,
+  display = 'grid',
+  opacity = 0.24,
+  position = new THREE.Vector3(),
+  quaternion = new THREE.Quaternion(),
+  width = ADD_POINT_GRID_SIZE,
+  height = ADD_POINT_GRID_SIZE,
+  userData = {},
+} = {}) {
+  const grid = display === 'plane'
+    ? new THREE.Mesh(
+      createGuidePlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    )
+    : new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, color, color);
+  grid.name = name;
+  grid.position.copy(position);
+  grid.quaternion.copy(quaternion);
+  grid.userData = {
+    ...(grid.userData || {}),
+    guideGridColor: color,
+    guideGridDisplay: display === 'plane' ? 'plane' : 'grid',
+    ...(userData || {}),
+  };
+  setGuideGridRectSize(grid, width, height);
+  applyGuideGridStoredSize(grid, null);
+  scene.add(grid);
+  guideAddGrids.push(grid);
+
   const pick = new THREE.Mesh(
     new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
     createRaycastOnlyMaterial()
   );
   pick.name = 'GuideAddGridPick';
-  syncGuidePickMeshFromGrid(newGrid, pick);
-  pick.userData = { ...pick.userData, guideAddGrid: newGrid };
-  newGrid.userData = { ...newGrid.userData, pickMesh: pick };
-  applyGuideGridStoredSize(newGrid, pick);
+  syncGuidePickMeshFromGrid(grid, pick);
+  applyGuideGridHitSpec(grid, pick);
+  grid.userData = { ...(grid.userData || {}), pickMesh: pick };
+  applyGuideGridStoredSize(grid, pick);
   scene.add(pick);
   guideAddGridPicks.push(pick);
+  return { grid, pick };
+}
+
+function performGuideGridAddFromPointer() {
+  if (!(editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && guideAddModeActive)) { return false; }
+  const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+  addPointGridActive = true;
+  setGuideAddGridColor(AddPointGuideGrid, GUIDE_ADD_GRID_COLOR);
+  const { grid: newGrid, pick } = createGuideGridWithPick({
+    name: 'AddPointGuideGridClone',
+    color: GUIDE_ADD_GRID_COLOR,
+    position: point,
+    quaternion: AddPointGuideGrid.quaternion.clone(),
+    width: guideRectangleWidth,
+    height: guideRectangleHeight,
+  });
   changeAngleGridTarget = newGrid;
   pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
+  console.log('[guide][add] grid created', { id: newGrid.id, x: point.x, y: point.y, z: point.z });
   if (movePlaneMode === 'change_angle') {
     movePlaneAnchor.copy(AddPointGuideGrid.position);
     updateMovePlaneNormal();
@@ -9131,12 +9230,9 @@ function performSteelFrameAddFromPointer() {
   let gridHitPoint = null;
   let gridHitRef = null;
   if (guideAddGridPicks.length > 0) {
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(guideAddGridPicks, true);
-    const hit = hits[0] || null;
+    const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
     if (hit?.point) {
       gridHitPoint = hit.point.clone();
-      const hitGrid = hit.object?.userData?.guideAddGrid || null;
       gridHitRef = hitGrid || null;
       guideAddGrids.forEach((grid) => {
         setGuideAddGridColor(grid, grid === hitGrid ? GUIDE_ADD_GRID_SELECTED_COLOR : GUIDE_ADD_GRID_COLOR);
@@ -11458,9 +11554,19 @@ function createRectGuideGridGeometry(width, height, cellSize = GUIDE_GRID_CELL_S
   return geom;
 }
 
+function createGuidePlaneGeometry(width, height) {
+  const w = Math.max(GUIDE_RECT_MIN_SIZE, Number(width) || ADD_POINT_GRID_SIZE);
+  const h = Math.max(GUIDE_RECT_MIN_SIZE, Number(height) || ADD_POINT_GRID_SIZE);
+  const geom = new THREE.PlaneGeometry(w, h);
+  geom.rotateX(-Math.PI / 2);
+  return geom;
+}
+
 function setGuideGridRectGeometry(grid, width, height) {
   if (!grid) { return; }
-  const nextGeom = createRectGuideGridGeometry(width, height, GUIDE_GRID_CELL_SIZE);
+  const nextGeom = grid?.userData?.guideGridDisplay === 'plane'
+    ? createGuidePlaneGeometry(width, height)
+    : createRectGuideGridGeometry(width, height, GUIDE_GRID_CELL_SIZE);
   grid.geometry?.dispose?.();
   grid.geometry = nextGeom;
   grid.scale.set(1, 1, 1);
@@ -11775,6 +11881,77 @@ function computeGuideMirrorCoordinateFrame(sourceGrid, edge) {
   return { anchor, quat };
 }
 
+function createGuideMirrorContextFromEdge(sourceGrid, edge) {
+  const frame = computeGuideMirrorCoordinateFrame(sourceGrid, edge);
+  if (!frame) { return null; }
+  const axis = (edge === 'left' || edge === 'right') ? 'x' : 'z';
+  return { anchor: frame.anchor, quat: frame.quat, axis, edge };
+}
+
+function getGuideGridWorldCorners(grid) {
+  if (!grid?.localToWorld) { return null; }
+  const size = getGuideGridRectSize(grid);
+  const y = 0;
+  const local = {
+    bl: new THREE.Vector3(-size.width * 0.5, y, -size.height * 0.5),
+    br: new THREE.Vector3(size.width * 0.5, y, -size.height * 0.5),
+    tr: new THREE.Vector3(size.width * 0.5, y, size.height * 0.5),
+    tl: new THREE.Vector3(-size.width * 0.5, y, size.height * 0.5),
+  };
+  grid.updateMatrixWorld(true);
+  return {
+    bl: grid.localToWorld(local.bl.clone()),
+    br: grid.localToWorld(local.br.clone()),
+    tr: grid.localToWorld(local.tr.clone()),
+    tl: grid.localToWorld(local.tl.clone()),
+  };
+}
+
+function computeMirroredGuideRectPoseFromCorners(sourceGrid, context) {
+  if (!sourceGrid || !context) { return null; }
+  const src = getGuideGridWorldCorners(sourceGrid);
+  if (!src) { return null; }
+  const m = {
+    bl: mirrorPointByGuideContext(src.bl, context, 'line'),
+    br: mirrorPointByGuideContext(src.br, context, 'line'),
+    tr: mirrorPointByGuideContext(src.tr, context, 'line'),
+    tl: mirrorPointByGuideContext(src.tl, context, 'line'),
+  };
+  if (!m.bl || !m.br || !m.tr || !m.tl) { return null; }
+
+  const center = m.bl.clone().add(m.br).add(m.tr).add(m.tl).multiplyScalar(0.25);
+  const rightRaw = m.br.clone().sub(m.bl);
+  const forwardRef = m.tl.clone().sub(m.bl);
+  const widthA = rightRaw.length();
+  const widthB = m.tr.clone().sub(m.tl).length();
+  const heightA = forwardRef.length();
+  const heightB = m.tr.clone().sub(m.br).length();
+  if (widthA <= 1e-8 || heightA <= 1e-8) { return null; }
+
+  const right = rightRaw.clone().normalize();
+  const forwardSeed = forwardRef.clone().normalize();
+  let up = new THREE.Vector3().crossVectors(forwardSeed, right);
+  if (up.lengthSq() <= 1e-8) {
+    const fallbackQuat = mirrorQuaternionByGuideContext(sourceGrid.quaternion, context, 'line');
+    up = new THREE.Vector3(0, 1, 0).applyQuaternion(fallbackQuat);
+  }
+  up.normalize();
+  let forward = new THREE.Vector3().crossVectors(right, up).normalize();
+  if (forward.dot(forwardSeed) < 0) {
+    forward.multiplyScalar(-1);
+    up.multiplyScalar(-1);
+  }
+  const quat = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(right, up, forward)
+  ).normalize();
+  return {
+    position: center,
+    quaternion: quat,
+    width: Math.max(GUIDE_RECT_MIN_SIZE, (widthA + widthB) * 0.5),
+    height: Math.max(GUIDE_RECT_MIN_SIZE, (heightA + heightB) * 0.5),
+  };
+}
+
 function computeGuideMirrorBaselineLocalPoints(sourceGrid, mirrorGrid, edge) {
   if (!sourceGrid || !mirrorGrid || !edge) { return null; }
   const size = getGuideGridRectSize(sourceGrid);
@@ -11833,19 +12010,15 @@ function createGuideMirrorGridFromEdge(edge) {
   const source = getGuideRectanglePlaneReference() || AddPointGuideGrid;
   if (!source || !edge) { return null; }
   const size = getGuideGridRectSize(source);
-  const mirrorPos = computeMirroredGuideGridPosition(source, edge);
-  const mirrorQuat = computeGuideMirrorQuaternion(source, edge);
+  const mirrorPosFallback = computeMirroredGuideGridPosition(source, edge);
+  const mirrorQuatFallback = computeGuideMirrorQuaternion(source, edge);
 
-  const newGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, 0xffea00, 0xffea00);
-  newGrid.name = 'GuideMirrorGrid';
-  newGrid.position.copy(mirrorPos);
-  newGrid.quaternion.copy(mirrorQuat);
-  setGuideGridRectSize(newGrid, size.width, size.height);
-  applyGuideGridStoredSize(newGrid, null);
-  const mirrorCoordFrame = computeGuideMirrorCoordinateFrame(source, edge);
-  newGrid.userData = {
-    ...(newGrid.userData || {}),
-    guideGridColor: 0xffea00,
+  const mirrorContext = createGuideMirrorContextFromEdge(source, edge);
+  const mirrorPose = computeMirroredGuideRectPoseFromCorners(source, mirrorContext);
+  const mirrorCoordFrame = mirrorContext
+    ? { anchor: mirrorContext.anchor, quat: mirrorContext.quat }
+    : computeGuideMirrorCoordinateFrame(source, edge);
+  const mirrorUserData = {
     mirroredFromEdge: edge,
     guideMirrorLocked: true,
     guideMirrorCoordFrame: mirrorCoordFrame ? {
@@ -11853,27 +12026,195 @@ function createGuideMirrorGridFromEdge(edge) {
       quat: [mirrorCoordFrame.quat.x, mirrorCoordFrame.quat.y, mirrorCoordFrame.quat.z, mirrorCoordFrame.quat.w],
     } : null,
   };
+  const { grid: newGrid, pick } = createGuideGridWithPick({
+    name: 'GuideMirrorGrid',
+    color: 0xffea00,
+    display: 'plane',
+    opacity: 0.24,
+    position: mirrorPose?.position || mirrorPosFallback,
+    quaternion: mirrorPose?.quaternion || mirrorQuatFallback,
+    width: mirrorPose?.width || size.width,
+    height: mirrorPose?.height || size.height,
+    userData: mirrorUserData,
+  });
   attachGuideMirrorBaselineLine(newGrid, edge, source);
-  scene.add(newGrid);
-  guideAddGrids.push(newGrid);
-
-  const pick = new THREE.Mesh(
-    new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
-    createRaycastOnlyMaterial()
-  );
-  pick.name = 'GuideAddGridPick';
-  syncGuidePickMeshFromGrid(newGrid, pick);
-  pick.userData = { ...pick.userData, guideAddGrid: newGrid };
-  newGrid.userData = { ...(newGrid.userData || {}), pickMesh: pick };
-  applyGuideGridStoredSize(newGrid, pick);
-  scene.add(pick);
-  guideAddGridPicks.push(pick);
-
   setGuideAddGridColor(newGrid, 0xffea00);
   guideCoordinateFrameOverride = newGrid?.userData?.guideMirrorCoordFrame || null;
   guideCoordinateEdgeOverride = newGrid?.userData?.mirroredFromEdge || edge || null;
   pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
   return newGrid;
+}
+
+function ensureGuideMillerApplyButton() {
+  // 要望: 確定ボタンはパネルに表示しない。
+  if (guideMillerApplyButton?.parent) {
+    guideMillerApplyButton.parent.removeChild(guideMillerApplyButton);
+  }
+  guideMillerApplyButton = null;
+}
+
+function updateGuideMillerApplyButtonVisibility() {
+  // no-op: button UI is intentionally hidden
+}
+
+function tryConfirmAndApplyGuideMillerInfluence() {
+  if (!guideMillerModeActive || !guideMillerInfluenceModeActive) { return false; }
+  if (!guideMillerInfluenceSelectedPlane || !guideMillerInfluenceSelectedGrid) { return false; }
+  const ok = window.confirm('反映しますか？');
+  if (!ok) { return false; }
+  const applied = applyInfluenceMirrorFromSelection();
+  if (applied) {
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+  }
+  return applied;
+}
+
+function createGuideMirrorContextFromInfluencePlane(planeMesh) {
+  if (!planeMesh?.position || !planeMesh?.userData?.guideMirrorCoordFrame) { return null; }
+  const frameRaw = planeMesh.userData.guideMirrorCoordFrame;
+  if (!Array.isArray(frameRaw.anchor) || !Array.isArray(frameRaw.quat)) { return null; }
+  const anchor = new THREE.Vector3(
+    Number(frameRaw.anchor[0]) || 0,
+    Number(frameRaw.anchor[1]) || 0,
+    Number(frameRaw.anchor[2]) || 0
+  );
+  const quat = new THREE.Quaternion(
+    Number(frameRaw.quat[0]) || 0,
+    Number(frameRaw.quat[1]) || 0,
+    Number(frameRaw.quat[2]) || 0,
+    Number(frameRaw.quat[3]) || 1
+  ).normalize();
+  const axis = frameRaw.axis === 'x' ? 'x' : 'z';
+  return { anchor, quat, axis, edge: frameRaw.edge || 'influence' };
+}
+
+function mirrorQuaternionByGuideContext(srcQuat, context, mode = 'line') {
+  const sourceQuat = srcQuat?.clone?.().normalize?.() || new THREE.Quaternion();
+  const cQuat = context?.quat?.clone?.().normalize?.() || new THREE.Quaternion();
+  const inv = cQuat.clone().invert();
+  const basis = {
+    x: new THREE.Vector3(1, 0, 0).applyQuaternion(sourceQuat),
+    y: new THREE.Vector3(0, 1, 0).applyQuaternion(sourceQuat),
+    z: new THREE.Vector3(0, 0, 1).applyQuaternion(sourceQuat),
+  };
+  ['x', 'y', 'z'].forEach((k) => {
+    basis[k].applyQuaternion(inv);
+    if (mode === 'point') {
+      basis[k].x *= -1;
+      basis[k].z *= -1;
+    } else if (context.axis === 'x') {
+      basis[k].x *= -1;
+    } else {
+      basis[k].z *= -1;
+    }
+    basis[k].applyQuaternion(cQuat).normalize();
+  });
+  const m = new THREE.Matrix4().makeBasis(basis.x, basis.y, basis.z);
+  return new THREE.Quaternion().setFromRotationMatrix(m).normalize();
+}
+
+function applyInfluenceMirrorFromSelection() {
+  const planeMesh = guideMillerInfluenceSelectedPlane;
+  const sourceGrid = guideMillerInfluenceSelectedGrid;
+  if (!planeMesh || !sourceGrid) { return false; }
+  const context = createGuideMirrorContextFromInfluencePlane(planeMesh);
+  if (!context) { return false; }
+
+  const size = getGuideGridRectSize(sourceGrid);
+  const mirrorPosFallback = mirrorPointByGuideContext(sourceGrid.position, context, 'line');
+  const mirrorQuatFallback = mirrorQuaternionByGuideContext(sourceGrid.quaternion, context, 'line');
+  const mirrorPose = computeMirroredGuideRectPoseFromCorners(sourceGrid, context);
+  const mirrorUserData = {
+    mirroredFromEdge: context.edge || 'influence',
+    guideMirrorLocked: true,
+    guideMirrorCoordFrame: {
+      anchor: [context.anchor.x, context.anchor.y, context.anchor.z],
+      quat: [context.quat.x, context.quat.y, context.quat.z, context.quat.w],
+    },
+  };
+  const { grid: newGrid, pick } = createGuideGridWithPick({
+    name: 'GuideMirrorGrid',
+    color: 0xffea00,
+    display: 'plane',
+    opacity: 0.24,
+    position: mirrorPose?.position || mirrorPosFallback,
+    quaternion: mirrorPose?.quaternion || mirrorQuatFallback,
+    width: mirrorPose?.width || size.width,
+    height: mirrorPose?.height || size.height,
+    userData: mirrorUserData,
+  });
+  setGuideAddGridColor(newGrid, 0xffea00);
+  guideCoordinateFrameOverride = newGrid?.userData?.guideMirrorCoordFrame || null;
+  guideCoordinateEdgeOverride = newGrid?.userData?.mirroredFromEdge || null;
+  pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
+  updateGuideMillerApplyButtonVisibility();
+  return true;
+}
+
+function tryAddGuideMillerInfluencePlaneFromPointer() {
+  if (!guideMillerModeActive || !guideMillerAddModeActive) { return false; }
+  const planeRef = changeAngleGridTarget || AddPointGuideGrid;
+  if (!planeRef) { return false; }
+  const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+  const size = getGuideGridRectSize(planeRef);
+  const { grid: mesh } = createGuideGridWithPick({
+    name: 'GuideMillerInfluencePlane',
+    color: 0x67b7ff,
+    display: 'plane',
+    opacity: 0.22,
+    position: point,
+    quaternion: planeRef.quaternion.clone(),
+    width: size.width,
+    height: size.height,
+    userData: {
+      guideGridColor: 0x67b7ff,
+      guideMirrorLocked: true,
+    },
+  });
+  mesh.renderOrder = 2312;
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    guideMillerInfluencePlane: true,
+    guideMirrorCoordFrame: {
+      anchor: [point.x, point.y, point.z],
+      quat: [planeRef.quaternion.x, planeRef.quaternion.y, planeRef.quaternion.z, planeRef.quaternion.w],
+      axis: 'z',
+      edge: 'influence',
+    },
+  };
+  guideMillerInfluencePlanes.push(mesh);
+  return true;
+}
+
+function trySelectGuideMillerInfluencePlaneFromPointer() {
+  if (!guideMillerModeActive || !guideMillerInfluenceModeActive) { return false; }
+  if (!Array.isArray(guideMillerInfluencePlanes) || guideMillerInfluencePlanes.length < 1) { return false; }
+  const planeMesh = pickGuideGridFromPointer();
+  if (!planeMesh?.userData?.guideMillerInfluencePlane) { return false; }
+  guideMillerInfluenceSelectedPlane = planeMesh;
+  guideMillerInfluencePlanes.forEach((m) => {
+    setGuideAddGridColor(m, m === planeMesh ? 0xffc857 : 0x67b7ff);
+  });
+  updateGuideMillerApplyButtonVisibility();
+  tryConfirmAndApplyGuideMillerInfluence();
+  return true;
+}
+
+function trySelectGuideMillerInfluenceGridFromPointer() {
+  if (!guideMillerModeActive || !guideMillerInfluenceModeActive) { return false; }
+  const grid = pickGuideGridFromPointer();
+  if (!grid || grid?.userData?.guideMillerInfluencePlane) { return false; }
+  guideMillerInfluenceSelectedGrid = grid;
+  changeAngleGridTarget = grid;
+  guideAddGrids.forEach((g) => {
+    if (g?.userData?.guideMillerInfluencePlane) { return; }
+    const baseColor = Number(g?.userData?.guideGridColor) || 0x88aa88;
+    setGuideAddGridColor(g, g === grid ? 0xffb347 : baseColor);
+  });
+  updateGuideMillerApplyButtonVisibility();
+  tryConfirmAndApplyGuideMillerInfluence();
+  return true;
 }
 
 function trySelectGuideMillerEdgeFromPointer() {
@@ -11893,10 +12234,7 @@ function trySelectGuideMillerEdgeFromPointer() {
 
 function trySelectGuideMillerGridFromPointer() {
   if (!guideMillerModeActive) { return false; }
-  if (!Array.isArray(guideAddGridPicks) || guideAddGridPicks.length < 1) { return false; }
-  raycaster.setFromCamera(mouse, camera);
-  const hit = raycaster.intersectObjects(guideAddGridPicks, true)[0] || null;
-  const pickedGrid = hit?.object?.userData?.guideAddGrid || null;
+  const pickedGrid = pickGuideGridFromPointer();
   if (!pickedGrid) { return false; }
   changeAngleGridTarget = pickedGrid;
   guideCoordinateFrameOverride = pickedGrid?.userData?.guideMirrorCoordFrame || null;
@@ -13342,6 +13680,15 @@ async function handleMouseDown() {
   }
   if (guideRectangleModeActive) {
     syncGuideRectangleTransform();
+    if (guideMillerModeActive && guideMillerAddModeActive && tryAddGuideMillerInfluencePlaneFromPointer()) {
+      return;
+    }
+    if (guideMillerModeActive && guideMillerInfluenceModeActive && trySelectGuideMillerInfluencePlaneFromPointer()) {
+      return;
+    }
+    if (guideMillerModeActive && guideMillerInfluenceModeActive && trySelectGuideMillerInfluenceGridFromPointer()) {
+      return;
+    }
     if (guideMillerModeActive && trySelectGuideMillerEdgeFromPointer()) {
       return;
     }
@@ -13363,12 +13710,10 @@ async function handleMouseDown() {
       return;
     }
     if (guideAddGridPicks.length > 0) {
-      const gridHits = raycaster.intersectObjects(guideAddGridPicks, true);
-      const gridHit = gridHits[0] || null;
-      const pickedGrid = gridHit?.object?.userData?.guideAddGrid || null;
-      if (pickedGrid && isGuideGridEditable(pickedGrid)) {
+      const pickedGrid = pickGuideGridFromPointer();
+      if (pickedGrid) {
         changeAngleGridTarget = pickedGrid;
-        // 通常グリッド選択でも、ミラー表示更新のための基準は保持する。
+        // change_angle ではミラーグリッドも選択可能にする。
         if (pickedGrid?.quaternion) {
           movePlaneBasisQuat.copy(pickedGrid.quaternion).normalize();
         } else {
@@ -13512,10 +13857,7 @@ async function handleMouseDown() {
   }
 
   if (objectEditMode === SEARCH_MODE) {
-    raycaster.setFromCamera(mouse, camera);
-    const gridHits = raycaster.intersectObjects(guideAddGridPicks, true);
-    const gridHit = gridHits[0] || null;
-    const pickedGrid = gridHit?.object?.userData?.guideAddGrid || null;
+    const pickedGrid = pickGuideGridFromPointer();
     if (pickedGrid) {
       searchSelectedGrid = pickedGrid;
       guideAddGrids.forEach((grid) => {
@@ -13978,10 +14320,7 @@ async function handleMouseDown() {
       let basisQuat = (changeAngleGridTarget?.quaternion || AddPointGuideGrid?.quaternion || null);
       let basisPlaneRef = changeAngleGridTarget || AddPointGuideGrid || null;
       if (guideAddGridPicks.length > 0) {
-        raycaster.setFromCamera(mouse, camera);
-        const hits = raycaster.intersectObjects(guideAddGridPicks, true);
-        const hit = hits[0] || null;
-        const hitGrid = hit?.object?.userData?.guideAddGrid || null;
+        const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
         if (hit?.point) {
           basePoint = hit.point.clone();
         }
@@ -14076,13 +14415,10 @@ async function handleMouseDown() {
     let gridHitPoint = null;
     let gridHitRef = null;
     if (editObject === 'STEEL_FRAME' && guideAddGridPicks.length > 0) {
-      raycaster.setFromCamera(mouse, camera);
-      const hits = raycaster.intersectObjects(guideAddGridPicks, true);
-      const hit = hits[0] || null;
-      console.log('[grid-hit] count:', hits.length);
+      const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
+      console.log('[grid-hit] count:', hit ? 1 : 0);
       if (hit?.point) {
         gridHitPoint = hit.point.clone();
-        const hitGrid = hit.object?.userData?.guideAddGrid || null;
         gridHitRef = hitGrid || null;
         guideAddGrids.forEach((grid) => {
           setGuideAddGridColor(grid, grid === hitGrid ? GUIDE_ADD_GRID_SELECTED_COLOR : GUIDE_ADD_GRID_COLOR);
@@ -16624,6 +16960,11 @@ export function UIevent (uiID, toggle){
     guideRectangleModeActive = false;
     guideMillerModeActive = false;
     guideMillerSelectedEdge = null;
+    guideMillerAddModeActive = false;
+    guideMillerInfluenceModeActive = false;
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+    updateGuideMillerApplyButtonVisibility();
     endGuideRectangleDrag();
     if (guideRectangleGroup) {
       guideRectangleGroup.visible = false;
@@ -16638,7 +16979,36 @@ export function UIevent (uiID, toggle){
   console.log( 'miller _inactive' )
     guideMillerModeActive = false;
     guideMillerSelectedEdge = null;
+    guideMillerAddModeActive = false;
+    guideMillerInfluenceModeActive = false;
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+    updateGuideMillerApplyButtonVisibility();
     updateGuideRectangleHandlePositions();
+  }} else if ( uiID === 'miller_add' ){ if ( toggle === 'active' ){
+  console.log( 'miller_add _active' )
+    guideMillerAddModeActive = true;
+    guideMillerInfluenceModeActive = false;
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+    updateGuideMillerApplyButtonVisibility();
+  } else {
+  console.log( 'miller_add _inactive' )
+    guideMillerAddModeActive = false;
+    updateGuideMillerApplyButtonVisibility();
+  }} else if ( uiID === 'Influence' ){ if ( toggle === 'active' ){
+  console.log( 'Influence _active' )
+    guideMillerInfluenceModeActive = true;
+    guideMillerAddModeActive = false;
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+    updateGuideMillerApplyButtonVisibility();
+  } else {
+  console.log( 'Influence _inactive' )
+    guideMillerInfluenceModeActive = false;
+    guideMillerInfluenceSelectedPlane = null;
+    guideMillerInfluenceSelectedGrid = null;
+    updateGuideMillerApplyButtonVisibility();
   }} else if ( uiID === 'add' ){ if ( toggle === 'active' ){
   console.log( 'add _active' )
     guideAddModeActive = true;
@@ -16683,9 +17053,9 @@ export function UIevent (uiID, toggle){
     addPointGridY = addPointGridHandle.position.y;
     addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
     AddPointGuideGrid.position.copy(addPointGridHandle.position);
-    targetObjects = [addPointGridHandle].concat(
-      guideAddGridPicks.filter((pick) => isGuideGridEditable(pick?.userData?.guideAddGrid))
-    )
+    targetObjects = guideAddGridPicks
+      .filter((pick) => pick?.userData?.guideAddGrid)
+      .concat([addPointGridHandle])
     setMeshListOpacity(targetObjects, 1)
     search_point()
   } else {
@@ -16720,9 +17090,9 @@ export function UIevent (uiID, toggle){
     addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
     AddPointGuideGrid.position.copy(addPointGridHandle.position);
     // setAddPointGuideGridVisibleFromUI(true);
-    targetObjects = [addPointGridHandle].concat(
-      guideAddGridPicks.filter((pick) => isGuideGridEditable(pick?.userData?.guideAddGrid))
-    )
+    targetObjects = guideAddGridPicks
+      .filter((pick) => pick?.userData?.guideAddGrid)
+      .concat([addPointGridHandle])
     setMeshListOpacity(targetObjects, 1)
     search_point()
   } else {
