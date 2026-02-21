@@ -603,7 +603,9 @@ const threeUi = document.getElementById('three-ui');
       Number(frameRaw.quat[2]) || 0,
       Number(frameRaw.quat[3]) || 1
     ).normalize();
-    const axis = (edge === 'left' || edge === 'right') ? 'x' : 'z';
+    const axis = frameRaw?.axis === 'x'
+      ? 'x'
+      : (edge === 'left' || edge === 'right') ? 'x' : 'z';
     return { anchor, quat, edge, axis };
   }
 
@@ -636,7 +638,9 @@ const threeUi = document.getElementById('three-ui');
       || ''
     );
     if (!frameRaw || !Array.isArray(frameRaw.anchor) || !Array.isArray(frameRaw.quat)) { return null; }
-    if (!['left', 'right', 'top', 'bottom'].includes(edge)) { return null; }
+    const axisFromFrame = frameRaw?.axis === 'x' ? 'x' : frameRaw?.axis === 'z' ? 'z' : null;
+    const edgeSupported = ['left', 'right', 'top', 'bottom', 'influence'].includes(edge);
+    if (!edgeSupported && !axisFromFrame) { return null; }
     const anchor = new THREE.Vector3(
       Number(frameRaw.anchor[0]) || 0,
       Number(frameRaw.anchor[1]) || 0,
@@ -648,7 +652,8 @@ const threeUi = document.getElementById('three-ui');
       Number(frameRaw.quat[2]) || 0,
       Number(frameRaw.quat[3]) || 1
     ).normalize();
-    const axis = (edge === 'left' || edge === 'right') ? 'x' : 'z';
+    const axis = axisFromFrame
+      || ((edge === 'left' || edge === 'right') ? 'x' : 'z');
     return { anchor, quat, edge, axis };
   }
 
@@ -12042,6 +12047,7 @@ function createGuideMirrorGridFromEdge(edge) {
   guideCoordinateFrameOverride = newGrid?.userData?.guideMirrorCoordFrame || null;
   guideCoordinateEdgeOverride = newGrid?.userData?.mirroredFromEdge || edge || null;
   pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
+  refreshSteelFrameMirrorPreviews();
   return newGrid;
 }
 
@@ -12131,6 +12137,7 @@ function applyInfluenceMirrorFromSelection() {
     guideMirrorCoordFrame: {
       anchor: [context.anchor.x, context.anchor.y, context.anchor.z],
       quat: [context.quat.x, context.quat.y, context.quat.z, context.quat.w],
+      axis: context.axis === 'x' ? 'x' : 'z',
     },
   };
   const { grid: newGrid, pick } = createGuideGridWithPick({
@@ -12148,6 +12155,7 @@ function applyInfluenceMirrorFromSelection() {
   guideCoordinateFrameOverride = newGrid?.userData?.guideMirrorCoordFrame || null;
   guideCoordinateEdgeOverride = newGrid?.userData?.mirroredFromEdge || null;
   pushCreateHistory({ type: 'add_guide_grid', grid: newGrid, pick });
+  refreshSteelFrameMirrorPreviews();
   updateGuideMillerApplyButtonVisibility();
   return true;
 }
