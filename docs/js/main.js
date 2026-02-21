@@ -850,9 +850,10 @@ const threeUi = document.getElementById('three-ui');
         skippedNoPoints += 1;
         return;
       }
-      // 構造物ミラーは点対称（点は複製しない）
-      const mirroredStart = mirrorPointByGuideContext(startPos, mirrorContext, 'point');
-      const mirroredEnd = mirrorPointByGuideContext(endPos, mirrorContext, 'point');
+      // 構造物ミラーは基準辺に対する線対称:
+      // 垂直軸のみ反転、平行軸と高さ(y)は維持する。
+      const mirroredStart = mirrorPointByGuideContext(startPos, mirrorContext, 'line');
+      const mirroredEnd = mirrorPointByGuideContext(endPos, mirrorContext, 'line');
       if (!mirroredStart || !mirroredEnd) { return; }
       const clone = cloneObjectVisualTreeWithoutUserData(src);
       if (!clone) { return; }
