@@ -664,6 +664,54 @@
     position: relative;
     width: 100%;
   }
+  #rotation-panel .panel-axis-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  #rotation-panel .panel-axis-row .panel-input-wrap input {
+    padding-right: 8px;
+  }
+  #rotation-panel .panel-axis-tool {
+    width: 24px;
+    height: 24px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    border: 1px solid #c3d0e6;
+    background: #f2f7ff;
+    color: #1f3658;
+    cursor: pointer;
+    padding: 0;
+    flex: 0 0 auto;
+  }
+  #rotation-panel .panel-axis-tool svg {
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+  }
+  #rotation-panel .panel-axis-tool:hover {
+    filter: brightness(0.97);
+  }
+  #rotation-panel .panel-axis-tool.is-picking {
+    border-color: #2b80ff;
+    background: #d9e9ff;
+    box-shadow: 0 0 0 1px rgba(43, 128, 255, 0.35) inset;
+  }
+  #rotation-panel .panel-axis-tool.is-linked {
+    border-color: #a86fff;
+    background: #f2eaff;
+    color: #6232a8;
+  }
+  #rotation-panel .panel-axis-tool.panel-axis-unlink {
+    border-color: #dfc5c5;
+    background: #fff0f0;
+    color: #8b4040;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
   #rotation-panel .panel-input-mask {
     position: absolute;
     top: 50%;
@@ -1162,12 +1210,7 @@
 
               <!-- ランダム立体交差ボタンは非表示に変更 -->
 
-              <div id="frontViewButtons" style="position: fixed; top: 20px; right: 20px; z-index: 100;">
-                <button class="frontViewBtn" data-train="1">1番線</button>
-                <button class="frontViewBtn" data-train="2">2番線</button>
-                <button class="frontViewBtn" data-train="3">3番線</button>
-                <button class="frontViewBtn" data-train="4">4番線</button>
-              </div>
+              <div id="frontViewButtons" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 100;"></div>
 
               <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
 
@@ -1212,24 +1255,51 @@
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
                   <label id="rotation-label-x" style="font-size: 11px; color: #b23b3b;">X (deg)
+                    <div class="panel-axis-row">
                     <div class="panel-input-wrap">
                       <span id="rotation-input-x-mask" class="panel-input-mask"></span>
                       <span id="rotation-input-x-ghost" class="panel-input-ghost">0</span>
                       <input id="rotation-input-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b23b3b; border: 1px solid #e3b5b5;">
                     </div>
+                    <button id="move-point-axis-ref-x" class="panel-axis-tool panel-axis-pick" type="button" title="X参照先を選択">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 4l6 6"></path>
+                        <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                      </svg>
+                    </button>
+                    <button id="move-point-axis-unlink-x" class="panel-axis-tool panel-axis-unlink" type="button" title="X参照解除">x</button>
+                    </div>
                   </label>
                   <label id="rotation-label-y" style="font-size: 11px; color: #2f8f57;">Y (deg)
+                    <div class="panel-axis-row">
                     <div class="panel-input-wrap">
                       <span id="rotation-input-y-mask" class="panel-input-mask"></span>
                       <span id="rotation-input-y-ghost" class="panel-input-ghost">0</span>
                       <input id="rotation-input-y" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f8f57; border: 1px solid #bfe3c9;">
                     </div>
+                    <button id="move-point-axis-ref-y" class="panel-axis-tool panel-axis-pick" type="button" title="Y参照先を選択">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 4l6 6"></path>
+                        <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                      </svg>
+                    </button>
+                    <button id="move-point-axis-unlink-y" class="panel-axis-tool panel-axis-unlink" type="button" title="Y参照解除">x</button>
+                    </div>
                   </label>
                   <label id="rotation-label-z" style="font-size: 11px; color: #2f6fb8;">Y2 (deg)
+                    <div class="panel-axis-row">
                     <div class="panel-input-wrap">
                       <span id="rotation-input-z-mask" class="panel-input-mask"></span>
                       <span id="rotation-input-z-ghost" class="panel-input-ghost">0</span>
                       <input id="rotation-input-z" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #2f6fb8; border: 1px solid #bcd5ee;">
+                    </div>
+                    <button id="move-point-axis-ref-z" class="panel-axis-tool panel-axis-pick" type="button" title="Z参照先を選択">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 4l6 6"></path>
+                        <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                      </svg>
+                    </button>
+                    <button id="move-point-axis-unlink-z" class="panel-axis-tool panel-axis-unlink" type="button" title="Z参照解除">x</button>
                     </div>
                   </label>
                 </div>

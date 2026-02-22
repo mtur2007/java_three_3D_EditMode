@@ -212,6 +212,12 @@ const threeUi = document.getElementById('three-ui');
   const movePointAxisLegend = document.getElementById('move-point-axis-legend');
   const movePointCoordinateWorldBtn = document.getElementById('move-point-coordinate-world');
   const movePointCoordinateGridBtn = document.getElementById('move-point-coordinate-grid');
+  const movePointAxisRefBtnX = document.getElementById('move-point-axis-ref-x');
+  const movePointAxisRefBtnY = document.getElementById('move-point-axis-ref-y');
+  const movePointAxisRefBtnZ = document.getElementById('move-point-axis-ref-z');
+  const movePointAxisUnlinkBtnX = document.getElementById('move-point-axis-unlink-x');
+  const movePointAxisUnlinkBtnY = document.getElementById('move-point-axis-unlink-y');
+  const movePointAxisUnlinkBtnZ = document.getElementById('move-point-axis-unlink-z');
   const operationSection = document.getElementById('operation');
   const previewFeature = document.getElementById('preview-feature');
   const previewStartBtn = document.getElementById('preview-start');
@@ -417,6 +423,10 @@ const threeUi = document.getElementById('three-ui');
   let copyObjectRegistrySeq = 1;
   let steelFrameCopyGroupSeq = 1;
   let movePointCoordinateMode = 'world';
+  const movePointAxisReferences = new Map();
+  let movePointAxisReferencePickAxis = null;
+  const AXES = ['x', 'y', 'z'];
+  const MOVE_POINT_REF_HIGHLIGHT = 0xff66ff;
   let selectedConstructionProfile = null;
   let selectedRailConstructionCategory = null;
   const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
@@ -672,6 +682,60 @@ const threeUi = document.getElementById('three-ui');
       });
     });
     return getMirrorContextFromPoints(points);
+  }
+
+  function getMirrorContextFromGrid(grid) {
+    if (!grid?.userData?.guideMirrorLocked) { return null; }
+    const frameRaw = grid?.userData?.guideMirrorCoordFrame || null;
+    const edge = String(grid?.userData?.mirroredFromEdge || '');
+    if (!frameRaw || !Array.isArray(frameRaw.anchor) || !Array.isArray(frameRaw.quat)) { return null; }
+    const anchor = new THREE.Vector3(
+      Number(frameRaw.anchor[0]) || 0,
+      Number(frameRaw.anchor[1]) || 0,
+      Number(frameRaw.anchor[2]) || 0
+    );
+    const quat = new THREE.Quaternion(
+      Number(frameRaw.quat[0]) || 0,
+      Number(frameRaw.quat[1]) || 0,
+      Number(frameRaw.quat[2]) || 0,
+      Number(frameRaw.quat[3]) || 1
+    ).normalize();
+    const axisFromFrame = frameRaw?.axis === 'x' ? 'x' : frameRaw?.axis === 'z' ? 'z' : null;
+    const axis = axisFromFrame || ((edge === 'left' || edge === 'right') ? 'x' : 'z');
+    return { anchor, quat, edge, axis };
+  }
+
+  function collectMirrorTargetsForPreview() {
+    const targets = [];
+    const seenGridIds = new Set();
+
+    const pushTarget = (grid, sourceGrid = null) => {
+      if (!grid?.parent || seenGridIds.has(grid.id)) { return; }
+      const context = getMirrorContextFromGrid(grid);
+      if (!context) { return; }
+      const resolvedSource = sourceGrid?.parent
+        ? sourceGrid
+        : (resolveMirrorSourceGridFromMirrorGrid(grid) || AddPointGuideGrid);
+      targets.push({
+        grid,
+        sourceGrid: resolvedSource?.parent ? resolvedSource : null,
+        context,
+      });
+      seenGridIds.add(grid.id);
+    };
+
+    if (changeAngleGridTarget?.userData?.guideMirrorLocked) {
+      pushTarget(changeAngleGridTarget, resolveMirrorSourceGridFromActiveSelection());
+    }
+
+    for (let i = guideAddGrids.length - 1; i >= 0; i -= 1) {
+      const grid = guideAddGrids[i];
+      if (!grid?.userData?.guideMirrorLocked) { continue; }
+      if (grid?.userData?.guideMillerInfluencePlane) { continue; }
+      pushTarget(grid);
+    }
+
+    return targets;
   }
 
   function resolveMirrorSourceGridFromActiveSelection() {
@@ -975,25 +1039,25 @@ const threeUi = document.getElementById('three-ui');
 
   function refreshSteelFrameMirrorPreviews() {
     clearSteelFrameMirrorPreviews();
+    const mirrorTargets = collectMirrorTargetsForPreview();
+    let createdTotal = 0;
+
+    if (mirrorTargets.length > 0) {
+      mirrorTargets.forEach((entry) => {
+        const segments = collectAllSteelSegmentsForMirror(entry.sourceGrid);
+        if (segments.length < 1) {
+          return;
+        }
+        createdTotal += createYellowMirrorForConstructionSegments(segments, entry.context);
+      });
+      return createdTotal;
+    }
+
+    // フォールバック: 既存の単一コンテキスト推定。
     const mirrorSourceGrid = resolveMirrorSourceGridFromActiveSelection();
     const segments = collectAllSteelSegmentsForMirror(mirrorSourceGrid);
-    const mirrorContext = getMirrorContextFromActiveSelection()
-      || getMirrorContextFromSegments(segments);
-    if (segments.length < 1) {
-      console.warn('[mirror][construction] skipped: no active steel segments', {
-        filteredBySourceGrid: Boolean(mirrorSourceGrid),
-        sourceGridId: mirrorSourceGrid?.id || null,
-        fromMode: steelFrameMode.getSegmentMeshes ? steelFrameMode.getSegmentMeshes().length : 0,
-        fromSceneByName: getConstructionCopyTargets().length,
-      });
-      return 0;
-    }
-    if (!mirrorContext) {
-      console.warn('[mirror][construction] skipped: mirror context unresolved', {
-        hasGuideFrameOverride: Boolean(guideCoordinateFrameOverride),
-        hasGuideEdgeOverride: Boolean(guideCoordinateEdgeOverride),
-        targetGrid: changeAngleGridTarget?.name || null,
-      });
+    const mirrorContext = getMirrorContextFromActiveSelection() || getMirrorContextFromSegments(segments);
+    if (segments.length < 1 || !mirrorContext) {
       return 0;
     }
     return createYellowMirrorForConstructionSegments(segments, mirrorContext);
@@ -1164,6 +1228,195 @@ const threeUi = document.getElementById('three-ui');
     });
   }
 
+  function isMovePointReferenceCandidate(mesh) {
+    return Boolean(mesh?.userData?.steelFramePoint) || Boolean(mesh?.userData?.decorationType);
+  }
+
+  function getMovePointAxisReferenceEntry(mesh, { create = false } = {}) {
+    if (!mesh) { return null; }
+    if (!movePointAxisReferences.has(mesh)) {
+      if (!create) { return null; }
+      movePointAxisReferences.set(mesh, {});
+    }
+    return movePointAxisReferences.get(mesh);
+  }
+
+  function hasAnyAxisReference(refs) {
+    if (!refs) { return false; }
+    return AXES.some((axis) => Boolean(refs[axis]?.source));
+  }
+
+  function getMovePointAxisReferenceSummary(axis, targets) {
+    if (!Array.isArray(targets) || targets.length < 1) { return null; }
+    const details = [];
+    targets.forEach((mesh) => {
+      const entry = getMovePointAxisReferenceEntry(mesh);
+      const ref = entry?.[axis];
+      if (!ref?.source) { return; }
+      details.push(`${ref.source.id}@${ref.mode === 'grid' ? 'grid' : 'world'}`);
+    });
+    if (details.length < 1) { return null; }
+    const unique = Array.from(new Set(details));
+    if (unique.length === 1) { return unique[0]; }
+    return 'mixed';
+  }
+
+  function isMovePointReferenceSource(mesh) {
+    if (!mesh) { return false; }
+    for (const refs of movePointAxisReferences.values()) {
+      for (const axis of AXES) {
+        if (refs?.[axis]?.source === mesh) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function updateMovePointAxisReferenceButtons() {
+    const isMovePointMode = movePointPanelActive && !scalePointPanelActive;
+    const targets = isMovePointMode ? getMovePointPanelTargets() : [];
+    const pickByAxis = {
+      x: movePointAxisRefBtnX,
+      y: movePointAxisRefBtnY,
+      z: movePointAxisRefBtnZ,
+    };
+    const unlinkByAxis = {
+      x: movePointAxisUnlinkBtnX,
+      y: movePointAxisUnlinkBtnY,
+      z: movePointAxisUnlinkBtnZ,
+    };
+
+    AXES.forEach((axis) => {
+      const pickBtn = pickByAxis[axis];
+      const unlinkBtn = unlinkByAxis[axis];
+      const summary = getMovePointAxisReferenceSummary(axis, targets);
+      const hasLink = Boolean(summary);
+
+      if (pickBtn) {
+        pickBtn.style.display = isMovePointMode ? 'inline-flex' : 'none';
+        pickBtn.classList.toggle('is-picking', isMovePointMode && movePointAxisReferencePickAxis === axis);
+        pickBtn.classList.toggle('is-linked', isMovePointMode && hasLink);
+      }
+      if (unlinkBtn) {
+        unlinkBtn.style.display = isMovePointMode && hasLink ? 'inline-flex' : 'none';
+      }
+    });
+  }
+
+  function beginMovePointAxisReferencePick(axis) {
+    if (!AXES.includes(axis)) { return; }
+    const targets = getMovePointPanelTargets();
+    if (targets.length < 1) {
+      if (rotationSelectionInfo) {
+        rotationSelectionInfo.textContent = '参照先を設定する対象点がありません。先に点を選択してください。';
+      }
+      return;
+    }
+    movePointAxisReferencePickAxis = (movePointAxisReferencePickAxis === axis) ? null : axis;
+    updateMovePointAxisReferenceButtons();
+    if (rotationSelectionInfo && movePointAxisReferencePickAxis) {
+      rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先を選択中: 参照元の点をクリックしてください。`;
+    }
+  }
+
+  function clearMovePointAxisReference(axis, targets = null) {
+    if (!AXES.includes(axis)) { return; }
+    const meshes = Array.isArray(targets) && targets.length > 0
+      ? targets
+      : getMovePointPanelTargets();
+    meshes.forEach((mesh) => {
+      const refs = getMovePointAxisReferenceEntry(mesh);
+      if (!refs) { return; }
+      delete refs[axis];
+      if (!hasAnyAxisReference(refs)) {
+        movePointAxisReferences.delete(mesh);
+      }
+    });
+    if (movePointAxisReferencePickAxis === axis) {
+      movePointAxisReferencePickAxis = null;
+    }
+    updateMovePointAxisReferenceButtons();
+    drawingObject();
+  }
+
+  function assignMovePointAxisReference(axis, sourceMesh, targets = null) {
+    if (!AXES.includes(axis) || !isMovePointReferenceCandidate(sourceMesh)) { return false; }
+    const meshes = Array.isArray(targets) && targets.length > 0
+      ? targets
+      : getMovePointPanelTargets();
+    if (meshes.length < 1) { return false; }
+    meshes.forEach((mesh) => {
+      const refs = getMovePointAxisReferenceEntry(mesh, { create: true });
+      refs[axis] = {
+        source: sourceMesh,
+        mode: movePointCoordinateMode === 'grid' ? 'grid' : 'world',
+      };
+    });
+    movePointAxisReferencePickAxis = null;
+    updateMovePointAxisReferenceButtons();
+    drawingObject();
+    return true;
+  }
+
+  function syncMovePointAxisReferences() {
+    if (movePointAxisReferences.size < 1) { return; }
+    const changedMeshes = [];
+    for (const [targetMesh, refs] of movePointAxisReferences.entries()) {
+      if (!targetMesh?.position || !targetMesh?.parent) {
+        movePointAxisReferences.delete(targetMesh);
+        continue;
+      }
+      let changed = false;
+      AXES.forEach((axis) => {
+        const ref = refs?.[axis];
+        const sourceMesh = ref?.source;
+        if (!sourceMesh?.position || !sourceMesh?.parent) {
+          delete refs[axis];
+          return;
+        }
+        const mode = ref?.mode === 'grid' ? 'grid' : 'world';
+        const sourceAxisValue = getMovePointAxisPosition(sourceMesh, mode)?.[axis];
+        if (!Number.isFinite(sourceAxisValue)) { return; }
+        if (mode === 'grid') {
+          const frame = getMovePointGridFrameForMesh(targetMesh);
+          if (!frame) {
+            if (Math.abs(targetMesh.position[axis] - sourceAxisValue) > 1e-6) {
+              targetMesh.position[axis] = sourceAxisValue;
+              changed = true;
+            }
+            return;
+          }
+          const gridPos = worldToGridPosition(targetMesh.position, frame);
+          if (Math.abs(gridPos[axis] - sourceAxisValue) > 1e-6) {
+            gridPos[axis] = sourceAxisValue;
+            targetMesh.position.copy(gridToWorldPosition(gridPos, frame));
+            changed = true;
+          }
+          return;
+        }
+        if (Math.abs(targetMesh.position[axis] - sourceAxisValue) > 1e-6) {
+          targetMesh.position[axis] = sourceAxisValue;
+          changed = true;
+        }
+      });
+      if (!hasAnyAxisReference(refs)) {
+        movePointAxisReferences.delete(targetMesh);
+      }
+      if (changed) {
+        syncGuideCurveFromPointMesh(targetMesh);
+        changedMeshes.push(targetMesh);
+      }
+    }
+    if (changedMeshes.length > 0) {
+      drawingObject(changedMeshes);
+      if (movePointPanelActive) {
+        updateMovePointPanelUI({ clearInputs: false });
+      }
+    }
+    updateMovePointAxisReferenceButtons();
+  }
+
   function setRotationPanelMode(mode = 'rotation') {
     const isMovePoint = mode === 'move_point';
     const isScalePoint = mode === 'scale_point';
@@ -1209,6 +1462,10 @@ const threeUi = document.getElementById('three-ui');
     if (movePointAxisLegend) {
       movePointAxisLegend.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
     }
+    if (!isMovePoint) {
+      movePointAxisReferencePickAxis = null;
+    }
+    updateMovePointAxisReferenceButtons();
     syncRotationInputGhostHints();
   }
 
@@ -1283,6 +1540,11 @@ const threeUi = document.getElementById('three-ui');
     if (!mesh) { return null; }
     const refId = mesh?.userData?.copyObjectRefId;
     if (!refId) { return mesh; }
+    if (mesh?.parent) {
+      // クリックで選択された実体を常に優先し、レジストリも追従させる。
+      copyObjectRegistry.set(refId, mesh);
+      return mesh;
+    }
     const registered = copyObjectRegistry.get(refId);
     if (registered === mesh) { return mesh; }
     if (registered?.parent) { return registered; }
@@ -1701,6 +1963,8 @@ const threeUi = document.getElementById('three-ui');
           steelFrameCopyGroupId: copiedObjectGroupId || src?.userData?.steelFrameCopyGroupId || null,
           steelFrameCopiedObject: true,
           copyObjectSourceRefId: sourceRefId || null,
+          // 複製元の refId を引き継ぐと選択解決が別オブジェクトへ飛ぶため除去する。
+          copyObjectRefId: null,
         };
       }
       if (!cloned) { return; }
@@ -1779,6 +2043,9 @@ const threeUi = document.getElementById('three-ui');
         return selected.filter((mesh) => Boolean(mesh?.userData?.steelFramePoint));
       }
       if (choice_object?.userData?.steelFramePoint) {
+        return [choice_object];
+      }
+      if (choice_object?.userData?.decorationType) {
         return [choice_object];
       }
       return [];
@@ -1972,6 +2239,9 @@ const threeUi = document.getElementById('three-ui');
     }
 
     if (rotationSelectionInfo) {
+      const xRef = getMovePointAxisReferenceSummary('x', targets) || '-';
+      const yRef = getMovePointAxisReferenceSummary('y', targets) || '-';
+      const zRef = getMovePointAxisReferenceSummary('z', targets) || '-';
       if (targets.length === 0) {
         rotationSelectionInfo.textContent = '選択点: なし\n点をクリックで選択してください。';
       } else if (targets.length === 1) {
@@ -1984,6 +2254,9 @@ const threeUi = document.getElementById('three-ui');
           `x: ${p.x.toFixed(3)}`,
           `y: ${p.y.toFixed(3)}`,
           `z: ${p.z.toFixed(3)}`,
+          `ref x: ${xRef}`,
+          `ref y: ${yRef}`,
+          `ref z: ${zRef}`,
           '入力: 数値=絶対座標 / +=数値=相対移動',
         ].join('\n');
       } else {
@@ -1994,12 +2267,16 @@ const threeUi = document.getElementById('three-ui');
           `x: ${xDisplay}`,
           `y: ${yDisplay}`,
           `z: ${zDisplay}`,
+          `ref x: ${xRef}`,
+          `ref y: ${yRef}`,
+          `ref z: ${zRef}`,
           'グループ入力:',
           '数値 -> その軸を全点に一律適用',
           '+=数値 -> 各点の現在値から加算',
         ].join('\n');
       }
     }
+    updateMovePointAxisReferenceButtons();
     syncRotationInputGhostHints();
   }
 
@@ -2530,6 +2807,34 @@ const threeUi = document.getElementById('three-ui');
       setMovePointCoordinateMode('grid');
     });
   }
+  if (movePointAxisRefBtnX) {
+    movePointAxisRefBtnX.addEventListener('click', () => beginMovePointAxisReferencePick('x'));
+  }
+  if (movePointAxisRefBtnY) {
+    movePointAxisRefBtnY.addEventListener('click', () => beginMovePointAxisReferencePick('y'));
+  }
+  if (movePointAxisRefBtnZ) {
+    movePointAxisRefBtnZ.addEventListener('click', () => beginMovePointAxisReferencePick('z'));
+  }
+  if (movePointAxisUnlinkBtnX) {
+    movePointAxisUnlinkBtnX.addEventListener('click', () => {
+      clearMovePointAxisReference('x');
+      refreshPointEditPanelUI({ clearInputs: true });
+    });
+  }
+  if (movePointAxisUnlinkBtnY) {
+    movePointAxisUnlinkBtnY.addEventListener('click', () => {
+      clearMovePointAxisReference('y');
+      refreshPointEditPanelUI({ clearInputs: true });
+    });
+  }
+  if (movePointAxisUnlinkBtnZ) {
+    movePointAxisUnlinkBtnZ.addEventListener('click', () => {
+      clearMovePointAxisReference('z');
+      refreshPointEditPanelUI({ clearInputs: true });
+    });
+  }
+  updateMovePointAxisReferenceButtons();
   updateMovePointCoordinateButtons();
 
   let guidePlacementTemplate = null;
@@ -13108,6 +13413,10 @@ function resetChoiceObjectColor(mesh) {
     setCopyObjectVisual(mesh, true);
     return;
   }
+  if (isMovePointReferenceSource(mesh)) {
+    setMeshColorSafe(mesh, MOVE_POINT_REF_HIGHLIGHT);
+    return;
+  }
   if (mesh?.userData?.decorationType === 'led_board') {
     if (mesh?.material?.color) {
       mesh.material.color.set(mesh?.userData?.baseColor || 0x1f2228);
@@ -14382,6 +14691,26 @@ async function handleMouseUp(mobile = false) {
     if (shouldToggle) {
       console.log('onerun')
       await onerun_search_point();
+      if (movePointAxisReferencePickAxis) {
+        const axis = movePointAxisReferencePickAxis;
+        const targets = getMovePointPanelTargets();
+        if (!choice_object || !isMovePointReferenceCandidate(choice_object)) {
+          if (rotationSelectionInfo) {
+            rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先にできる点をクリックしてください。`;
+          }
+        } else if (targets.length < 1) {
+          movePointAxisReferencePickAxis = null;
+        } else if (targets.every((mesh) => mesh === choice_object)) {
+          if (rotationSelectionInfo) {
+            rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先は別の点を選択してください。`;
+          }
+        } else if (assignMovePointAxisReference(axis, choice_object, targets)) {
+          syncMovePointAxisReferences();
+          refreshPointEditPanelUI({ clearInputs: true });
+        }
+        shouldToggle = true;
+        return;
+      }
       if (choice_object?.userData?.decorationType === 'led_board') {
         openLedBoardTextEditor(choice_object);
         shouldToggle = true;
@@ -19407,6 +19736,7 @@ function animate() {
     if (scaleArrow) { scaleArrow.visible = false; }
     if (scaleArrowPick) { scaleArrowPick.visible = false; }
   }
+  syncMovePointAxisReferences();
   syncSinjyukuCityVisibility();
 
   renderer.render(scene, camera);
