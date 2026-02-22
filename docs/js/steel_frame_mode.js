@@ -588,6 +588,29 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return true;
   }
 
+  function createSegmentBetweenPoints(startMesh, endMesh, {
+    profile = segmentProfile,
+    style = null,
+    userData = {},
+  } = {}) {
+    const start = startMesh?.position;
+    const end = endMesh?.position;
+    if (!start || !end) { return null; }
+    const resolvedProfile = profile || segmentProfile;
+    const resolvedStyle = normalizeBeamStyle(resolvedProfile, style);
+    const mesh = createSegmentMeshWithProfile(start, end, resolvedProfile, resolvedStyle);
+    if (!mesh) { return null; }
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      ...(userData || {}),
+      steelFrameSegmentPointRefs: [startMesh, endMesh].filter((item) => item?.userData?.steelFramePoint),
+      steelFrameSegmentProfile: resolvedProfile,
+      steelFrameSegmentStyle: resolvedStyle ? { ...resolvedStyle } : null,
+    };
+    addExistingSegmentMesh(mesh);
+    return mesh;
+  }
+
   function removeExistingSegmentMesh(mesh) {
     if (!mesh) { return false; }
     const idx = segmentMeshes.indexOf(mesh);
@@ -856,6 +879,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     restorePointColor,
     addExistingPoint,
     addExistingSegmentMesh,
+    createSegmentBetweenPoints,
     removeExistingSegmentMesh,
     removePointMesh,
     setActive,
