@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { BASE_WORLD_SCALE, LEGACY_TRACK_SOURCE_SCALE } from './scale_config.js';
 
 const TRACK_DATA_URL = 'map_data/track_points.json';
 const TRACK_DATA_VERSION = 1;
 export const ENABLE_MANUAL_DIORAMA_SPACE = false;
 export const USE_SAVED_DATA_ONLY = true;
-const REQUIRED_TRACK_KEYS = [
+const CORE_TRACK_KEYS = [
   'Points_0',
   'Points_1',
   'Points_2',
@@ -68,47 +69,47 @@ function normalizeTrackData(rawData) {
     : defaultFallback;
 
   const tracks = {};
-  REQUIRED_TRACK_KEYS.forEach((name) => {
-    const rawList = rawTracks[name];
+  Object.entries(rawTracks).forEach(([name, rawList]) => {
     if (!Array.isArray(rawList) || !rawList.every(isPlainPoint) || rawList.length < 2) {
-      console.warn(`[track_setup] 不足/不正な点群を補完しました: ${name}`);
-      tracks[name] = pointsToVector3(baseFallback);
+      console.warn(`[track_setup] 不正な点群をスキップしました: ${name}`);
       return;
     }
     tracks[name] = pointsToVector3(rawList);
   });
 
+  // 既存コード互換のため、主要キーは不足時に補完して必ず存在させる。
+  CORE_TRACK_KEYS.forEach((name) => {
+    if (Array.isArray(tracks[name]) && tracks[name].length >= 2) { return; }
+    console.warn(`[track_setup] 不足/不正な点群を補完しました: ${name}`);
+    tracks[name] = pointsToVector3(baseFallback);
+  });
+
   const dataIsScaled = !!(rawData && rawData.meta && rawData.meta.scaled === true);
-  return { tracks, dataIsScaled };
+  const metaScaleRaw = rawData?.meta?.scale;
+  const metaScale = Number.isFinite(metaScaleRaw) && metaScaleRaw > 0 ? Number(metaScaleRaw) : null;
+  const sourceScale = metaScale || (dataIsScaled ? BASE_WORLD_SCALE : LEGACY_TRACK_SOURCE_SCALE);
+  return { tracks, sourceScale };
 }
 
-function buildTrackDataPayload(trackMap) {
+function buildTrackDataPayload(trackMap, scale = BASE_WORLD_SCALE) {
+  const serializedTracks = Object.entries(trackMap || {}).reduce((acc, [name, points]) => {
+    if (!Array.isArray(points) || points.length < 2) { return acc; }
+    acc[name] = pointsToPlain(points);
+    return acc;
+  }, {});
   return {
     meta: {
       version: TRACK_DATA_VERSION,
       scaled: true,
+      scale,
       savedAt: new Date().toISOString(),
     },
-    tracks: {
-      Points_0: pointsToPlain(trackMap.Points_0),
-      Points_1: pointsToPlain(trackMap.Points_1),
-      Points_2: pointsToPlain(trackMap.Points_2),
-      Points_3: pointsToPlain(trackMap.Points_3),
-      JK_upbound_point: pointsToPlain(trackMap.JK_upbound_point),
-      JY_upbound_point: pointsToPlain(trackMap.JY_upbound_point),
-      JY_downbound_point: pointsToPlain(trackMap.JY_downbound_point),
-      JK_downbound_point: pointsToPlain(trackMap.JK_downbound_point),
-      J_UJT_upbound_point: pointsToPlain(trackMap.J_UJT_upbound_point),
-      J_UJT_downbound_point: pointsToPlain(trackMap.J_UJT_downbound_point),
-      sinkansen_upbound_point: pointsToPlain(trackMap.sinkansen_upbound_point),
-      sinkansen_downbound_point: pointsToPlain(trackMap.sinkansen_downbound_point),
-      marunouchi_point: pointsToPlain(trackMap.marunouchi_point),
-    },
+    tracks: serializedTracks,
   };
 }
 
-function downloadTrackData(trackMap) {
-  const payload = buildTrackDataPayload(trackMap);
+function downloadTrackData(trackMap, scale = BASE_WORLD_SCALE) {
+  const payload = buildTrackDataPayload(trackMap, scale);
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -121,21 +122,24 @@ function downloadTrackData(trackMap) {
   alert('track_points.json を保存しました。');
 }
 
-export async function initTrackSetup() {
+export async function initTrackSetup(options = {}) {
+  const {
+    worldScale = BASE_WORLD_SCALE,
+  } = options;
   let trackMap = null;
-  let dataIsScaled = false;
+  let sourceScale = LEGACY_TRACK_SOURCE_SCALE;
   try {
     const trackDataRaw = await loadTrackData(TRACK_DATA_URL);
     const normalized = normalizeTrackData(trackDataRaw);
     trackMap = normalized.tracks;
-    dataIsScaled = normalized.dataIsScaled;
+    sourceScale = normalized.sourceScale;
   } catch (err) {
     alert(err.message);
     throw err;
   }
 
-  const scale = 0.35 / 0.45;
-  if (!dataIsScaled) {
+  const scale = worldScale / sourceScale;
+  if (Math.abs(scale - 1) > 1e-8) {
     Object.keys(trackMap).forEach((name) => {
       trackMap[name].forEach((v) => v.multiplyScalar(scale));
     });
@@ -143,7 +147,7 @@ export async function initTrackSetup() {
 
   const saveTrackButton = document.getElementById('save-track-data');
   if (saveTrackButton) {
-    saveTrackButton.addEventListener('click', () => downloadTrackData(trackMap));
+    saveTrackButton.addEventListener('click', () => downloadTrackData(trackMap, worldScale));
   }
 
   const Points_0 = trackMap.Points_0;
@@ -180,21 +184,11 @@ export async function initTrackSetup() {
   const sinkansen_downbound = new THREE.CatmullRomCurve3(sinkansen_downbound_point);
   const marunouchi = new THREE.CatmullRomCurve3(marunouchi_point);
 
-  const railTrackDefs = [
-    { name: 'Points_0', curve: line_1, points: Points_0 },
-    { name: 'Points_1', curve: line_2, points: Points_1 },
-    { name: 'Points_2', curve: line_3, points: Points_2 },
-    { name: 'Points_3', curve: line_4, points: Points_3 },
-    { name: 'JK_upbound_point', curve: JK_upbound, points: JK_upbound_point },
-    { name: 'JY_upbound_point', curve: JY_upbound, points: JY_upbound_point },
-    { name: 'JY_downbound_point', curve: JY_downbound, points: JY_downbound_point },
-    { name: 'JK_downbound_point', curve: JK_downbound, points: JK_downbound_point },
-    { name: 'J_UJT_upbound_point', curve: J_UJT_upbound, points: J_UJT_upbound_point },
-    { name: 'J_UJT_downbound_point', curve: J_UJT_downbound, points: J_UJT_downbound_point },
-    { name: 'sinkansen_upbound_point', curve: sinkansen_upbound, points: sinkansen_upbound_point },
-    { name: 'sinkansen_downbound_point', curve: sinkansen_downbound, points: sinkansen_downbound_point },
-    { name: 'marunouchi_point', curve: marunouchi, points: marunouchi_point },
-  ];
+  const railTrackDefs = Object.entries(trackMap).map(([name, points]) => ({
+    name,
+    curve: new THREE.CatmullRomCurve3(points),
+    points,
+  }));
 
   const railTrackCurveMap = railTrackDefs.reduce((acc, track) => {
     acc[track.name] = track.curve;

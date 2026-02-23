@@ -496,6 +496,7 @@
     -ms-user-select: none;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
+    touch-action: manipulation;
   }
   .log-control-square-button {
     position: relative;
@@ -517,6 +518,26 @@
     -ms-user-select: none;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
+  }
+  #map-load-status {
+    position: absolute;
+    left: 20px;
+    top: 68px;
+    z-index: 11;
+    min-height: 18px;
+    max-width: min(88vw, 760px);
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(14, 26, 44, 0.62);
+    border: 1px solid rgba(164, 194, 255, 0.22);
+    color: #dfeeff;
+    font-size: 11px;
+    line-height: 1.3;
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ホバー（マウスを乗せたとき）で暗くする */
@@ -1160,6 +1181,22 @@
       width: min(88vw, 640px);
       height: min(34vh, 300px);
     }
+    #save-buttons {
+      max-width: calc(100vw - 24px);
+      flex-wrap: wrap !important;
+      row-gap: 6px;
+    }
+    #save-buttons .control-square-button {
+      min-width: 94px;
+      height: 36px;
+      font-size: 12px !important;
+      padding: 8px !important;
+    }
+    #map-load-status {
+      top: 96px;
+      max-width: calc(100vw - 24px);
+      font-size: 10px;
+    }
   }
 
 </style>
@@ -1221,8 +1258,9 @@
                 <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
                 <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
                 <button id="load-map-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ読込</button>
-                <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json" style="display: none;" />
+                <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json,application/octet-stream,*/*" style="display: none;" />
               </div>
+              <div id="map-load-status" aria-live="polite">map_data: 未実行</div>
 
               <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 420px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
               
@@ -1326,6 +1364,14 @@
                   <button class="construction-card" data-construction-profile="l_beam" type="button" aria-pressed="false">
                     <img alt="L形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='22' y='46' width='76' height='12' fill='%23859bb8'/%3E%3C/svg%3E">
                     <span>L形鋼</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="rect_bar" type="button" aria-pressed="false">
+                    <img alt="角柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='18' width='76' height='36' rx='4' fill='%23859bb8' stroke='%235a6f95' stroke-width='4'/%3E%3C/svg%3E">
+                    <span>角柱</span>
+                  </button>
+                  <button class="construction-card" data-construction-profile="corrugated_bar" type="button" aria-pressed="false">
+                    <img alt="波板柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M10 44 L18 28 L26 44 L34 28 L42 44 L50 28 L58 44 L66 28 L74 44 L82 28 L90 44 L98 28 L106 44' fill='none' stroke='%235a6f95' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M10 52 L18 36 L26 52 L34 36 L42 52 L50 36 L58 52 L66 36 L74 52 L82 36 L90 52 L98 36 L106 52' fill='none' stroke='%23859bb8' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
+                    <span>波板柱</span>
                   </button>
                   <button class="construction-card" data-construction-profile="tubular" type="button" aria-pressed="false">
                     <img alt="ライト管" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='14' y='28' width='92' height='16' rx='8' fill='%23f8fbff' stroke='%239bb8d6' stroke-width='4'/%3E%3Crect x='96' y='26' width='10' height='20' fill='%23d9ebff'/%3E%3C/svg%3E">
@@ -1445,6 +1491,17 @@
                     </div>
                     <div class="guide-name">電光掲示板</div>
                     <div class="guide-meta">文字編集対応</div>
+                  </button>
+                  <button class="guide-card" data-guide-template="rect_spot_light">
+                    <div class="guide-preview" aria-hidden="true">
+                      <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+                        <rect x="36" y="10" width="28" height="20" rx="2" ry="2" fill="#2d323a" stroke="#6d7684" />
+                        <rect x="39" y="16" width="22" height="10" fill="#f5fbff" />
+                        <line x1="50" y1="8" x2="50" y2="14" stroke="#7f8794" stroke-width="2" />
+                      </svg>
+                    </div>
+                    <div class="guide-name">角型ライト</div>
+                    <div class="guide-meta">クリック配置 / 回転可</div>
                   </button>
                 </div>
               </div>

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import { TrainSystem } from './train_system.js';
+import { BASE_WORLD_SCALE, LEGACY_TRACK_SOURCE_SCALE, CITY_BASE_POSITION } from './scale_config.js';
 
 // 必ず three と同バージョンの examples モジュールを使う（あなたは three@0.169 を使っているので合わせる）
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
@@ -10,6 +11,7 @@ export async function WorldCreat(scene, train_width, car_Spacing, options = {}){
 const {
   showMapGlb = true,
   onlyRailAndGround = false,
+  worldScale = BASE_WORLD_SCALE,
 } = options;
 
 // ライト作成
@@ -70,9 +72,13 @@ if (onlyRailAndGround) {
       const root = gltf.scene || gltf.scenes?.[0];
       if (!root) { return; }
       root.rotation.y = 100 * Math.PI / 180;
-      const scale = 0.35;
-      const positionScale = scale / 0.45;
-      root.position.set(145 * positionScale, 40 * positionScale, -175 * positionScale);
+      const scale = worldScale;
+      const positionScale = scale / LEGACY_TRACK_SOURCE_SCALE;
+      root.position.set(
+        CITY_BASE_POSITION.x * positionScale,
+        CITY_BASE_POSITION.y * positionScale,
+        CITY_BASE_POSITION.z * positionScale,
+      );
       root.scale.setScalar(scale);
       root.name = 'sinjyuku_city';
       root.position.y = 0;
@@ -85,8 +91,7 @@ if (onlyRailAndGround) {
       console.error('[world_creat] sinjyuku.glb load failed in onlyRailAndGround mode:', err);
     },
   );
-  console.info('[world_creat] onlyRailAndGround=true: 地面以外のワールド生成をスキップ');
-  return [null, null, null, null];
+  console.info('[world_creat] onlyRailAndGround=true: map.glb / sibuya.glb をスキップして車両モデルのみ読み込みます');
 }
 
 
@@ -213,9 +218,13 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
 
         if (adjustment){
           root.rotation.y = 100 * Math.PI / 180
-          const scale = 0.35
-          const position_scale = scale/0.45
-          root.position.set(145*position_scale,40*position_scale,-175*position_scale)
+          const scale = worldScale;
+          const position_scale = scale / LEGACY_TRACK_SOURCE_SCALE;
+          root.position.set(
+            CITY_BASE_POSITION.x * position_scale,
+            CITY_BASE_POSITION.y * position_scale,
+            CITY_BASE_POSITION.z * position_scale,
+          );
           root.scale.setScalar(scale);
         } else {
           root.position.set(0.5,0,0)
@@ -318,7 +327,7 @@ await loadModelToScene('poll.glb', { autoCenter: true, autoScaleMax: 10000, scal
 
 // --------------- 実行例：model.glb を読み込む ----------------
 // ここのファイル名をあなたの .glb の名前に変えてください
-if (showMapGlb) {
+if (showMapGlb && !onlyRailAndGround) {
   loadModelToScene('map.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
     .then((root) => {
       root.name = 'base_map';
@@ -329,21 +338,27 @@ if (showMapGlb) {
       alert('モデル読み込みに失敗しました。コンソールを確認してください。');
     });
 } else {
-  console.info('[world_creat] showMapGlb=false: map.glb の読み込みをスキップ');
+  if (onlyRailAndGround) {
+    console.info('[world_creat] onlyRailAndGround=true: map.glb の読み込みをスキップ');
+  } else {
+    console.info('[world_creat] showMapGlb=false: map.glb の読み込みをスキップ');
+  }
 }
 
 // creat モード用の都市マップ（map.glb と同じ読み込み方法）
-loadModelToScene('sinjyuku.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
-  .then((root) => {
-    root.name = 'sinjyuku_city';
-    root.position.y = 0;
-    root.visible = Boolean(scene?.userData?.createModeWorldFocused);
-    console.log('GLB loaded and added to scene:', root);
-  })
-  .catch((err) => {
-    console.error('モデルの読み込みで失敗:', err);
-    alert('モデル読み込みに失敗しました。コンソールを確認してください。');
-  });
+if (!onlyRailAndGround) {
+  loadModelToScene('sibuya.glb', { autoCenter: true, autoScaleMax: 10000, scaleIfLarge: 0.001 })
+    .then((root) => {
+      root.name = 'sinjyuku_city';
+      root.position.y = 0;
+      root.visible = Boolean(scene?.userData?.createModeWorldFocused);
+      console.log('GLB loaded and added to scene:', root);
+    })
+    .catch((err) => {
+      console.error('モデルの読み込みで失敗:', err);
+      alert('モデル読み込みに失敗しました。コンソールを確認してください。');
+    });
+}
 
 // --- 駅舎作成 ---
 

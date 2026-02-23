@@ -54,6 +54,30 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
   function getDefaultBeamStyle(profile) {
     const p = String(profile || '').toLowerCase();
+    if (p === 'round') {
+      return {
+        // round は X を直径として扱う。初期半径0.08に合わせて直径0.16。
+        beamWidthHorizontal: 0.16,
+        beamHeightVertical: 0.16,
+        beamThickness: 0.08,
+      };
+    }
+    if (p === 'rect_bar') {
+      return {
+        // rect_bar: X=幅, Y=高さ, Z=角丸半径(R)
+        beamWidthHorizontal: 0.28,
+        beamHeightVertical: 0.28,
+        beamThickness: 0.0,
+      };
+    }
+    if (p === 'corrugated_bar') {
+      return {
+        // corrugated_bar: X=全幅, Y=断面ロール角(度), Z=波密度(幅1あたりの波数)
+        beamWidthHorizontal: 0.8,
+        beamHeightVertical: 0.0,
+        beamThickness: 5.0,
+      };
+    }
     if (p === 'h_beam' || p === 't_beam' || p === 'l_beam') {
       return {
         beamWidthHorizontal: 0.28,
@@ -67,16 +91,36 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   function normalizeBeamStyle(profile, rawStyle = null) {
     const base = getDefaultBeamStyle(profile);
     if (!base) { return null; }
+    const p = String(profile || '').toLowerCase();
     const merged = {
       beamWidthHorizontal: Number(rawStyle?.beamWidthHorizontal),
       beamHeightVertical: Number(rawStyle?.beamHeightVertical),
       beamThickness: Number(rawStyle?.beamThickness),
     };
     const width = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.02, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
+    if (p === 'corrugated_bar') {
+      const angleRaw = Number.isFinite(merged.beamHeightVertical) ? merged.beamHeightVertical : base.beamHeightVertical;
+      let densityRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
+      if (Number.isFinite(merged.beamThickness) && merged.beamThickness < 0.3) {
+        // 旧データ(板厚)との互換: 低すぎる値は波密度既定値に寄せる
+        densityRaw = base.beamThickness;
+      }
+      return {
+        beamWidthHorizontal: width,
+        beamHeightVertical: THREE.MathUtils.clamp(angleRaw, -180, 180),
+        beamThickness: THREE.MathUtils.clamp(densityRaw, 0.5, 24),
+      };
+    }
     const height = Number.isFinite(merged.beamHeightVertical) ? Math.max(0.02, merged.beamHeightVertical) : base.beamHeightVertical;
-    const maxThickness = Math.max(0.01, Math.min(width, height) * 0.45);
+    const maxThickness = (p === 'rect_bar')
+      ? Math.max(0, Math.min(width, height) * 0.5)
+      : Math.max(0.01, Math.min(width, height) * 0.45);
     const thicknessRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
-    const thickness = THREE.MathUtils.clamp(thicknessRaw, 0.01, maxThickness);
+    const thickness = THREE.MathUtils.clamp(
+      thicknessRaw,
+      p === 'rect_bar' ? 0 : 0.01,
+      maxThickness,
+    );
     return {
       beamWidthHorizontal: width,
       beamHeightVertical: height,
@@ -135,12 +179,15 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     }
   }
 
-  function createRoundBarSegmentMesh(start, end) {
+  function createRoundBarSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
-    const geometry = new THREE.CylinderGeometry(0.08, 0.08, len, 10);
+    const dims = normalizeBeamStyle('round', style);
+    const diameter = Number(dims?.beamWidthHorizontal);
+    const radius = Number.isFinite(diameter) ? Math.max(0.01, diameter * 0.5) : 0.08;
+    const geometry = new THREE.CylinderGeometry(radius, radius, len, 10);
     const material = createCreatStandardMaterial(0x8a8f98);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = segmentName;
@@ -151,6 +198,132 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       new THREE.Vector3(0, 1, 0),
       dir.clone().normalize(),
     );
+    mesh.visible = active;
+    return mesh;
+  }
+
+  function createRoundedRectProfileShape(width, height, radius) {
+    const hw = width * 0.5;
+    const hh = height * 0.5;
+    const r = THREE.MathUtils.clamp(radius, 0, Math.min(hw, hh));
+    const shape = new THREE.Shape();
+    if (r <= 1e-6) {
+      shape.moveTo(-hw, -hh);
+      shape.lineTo(hw, -hh);
+      shape.lineTo(hw, hh);
+      shape.lineTo(-hw, hh);
+      shape.lineTo(-hw, -hh);
+      return shape;
+    }
+    shape.moveTo(-hw + r, -hh);
+    shape.lineTo(hw - r, -hh);
+    shape.absarc(hw - r, -hh + r, r, -Math.PI / 2, 0, false);
+    shape.lineTo(hw, hh - r);
+    shape.absarc(hw - r, hh - r, r, 0, Math.PI / 2, false);
+    shape.lineTo(-hw + r, hh);
+    shape.absarc(-hw + r, hh - r, r, Math.PI / 2, Math.PI, false);
+    shape.lineTo(-hw, -hh + r);
+    shape.absarc(-hw + r, -hh + r, r, Math.PI, Math.PI * 1.5, false);
+    return shape;
+  }
+
+  function createRectBarSegmentMesh(start, end, style = null) {
+    const dir = end.clone().sub(start);
+    const len = dir.length();
+    if (len < 0.001) { return null; }
+
+    const dims = normalizeBeamStyle('rect_bar', style);
+    const width = Number(dims?.beamWidthHorizontal) || 0.28;
+    const height = Number(dims?.beamHeightVertical) || 0.28;
+    const roundR = Number(dims?.beamThickness) || 0;
+    const profileShape = createRoundedRectProfileShape(width, height, roundR);
+    const geometry = new THREE.ExtrudeGeometry(profileShape, {
+      depth: len,
+      bevelEnabled: false,
+      curveSegments: Math.max(4, roundR > 1e-6 ? 10 : 1),
+      steps: 1,
+    });
+    // ExtrudeGeometry depth is +Z from 0..len, center it around origin.
+    geometry.translate(0, 0, -len * 0.5);
+    const material = createCreatStandardMaterial(0x8a8f98);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = segmentName;
+
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    mesh.position.copy(mid);
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      dir.clone().normalize(),
+    );
+    mesh.visible = active;
+    return mesh;
+  }
+
+  function createCorrugatedProfileShape(width, waveHeight, waveDensity = 5) {
+    const safeW = Math.max(0.02, Number(width) || 0.8);
+    const safeH = Math.max(0.02, Number(waveHeight) || 0.22);
+    const halfW = safeW * 0.5;
+    const halfH = safeH * 0.5;
+    const t = THREE.MathUtils.clamp(safeH * 0.28, 0.01, Math.max(0.01, safeH * 0.45));
+    const amp = Math.max(0.001, halfH - (t * 0.5));
+    const density = THREE.MathUtils.clamp(Number(waveDensity) || 5, 0.5, 24);
+    const waves = Math.max(1, Math.round(safeW * density));
+    const samples = Math.max(24, waves * 18);
+    const shape = new THREE.Shape();
+
+    const xAt = (i) => -halfW + (safeW * (i / samples));
+    const phaseAt = (i) => ((i / samples) * waves * Math.PI * 2);
+    const centerYAt = (i) => Math.sin(phaseAt(i)) * amp;
+    const topYAt = (i) => centerYAt(i) + (t * 0.5);
+    const bottomYAt = (i) => centerYAt(i) - (t * 0.5);
+
+    shape.moveTo(xAt(0), topYAt(0));
+    for (let i = 1; i <= samples; i += 1) {
+      shape.lineTo(xAt(i), topYAt(i));
+    }
+    for (let i = samples; i >= 0; i -= 1) {
+      shape.lineTo(xAt(i), bottomYAt(i));
+    }
+    shape.closePath();
+    return shape;
+  }
+
+  function createCorrugatedBarSegmentMesh(start, end, style = null) {
+    const dir = end.clone().sub(start);
+    const len = dir.length();
+    if (len < 0.001) { return null; }
+
+    const dims = normalizeBeamStyle('corrugated_bar', style);
+    const width = Number(dims?.beamWidthHorizontal) || 0.8;
+    const rollDeg = Number(dims?.beamHeightVertical) || 0;
+    const waveDensity = Number(dims?.beamThickness) || 5;
+    const fixedWaveHeight = 0.22;
+    const profileShape = createCorrugatedProfileShape(width, fixedWaveHeight, waveDensity);
+    const geometry = new THREE.ExtrudeGeometry(profileShape, {
+      depth: len,
+      bevelEnabled: false,
+      curveSegments: 20,
+      steps: 1,
+    });
+    geometry.translate(0, 0, -len * 0.5);
+    const material = createCreatStandardMaterial(0xf2f6ff);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = segmentName;
+
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    mesh.position.copy(mid);
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      dir.clone().normalize(),
+    );
+    if (Math.abs(rollDeg) > 1e-6) {
+      const rollQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 0, 1),
+        THREE.MathUtils.degToRad(rollDeg),
+      );
+      // 点-点軸(ローカルZ)周りに断面を回転。
+      mesh.quaternion.multiply(rollQuat);
+    }
     mesh.visible = active;
     return mesh;
   }
@@ -316,6 +489,12 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     if (profile === 'tubular') {
       return createTubularLightSegmentMesh(start, end);
     }
+    if (profile === 'rect_bar') {
+      return createRectBarSegmentMesh(start, end, style);
+    }
+    if (profile === 'corrugated_bar') {
+      return createCorrugatedBarSegmentMesh(start, end, style);
+    }
     if (profile === 'h_beam') {
       return createHBeamSegmentMesh(start, end, style);
     }
@@ -325,7 +504,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     if (profile === 'l_beam') {
       return createLBeamSegmentMesh(start, end, style);
     }
-    return createRoundBarSegmentMesh(start, end);
+    return createRoundBarSegmentMesh(start, end, style);
   }
 
   function createSegmentMeshWithProfile(start, end, profile, style = null) {
@@ -853,6 +1032,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       segmentProfile = 't_beam';
     } else if (profile === 'l_beam') {
       segmentProfile = 'l_beam';
+    } else if (profile === 'rect_bar') {
+      segmentProfile = 'rect_bar';
+    } else if (profile === 'corrugated_bar') {
+      segmentProfile = 'corrugated_bar';
     } else if (profile === 'tubular') {
       segmentProfile = 'tubular';
     } else {
