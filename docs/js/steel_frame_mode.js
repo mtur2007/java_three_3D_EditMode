@@ -15,7 +15,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   let active = false;
   let generated = false;
   let allowPointAppend = false;
-  const createPointScale = 0.5;
+  const createPointScale = 0.1;
   let forcedCreatEnvMap = null;
 
   function getDefaultPointColor(mesh) {
@@ -97,7 +97,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       beamHeightVertical: Number(rawStyle?.beamHeightVertical),
       beamThickness: Number(rawStyle?.beamThickness),
     };
-    const width = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.02, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
+    const width = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.01, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
     if (p === 'corrugated_bar') {
       const angleRaw = Number.isFinite(merged.beamHeightVertical) ? merged.beamHeightVertical : base.beamHeightVertical;
       let densityRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
@@ -186,7 +186,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
     const dims = normalizeBeamStyle('round', style);
     const diameter = Number(dims?.beamWidthHorizontal);
-    const radius = Number.isFinite(diameter) ? Math.max(0.01, diameter * 0.5) : 0.08;
+    const radius = Number.isFinite(diameter) ? Math.max(0.005, diameter * 0.5) : 0.08;
     const geometry = new THREE.CylinderGeometry(radius, radius, len, 10);
     const material = createCreatStandardMaterial(0x8a8f98);
     const mesh = new THREE.Mesh(geometry, material);
@@ -264,7 +264,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const safeH = Math.max(0.02, Number(waveHeight) || 0.22);
     const halfW = safeW * 0.5;
     const halfH = safeH * 0.5;
-    const t = THREE.MathUtils.clamp(safeH * 0.28, 0.01, Math.max(0.01, safeH * 0.45));
+    // 波高は維持したまま、板そのものの肉厚だけを薄くする。
+    const t = THREE.MathUtils.clamp(safeH * 0.16, 0.006, Math.max(0.006, safeH * 0.30));
     const amp = Math.max(0.001, halfH - (t * 0.5));
     const density = THREE.MathUtils.clamp(Number(waveDensity) || 5, 0.5, 24);
     const waves = Math.max(1, Math.round(safeW * density));
@@ -297,7 +298,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const width = Number(dims?.beamWidthHorizontal) || 0.8;
     const rollDeg = Number(dims?.beamHeightVertical) || 0;
     const waveDensity = Number(dims?.beamThickness) || 5;
-    const fixedWaveHeight = 0.22;
+    const fixedWaveHeight = 0.14;
     const profileShape = createCorrugatedProfileShape(width, fixedWaveHeight, waveDensity);
     const geometry = new THREE.ExtrudeGeometry(profileShape, {
       depth: len,
@@ -722,6 +723,9 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       steelFrameLine: safeLine,
       steelFrameCopied: Boolean(mesh?.userData?.steelFrameCopied),
     };
+    if (mesh?.scale?.setScalar) {
+      mesh.scale.setScalar(createPointScale);
+    }
     setPointColor(mesh, isSelectedPoint(mesh) ? selectedPointColor : getDefaultPointColor(mesh));
     mesh.visible = active;
     if (!mesh.parent) {

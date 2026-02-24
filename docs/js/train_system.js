@@ -2,6 +2,10 @@
 
 import * as THREE from 'three';
 
+const PILLAR_STEEL_COLOR = 0x5f6670;
+const PILLAR_STEEL_METALNESS = 0.28;
+const PILLAR_STEEL_ROUGHNESS = 0.72;
+
 export class TrainSystem {
   constructor(scene, light) {
     this.scene = scene;
@@ -528,9 +532,9 @@ export class TrainSystem {
 
   //物体を生成する補助関数
   createBoxBetweenPoints3D(p1, p2, thickness, depth, material = new THREE.MeshStandardMaterial({//color: 0x3399cc 
-    color: 0xaaaaaa,      // 暗めのグレー（鉄色）
-    // metalness: 0.8,       // 金属光沢最大
-    // roughness: 0.1,       // 少しザラザラ（低くするとツルツル）
+    color: PILLAR_STEEL_COLOR,
+    metalness: PILLAR_STEEL_METALNESS,
+    roughness: PILLAR_STEEL_ROUGHNESS,
     // envMapIntensity: 1.0,    // 環境マップの反射強度（envMapを使うなら）
     side: THREE.FrontSide,
   })
@@ -756,8 +760,10 @@ export class TrainSystem {
   createBridgePillar(x, z, height = 5) {
     const geometry = new THREE.BoxGeometry(0.7, height, 0.35);
     const material = new THREE.MeshStandardMaterial({ 
-      color: 0x999999,
-      side: THREE.FrontSide
+      color: PILLAR_STEEL_COLOR,
+      metalness: PILLAR_STEEL_METALNESS,
+      roughness: PILLAR_STEEL_ROUGHNESS,
+      side: THREE.FrontSide,
     });
     const pillar = new THREE.Mesh(geometry, material);
     pillar.position.set(x, height / 2, z);
@@ -1940,9 +1946,9 @@ export class TrainSystem {
     const board_xlen = (Side_len/rotation_x_len)*rotation_x_len+rotation_x_len
     const boardGeometry = new THREE.BoxGeometry(board_xlen, 0.02, 0.01);
     const poleMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xaaaaaa,
-      metalness: 1,   // 金属っぽさ（0〜1）
-      roughness: 0.6,   // 表面の粗さ（0：つるつる、1：ザラザラ）
+      color: PILLAR_STEEL_COLOR,
+      metalness: PILLAR_STEEL_METALNESS,
+      roughness: PILLAR_STEEL_ROUGHNESS,
       envMapIntensity: 1,    // 環境マップの反射強度（envMapを使うなら）
       side: THREE.FrontSide
      });
@@ -2207,7 +2213,15 @@ export class TrainSystem {
       const radius_1 = Math.sqrt(corner_1.x**2 + corner_1.z**2)
   
       const geometry = new THREE.BoxGeometry(0.15, 1.4, 0.15);
-      const roofpillar = new THREE.InstancedMesh(geometry, new THREE.MeshStandardMaterial({color: 0xaaaaaa}), 4);
+      const roofpillar = new THREE.InstancedMesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: PILLAR_STEEL_COLOR,
+          metalness: PILLAR_STEEL_METALNESS,
+          roughness: PILLAR_STEEL_ROUGHNESS,
+        }),
+        4
+      );
       roofpillar.position.x = middle_0.x-corner_1.x/2
       roofpillar.position.y = y-0.2
       roofpillar.position.z = middle_0.z-corner_1.z/2

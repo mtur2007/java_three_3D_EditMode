@@ -912,8 +912,10 @@
   #rail-construction-panel {
     position: fixed;
     right: 20px;
-    top: 520px;
+    top: 120px;
     width: 320px;
+    max-height: calc(100vh - 140px);
+    overflow: auto;
     padding: 12px;
     background: rgba(255,255,255,0.92);
     border-radius: 10px;
@@ -966,6 +968,50 @@
     line-height: 1.2;
     color: #2c405a;
   }
+  #rail-construction-group-row {
+    display: none;
+    margin-bottom: 8px;
+  }
+  #rail-construction-offset-row {
+    display: none;
+    margin-bottom: 8px;
+  }
+  #rail-construction-offset-row .offset-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  #rail-construction-offset-row label {
+    display: block;
+    font-size: 11px;
+    color: #2b3f57;
+    margin-bottom: 4px;
+  }
+  #rail-construction-offset-row input {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(153, 183, 231, 0.65);
+    background: #f6faff;
+    color: #203149;
+    padding: 6px 8px;
+    font-size: 12px;
+    box-sizing: border-box;
+  }
+  #rail-construction-group-row label {
+    display: block;
+    font-size: 11px;
+    color: #2b3f57;
+    margin-bottom: 4px;
+  }
+  #rail-construction-group-select {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(153, 183, 231, 0.65);
+    background: #f6faff;
+    color: #203149;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
   #rail-construction-generate-button {
     width: 100%;
     border-radius: 8px;
@@ -982,6 +1028,85 @@
     font-size: 10px;
     line-height: 1.4;
     color: #4a5f78;
+  }
+  #group-mode-panel {
+    position: fixed;
+    right: 20px;
+    top: 520px;
+    width: 300px;
+    padding: 12px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    z-index: 10003;
+    display: none;
+    pointer-events: auto;
+    border: 1px solid rgba(170, 200, 250, 0.3);
+    color: #1a2533;
+  }
+  #group-mode-panel .group-mode-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #group-mode-panel .group-mode-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  #group-mode-panel label {
+    font-size: 11px;
+    color: #2b3f57;
+  }
+  #group-mode-track-select {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(153, 183, 231, 0.65);
+    background: #f6faff;
+    color: #203149;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  #group-mode-id-select {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(153, 183, 231, 0.65);
+    background: #f6faff;
+    color: #203149;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  #group-mode-create-button,
+  #group-mode-arrange-button,
+  #group-mode-append-button {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(160, 194, 252, 0.45);
+    background: linear-gradient(135deg, #2a84ff, #246fd9);
+    color: #fff;
+    cursor: pointer;
+    padding: 7px 8px;
+    font-size: 12px;
+  }
+  #group-mode-arrange-button {
+    margin-top: 6px;
+  }
+  #group-mode-append-button {
+    margin-top: 6px;
+  }
+  #group-mode-create-button:disabled,
+  #group-mode-arrange-button:disabled,
+  #group-mode-append-button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  #group-mode-status {
+    margin: 8px 0 0;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #4a5f78;
+    white-space: pre-line;
   }
 
   .edit-guide {
@@ -1258,6 +1383,7 @@
                 <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
                 <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
                 <button id="load-map-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ読込</button>
+                <button id="load-map-data-append-group" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">グループ追加読込</button>
                 <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json,application/octet-stream,*/*" style="display: none;" />
               </div>
               <div id="map-load-status" aria-live="polite">map_data: 未実行</div>
@@ -1417,9 +1543,57 @@
                     <img alt="tunnel_rect" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M24 52 L24 20 L96 20 L96 52' fill='none' stroke='%2358789f' stroke-width='7'/%3E%3C/svg%3E">
                     <span>tunnel_rect</span>
                   </button>
+                  <button class="rail-construction-card" data-rail-construction-category="platform" type="button" aria-pressed="false">
+                    <img alt="platform" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='12' y1='24' x2='108' y2='24' stroke='%235f7898' stroke-width='4'/%3E%3Cline x1='12' y1='52' x2='108' y2='52' stroke='%235f7898' stroke-width='4'/%3E%3Crect x='20' y='32' width='80' height='12' fill='%238a949f'/%3E%3C/svg%3E">
+                    <span>platform</span>
+                  </button>
+                  <button class="rail-construction-card" data-rail-construction-category="group" type="button" aria-pressed="false">
+                    <img alt="group" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='18' y='20' width='24' height='24' rx='4' fill='%2378a6e6'/%3E%3Crect x='48' y='14' width='24' height='24' rx='4' fill='%236a95d2'/%3E%3Crect x='78' y='26' width='24' height='24' rx='4' fill='%235b85be'/%3E%3Cline x1='42' y1='32' x2='48' y2='26' stroke='%234f6e90' stroke-width='3'/%3E%3Cline x1='72' y1='26' x2='78' y2='32' stroke='%234f6e90' stroke-width='3'/%3E%3C/svg%3E">
+                    <span>group</span>
+                  </button>
+                </div>
+                <div id="rail-construction-group-row">
+                  <label for="rail-construction-group-select">グループID</label>
+                  <select id="rail-construction-group-select"></select>
+                </div>
+                <div id="rail-construction-offset-row">
+                  <div class="offset-grid">
+                    <div>
+                      <label for="rail-construction-lateral-offset">線路からの横オフセット</label>
+                      <input id="rail-construction-lateral-offset" type="number" step="0.1" value="0">
+                    </div>
+                    <div>
+                      <label for="rail-construction-vertical-offset">上下オフセット(Y)</label>
+                      <input id="rail-construction-vertical-offset" type="number" step="0.1" value="0">
+                    </div>
+                    <div>
+                      <label for="rail-construction-yaw-offset">角度オフセット(度)</label>
+                      <input id="rail-construction-yaw-offset" type="number" step="1" value="0">
+                    </div>
+                    <div>
+                      <label for="rail-construction-spacing">間隔(最小)</label>
+                      <input id="rail-construction-spacing" type="number" step="0.1" min="0" value="0">
+                    </div>
+                  </div>
                 </div>
                 <button id="rail-construction-generate-button" type="button">選択カテゴリで生成</button>
                 <p id="rail-construction-status">ピンを選択し、カテゴリを選んで生成します。</p>
+              </div>
+
+              <div id="group-mode-panel" role="region" aria-label="group mode panel">
+                <div class="group-mode-title">Group Mode</div>
+                <div class="group-mode-row">
+                  <label for="group-mode-track-select">路線</label>
+                  <select id="group-mode-track-select"></select>
+                </div>
+                <div class="group-mode-row">
+                  <label for="group-mode-id-select">既存グループID</label>
+                  <select id="group-mode-id-select"></select>
+                </div>
+                <button id="group-mode-create-button" type="button">グループ化</button>
+                <button id="group-mode-append-button" type="button">選択グループに追加</button>
+                <button id="group-mode-arrange-button" type="button">等間隔配置</button>
+                <p id="group-mode-status">構造物をクリックして選択してください。</p>
               </div>
 
               <div id="guide-window" role="region" aria-label="配置ガイド">
@@ -1521,6 +1695,19 @@
                     <option value="smooth">補完（smooth）</option>
                     <option value="linear">直線（linear）</option>
                   </select>
+                </div>
+                <div class="difference-row">
+                  <label for="difference-line">line</label>
+                  <select id="difference-line" multiple size="6">
+                    <option value="all">全路線</option>
+                  </select>
+                </div>
+                <div class="difference-row">
+                  <label for="difference-line-height">line高さ</label>
+                  <div style="display:flex; gap:6px; width:100%;">
+                    <input id="difference-line-height" type="number" min="0.2" step="0.1" value="2.8" style="flex:1;" />
+                    <button id="difference-line-height-apply" type="button" style="padding:4px 8px;">適用</button>
+                  </div>
                 </div>
                 <p id="difference-status">spaceで平面を配置すると半透明プレビューを表示します。</p>
               </div>

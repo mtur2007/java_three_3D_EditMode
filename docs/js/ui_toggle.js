@@ -203,7 +203,7 @@ const uiTree = {
     'edit': {
         'rail': {
             'new': '',
-            'move': { 'x_z': '', 'y': '' },
+            'move': { 'x_z': '', 'y': '', 'rotation_rail': '' },
             'structure': {
                 'new': '',
                 'construction': {
@@ -214,6 +214,8 @@ const uiTree = {
                     'pillar': '',
                     'rib_bridge': '',
                     'tunnel_rect': '',
+                    'platform': '',
+                    'group_rail': '',
                 },
             },
         },
@@ -237,6 +239,7 @@ const uiTree = {
               'search': '',
               'move_point': { 'x_z_sf': '', 'y_sf': '', 'rotation': '', 'scale': '' },
               'copy': '',
+              'group': '',
               'style': '',
               'construction': {
                   'pillar': { 'Round_bar': '', 'H_beam': '', 'T_beam': '', 'L_beam': '' },
@@ -250,6 +253,7 @@ const uiTree = {
                     'rotation': '',
                     'scale': '',
                     'tube': '',
+                    'line': '',
                 },
                 'excavation': '',
             },

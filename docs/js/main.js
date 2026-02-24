@@ -242,21 +242,76 @@ const threeUi = document.getElementById('three-ui');
   const differencePanel = document.getElementById('difference-panel');
   const differenceShapeSelect = document.getElementById('difference-shape');
   const differencePathSelect = document.getElementById('difference-path');
+  let differenceLineSelect = document.getElementById('difference-line');
+  const differenceLineHeightInput = document.getElementById('difference-line-height');
+  const differenceLineHeightApplyButton = document.getElementById('difference-line-height-apply');
   const differenceBodySelectButton = document.getElementById('difference-body-select');
   const differenceUnifyButton = document.getElementById('difference-unify-button');
   let differenceViewToggleButton = document.getElementById('difference-view-toggle-button');
   const differenceStatus = document.getElementById('difference-status');
   const mapLoadStatus = document.getElementById('map-load-status');
+  const railSelectionStatus = document.getElementById('rail-selection-status');
   const constructionCategoryPanel = document.getElementById('construction-category-panel');
   const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
   const constructionGenerateButton = document.getElementById('construction-generate-button');
   const constructionCategoryStatus = document.getElementById('construction-category-status');
   const railConstructionPanel = document.getElementById('rail-construction-panel');
   const railConstructionCards = Array.from(document.querySelectorAll('[data-rail-construction-category]'));
+  const railConstructionGroupRow = document.getElementById('rail-construction-group-row');
+  const railConstructionGroupSelect = document.getElementById('rail-construction-group-select');
+  const railConstructionOffsetRow = document.getElementById('rail-construction-offset-row');
+  const railConstructionLateralOffsetInput = document.getElementById('rail-construction-lateral-offset');
+  const railConstructionVerticalOffsetInput = document.getElementById('rail-construction-vertical-offset');
+  const railConstructionYawOffsetInput = document.getElementById('rail-construction-yaw-offset');
+  const railConstructionSpacingInput = document.getElementById('rail-construction-spacing');
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
+  const groupModePanel = document.getElementById('group-mode-panel');
+  const groupModeTrackSelect = document.getElementById('group-mode-track-select');
+  const groupModeIdSelect = document.getElementById('group-mode-id-select');
+  const groupModeCreateButton = document.getElementById('group-mode-create-button');
+  const groupModeAppendButton = document.getElementById('group-mode-append-button');
+  const groupModeArrangeButton = document.getElementById('group-mode-arrange-button');
+  const groupModeStatus = document.getElementById('group-mode-status');
+  let groupModeScaleInput = null;
+  let groupModeScaleButton = null;
   const ghostMeasureCanvas = document.createElement('canvas');
   const ghostMeasureCtx = ghostMeasureCanvas.getContext('2d');
+
+  function ensureDifferenceLineSelect() {
+    if (differenceLineSelect) { return differenceLineSelect; }
+    if (!differencePanel) { return null; }
+    const pathRow = differencePathSelect?.closest?.('.difference-row') || null;
+    if (!pathRow || !pathRow.parentElement) { return null; }
+    const row = document.createElement('div');
+    row.className = 'difference-row';
+    const label = document.createElement('label');
+    label.htmlFor = 'difference-line';
+    label.textContent = 'line';
+    const select = document.createElement('select');
+    select.id = 'difference-line';
+    select.multiple = true;
+    select.size = 6;
+    const option = document.createElement('option');
+    option.value = 'all';
+    option.textContent = '全路線';
+    select.appendChild(option);
+    row.appendChild(label);
+    row.appendChild(select);
+    pathRow.insertAdjacentElement('afterend', row);
+    differenceLineSelect = select;
+    return differenceLineSelect;
+  }
+
+  function getDifferenceSelectedLineTrackNamesFromUI() {
+    differenceLineSelect = ensureDifferenceLineSelect();
+    if (!differenceLineSelect) { return []; }
+    const selected = Array.from(differenceLineSelect.selectedOptions || [])
+      .map((opt) => String(opt?.value || ''))
+      .filter((v) => v.length > 0);
+    if (selected.length < 1 || selected.includes('all')) { return []; }
+    return Array.from(new Set(selected));
+  }
 
   function alignGhostToInput(inputEl, ghostEl) {
     if (!inputEl || !ghostEl) { return; }
@@ -373,6 +428,7 @@ const threeUi = document.getElementById('three-ui');
       differencePanel,
       constructionCategoryPanel,
       railConstructionPanel,
+      groupModePanel,
       guideWindow,
     ].forEach((panel) => clampPanelToViewport(panel));
   }
@@ -430,6 +486,9 @@ const threeUi = document.getElementById('three-ui');
   let differenceSpaceModeActive = false;
   let differenceShapeType = differenceShapeSelect?.value || 'tube';
   let differencePathType = differencePathSelect?.value || 'smooth';
+  let differenceLineTrackNames = [];
+  let differenceLineBandHeight = Math.max(0.2, Number(differenceLineHeightInput?.value) || 2.8);
+  let differenceLinePickModeActive = false;
   let differenceSpaceTransformMode = 'none';
   let differenceBodySelectModeActive = false;
   let movePointPanelActive = false;
@@ -437,11 +496,20 @@ const threeUi = document.getElementById('three-ui');
   let copyModeActive = false;
   let viewModeActive = false;
   let styleModeActive = false;
+  let groupModeActive = false;
   const copySelectedObjects = new Set();
   const styleSelectedObjects = new Set();
+  const groupSelectedObjects = new Set();
   const copyObjectRegistry = new Map();
   let copyObjectRegistrySeq = 1;
+  let structureObjectSeq = 1;
   let steelFrameCopyGroupSeq = 1;
+  let structureGroupSeq = 1;
+  let railPlacementGroupSeq = 1;
+  let lastRailConstructionCreatedObjects = [];
+  const DEFAULT_STRUCTURE_GROUP_SCALE = 1;
+  let selectedGroupTrackName = '';
+  let selectedAppendGroupId = '';
   let movePointCoordinateMode = 'world';
   const movePointAxisReferences = new Map();
   let movePointAxisReferencePickAxis = null;
@@ -449,7 +517,81 @@ const threeUi = document.getElementById('three-ui');
   const MOVE_POINT_REF_HIGHLIGHT = 0xff66ff;
   let selectedConstructionProfile = null;
   let selectedRailConstructionCategory = null;
+  let selectedRailConstructionGroupId = '';
   const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
+  let railSelectionStatusFloating = null;
+
+  function readDifferenceLineBandHeight() {
+    const current = Math.max(0.2, Number(differenceLineBandHeight) || 2.8);
+    const rawText = String(differenceLineHeightInput?.value ?? '').trim();
+    if (rawText.length < 1) {
+      return current;
+    }
+    const raw = Number(rawText);
+    if (!Number.isFinite(raw)) {
+      return current;
+    }
+    const normalized = Math.max(0.2, raw);
+    differenceLineBandHeight = normalized;
+    return normalized;
+  }
+
+  function ensureRailSelectionStatusElement() {
+    if (railSelectionStatus || railSelectionStatusFloating) {
+      return railSelectionStatus || railSelectionStatusFloating;
+    }
+    const el = document.createElement('div');
+    el.id = 'rail-selection-status-floating';
+    el.style.position = 'fixed';
+    el.style.right = '18px';
+    el.style.bottom = '18px';
+    el.style.zIndex = '10006';
+    el.style.padding = '8px 10px';
+    el.style.borderRadius = '10px';
+    el.style.background = 'rgba(18, 28, 44, 0.88)';
+    el.style.color = '#e8f1ff';
+    el.style.fontSize = '11px';
+    el.style.lineHeight = '1.4';
+    el.style.pointerEvents = 'none';
+    el.style.border = '1px solid rgba(140, 180, 240, 0.35)';
+    el.style.whiteSpace = 'pre-line';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    railSelectionStatusFloating = el;
+    return el;
+  }
+
+  function getRailSelectionStatusElement() {
+    return railSelectionStatus || ensureRailSelectionStatusElement();
+  }
+
+  function updateRailSelectionStatus() {
+    const el = getRailSelectionStatusElement();
+    if (!el) { return; }
+    const railEditActive = editObject === 'RAIL'
+      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE);
+    if (!railEditActive) {
+      el.style.display = 'none';
+      return;
+    }
+    const isHandle = Boolean(choice_object?.userData?.railStructureHandle && choice_object?.userData?.railStructurePickHandle);
+    const groupKey = String(choice_object?.userData?.railStructureGroupKey || '').trim();
+    const groups = collectRailStructureGroups();
+    const group = groupKey ? (groups.find((g) => g.key === groupKey) || null) : null;
+    const count = Array.isArray(group?.members) ? group.members.length : 0;
+    const boxCount = Array.isArray(railStructurePickMeshes) ? railStructurePickMeshes.length : 0;
+    const modeLabel = objectEditMode === ROTATE_MODE ? 'rotation' : 'move';
+    const selectedLabel = isHandle && groupKey
+      ? (groupKey.startsWith('single_') ? '単体' : groupKey)
+      : '未選択';
+    el.textContent = [
+      `rail ${modeLabel}`,
+      `選択: ${selectedLabel}`,
+      `対象数: ${count}`,
+      `ボックス数: ${boxCount}`,
+    ].join('\n');
+    el.style.display = 'block';
+  }
 
   function blockManualDioramaSpaceMode() {
     // Difference は手動ジオラマ空間の有効/無効に依存させない。
@@ -504,7 +646,7 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setRailConstructionCategory(category) {
-    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect'];
+    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'platform', 'group'];
     const next = allow.includes(category) ? category : null;
     selectedRailConstructionCategory = next;
     railConstructionCards.forEach((card) => {
@@ -512,11 +654,155 @@ const threeUi = document.getElementById('three-ui');
       card.classList.toggle('is-selected', isSelected);
       card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
+    if (railConstructionGroupRow) {
+      railConstructionGroupRow.style.display = next === 'group' ? 'block' : 'none';
+    }
+    if (railConstructionOffsetRow) {
+      railConstructionOffsetRow.style.display = next === 'group' ? 'block' : 'none';
+    }
+    if (next === 'group') {
+      setRailConstructionGroupOptions();
+    }
     if (railConstructionStatus) {
-      railConstructionStatus.textContent = next
+      railConstructionStatus.textContent = next === 'group'
+        ? `選択中: group。ピンを選択し、グループIDを選んで「選択カテゴリで生成」。`
+        : next === 'platform'
+        ? '選択中: platform。ピンを選択して「選択カテゴリで生成」。'
+        : next
         ? `選択中: ${next}。ピンを選択して「選択カテゴリで生成」。`
         : '選択中: 未選択。カテゴリを選んで「選択カテゴリで生成」。';
     }
+  }
+
+  function setGroupModePanelVisible(visible) {
+    if (!groupModePanel) { return; }
+    groupModePanel.style.display = visible ? 'block' : 'none';
+    if (visible) {
+      setGroupModeIdOptions();
+      ensureGroupModeScaleControls();
+      scheduleClampUiPanels();
+    }
+  }
+
+  function ensureGroupModeScaleControls() {
+    if (!groupModePanel) { return; }
+    if (groupModeScaleInput && groupModeScaleButton) { return; }
+    let row = document.getElementById('group-mode-scale-row');
+    if (!row) {
+      row = document.createElement('div');
+      row.id = 'group-mode-scale-row';
+      row.style.display = 'flex';
+      row.style.gap = '8px';
+      row.style.alignItems = 'center';
+      row.style.marginTop = '8px';
+      groupModePanel.appendChild(row);
+    }
+    let input = document.getElementById('group-mode-scale-input');
+    if (!input) {
+      input = document.createElement('input');
+      input.id = 'group-mode-scale-input';
+      input.type = 'number';
+      input.step = '0.05';
+      input.min = '0.01';
+      input.placeholder = '1.000';
+      input.style.width = '86px';
+      row.appendChild(input);
+    }
+    let button = document.getElementById('group-mode-scale-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'group-mode-scale-button';
+      button.type = 'button';
+      button.textContent = 'スケール適用';
+      row.appendChild(button);
+    }
+    groupModeScaleInput = input;
+    groupModeScaleButton = button;
+  }
+
+  function setGroupModeStatus(text) {
+    if (!groupModeStatus) { return; }
+    groupModeStatus.textContent = String(text || '');
+  }
+
+  function setGroupModeTrackOptions() {
+    if (!groupModeTrackSelect) { return; }
+    const currentValue = selectedGroupTrackName || groupModeTrackSelect.value || '';
+    const defs = Array.isArray(railTrackDefs) ? railTrackDefs : [];
+    groupModeTrackSelect.innerHTML = '';
+    defs.forEach((track, index) => {
+      const option = document.createElement('option');
+      const trackName = String(track?.name || `track_${index}`);
+      option.value = trackName;
+      option.textContent = trackName;
+      groupModeTrackSelect.appendChild(option);
+    });
+    if (defs.length < 1) {
+      selectedGroupTrackName = '';
+      groupModeTrackSelect.value = '';
+      return;
+    }
+    const hasCurrent = defs.some((track) => String(track?.name || '') === currentValue);
+    selectedGroupTrackName = hasCurrent ? currentValue : String(defs[0]?.name || '');
+    groupModeTrackSelect.value = selectedGroupTrackName;
+  }
+
+  function collectStructureGroupIds() {
+    const ids = new Set();
+    let targets = [];
+    try {
+      targets = getConstructionCopyTargets();
+    } catch (err) {
+      // 起動初期(TDZ)では decorationObjects 未初期化のため空扱いにする。
+      return [];
+    }
+    targets.forEach((mesh) => {
+      const id = String(mesh?.userData?.structureGroupId || '').trim();
+      if (id) {
+        ids.add(id);
+      }
+    });
+    return Array.from(ids).sort();
+  }
+
+  function setGroupModeIdOptions() {
+    if (!groupModeIdSelect) { return; }
+    const ids = collectStructureGroupIds();
+    const currentValue = selectedAppendGroupId || groupModeIdSelect.value || '';
+    groupModeIdSelect.innerHTML = '';
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = ids.length > 0 ? 'グループを選択' : 'グループなし';
+    groupModeIdSelect.appendChild(emptyOption);
+    ids.forEach((id) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = id;
+      groupModeIdSelect.appendChild(option);
+    });
+    const hasCurrent = ids.includes(currentValue);
+    selectedAppendGroupId = hasCurrent ? currentValue : '';
+    groupModeIdSelect.value = selectedAppendGroupId;
+  }
+
+  function setRailConstructionGroupOptions() {
+    if (!railConstructionGroupSelect) { return; }
+    const ids = collectStructureGroupIds();
+    const currentValue = selectedRailConstructionGroupId || railConstructionGroupSelect.value || '';
+    railConstructionGroupSelect.innerHTML = '';
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = ids.length > 0 ? 'グループを選択' : 'グループなし';
+    railConstructionGroupSelect.appendChild(emptyOption);
+    ids.forEach((id) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = id;
+      railConstructionGroupSelect.appendChild(option);
+    });
+    const hasCurrent = ids.includes(currentValue);
+    selectedRailConstructionGroupId = hasCurrent ? currentValue : '';
+    railConstructionGroupSelect.value = selectedRailConstructionGroupId;
   }
 
   function getConstructionPinsPayload() {
@@ -526,6 +812,81 @@ const threeUi = document.getElementById('three-ui');
       z: pin.position.z,
       trackName: pin.userData?.trackName ?? null,
     }));
+  }
+
+  function syncStructureObjectSequenceFromExisting() {
+    const regex = /^structure_obj_(\d+)$/;
+    let max = 0;
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        const raw = String(mesh?.userData?.structureObjectId || '').trim();
+        const match = raw.match(regex);
+        if (!match) { return; }
+        const n = Number(match[1]);
+        if (Number.isFinite(n) && n > max) {
+          max = n;
+        }
+      });
+    structureObjectSeq = Math.max(structureObjectSeq, max + 1);
+  }
+
+  function ensureStructureObjectId(mesh) {
+    if (!mesh) { return ''; }
+    const current = String(mesh?.userData?.structureObjectId || '').trim();
+    if (current) { return current; }
+    syncStructureObjectSequenceFromExisting();
+    const id = `structure_obj_${structureObjectSeq}`;
+    structureObjectSeq += 1;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      structureObjectId: id,
+    };
+    return id;
+  }
+
+  function snapshotExistingStructureObjectIds() {
+    const ids = new Set();
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        const id = ensureStructureObjectId(mesh);
+        if (id) { ids.add(id); }
+      });
+    return ids;
+  }
+
+  function collectNewStructureObjectsSince(beforeIds) {
+    const out = [];
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        const id = ensureStructureObjectId(mesh);
+        if (!id) { return; }
+        if (beforeIds?.has?.(id)) { return; }
+        out.push(mesh);
+      });
+    return out;
+  }
+
+  function appendLinkedObjectIdsToPins(pinMeshes, objectMeshes) {
+    const pins = Array.isArray(pinMeshes) ? pinMeshes.filter((pin) => pin?.userData) : [];
+    if (pins.length < 1) { return; }
+    const linkedIds = Array.from(new Set(
+      (Array.isArray(objectMeshes) ? objectMeshes : [])
+        .map((mesh) => ensureStructureObjectId(mesh))
+        .filter((id) => String(id || '').trim().length > 0)
+    ));
+    if (linkedIds.length < 1) { return; }
+    pins.forEach((pin) => {
+      const prev = Array.isArray(pin?.userData?.linkedStructureObjectIds)
+        ? pin.userData.linkedStructureObjectIds.map((v) => String(v || '').trim()).filter(Boolean)
+        : [];
+      pin.userData = {
+        ...(pin.userData || {}),
+        linkedStructureObjectIds: Array.from(new Set(prev.concat(linkedIds))),
+      };
+    });
   }
 
   function getBridgeSourcePins() {
@@ -1089,18 +1450,506 @@ const threeUi = document.getElementById('three-ui');
     return createYellowMirrorForConstructionSegments(segments, mirrorContext);
   }
 
+  function runRailConstructionGroupByPins(groupId, pinsPayload) {
+    lastRailConstructionCreatedObjects = [];
+    const id = String(groupId || '').trim();
+    if (!id) {
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = 'group 生成にはグループID選択が必要です。';
+      }
+      return false;
+    }
+    const sourceObjects = getConstructionCopyTargets()
+      .filter((obj) => obj?.parent)
+      .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === id);
+    if (sourceObjects.length < 1) {
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = `group 生成元が見つかりません: ${id}`;
+      }
+      return false;
+    }
+    const sourceAnchors = sourceObjects
+      .map((mesh) => getStructureAnchorInfo(mesh))
+      .filter(Boolean);
+    if (sourceAnchors.length < 1) {
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = `group 生成元のアンカー算出に失敗しました: ${id}`;
+      }
+      return false;
+    }
+    const sourceCenter = sourceAnchors
+      .reduce((acc, entry) => acc.add(entry.anchor), new THREE.Vector3())
+      .multiplyScalar(1 / sourceAnchors.length);
+    const lateralOffset = Number(railConstructionLateralOffsetInput?.value);
+    const verticalOffset = Number(railConstructionVerticalOffsetInput?.value);
+    const yawOffsetDeg = Number(railConstructionYawOffsetInput?.value);
+    const spacingRaw = Number(railConstructionSpacingInput?.value);
+    const lateralOffsetValue = Number.isFinite(lateralOffset) ? lateralOffset : 0;
+    const verticalOffsetValue = Number.isFinite(verticalOffset) ? verticalOffset : 0;
+    const yawOffsetRad = Number.isFinite(yawOffsetDeg) ? THREE.MathUtils.degToRad(yawOffsetDeg) : 0;
+    const spacingValue = (Number.isFinite(spacingRaw) && spacingRaw > 0) ? spacingRaw : 0;
+    const parseStructureGroupScale = (raw) => {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value <= 0) { return null; }
+      return value;
+    };
+    const sourceGroupScale = (() => {
+      for (let i = 0; i < sourceObjects.length; i += 1) {
+        const scale = parseStructureGroupScale(sourceObjects[i]?.userData?.structureGroupScale);
+        if (scale) { return scale; }
+      }
+      return 1;
+    })();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const sourceTrackHit = getNearestRailTrackHitFromPoint(sourceCenter, 900);
+    const getTrackPoseAtPoint = (worldPoint, trackName = '') => {
+      const preferredTrack = typeof trackName === 'string' && trackName
+        ? getRailTrackByName(trackName)
+        : null;
+      const nearest = preferredTrack
+        ? getNearestPointOnRailTrackCurve(preferredTrack, worldPoint, 900)
+        : getNearestRailTrackHitFromPoint(worldPoint, 900);
+      if (!nearest) {
+        return null;
+      }
+      const track = preferredTrack || getRailTrackByName(nearest.trackName);
+      if (!track?.curve || typeof track.curve.getTangentAt !== 'function') {
+        return null;
+      }
+      const tangent = track.curve.getTangentAt(THREE.MathUtils.clamp(nearest.t, 0, 1)).clone().setY(0);
+      if (tangent.lengthSq() <= 1e-8) {
+        return null;
+      }
+      tangent.normalize();
+      const yaw = Math.atan2(tangent.x, tangent.z);
+      // +X を線路右方向として扱う右手系オフセット
+      const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+      return {
+        yaw,
+        tangent,
+        right,
+        point: nearest.point?.clone?.() || null,
+        trackName: nearest.trackName,
+        t: nearest.t,
+      };
+    };
+    const sourcePose = getTrackPoseAtPoint(
+      sourceCenter,
+      typeof sourceTrackHit?.trackName === 'string' ? sourceTrackHit.trackName : ''
+    );
+    const sourceYaw = Number.isFinite(sourcePose?.yaw) ? sourcePose.yaw : null;
+
+    const pointItems = [];
+    const objectItems = [];
+    const createdObjects = [];
+    const buildEffectivePinsAtFixedSpacing = (pins, { allowTrackCurve = true } = {}) => {
+      if (!Array.isArray(pins) || pins.length < 1) { return []; }
+      if (spacingValue <= 0 || pins.length < 2) { return pins; }
+      const normalizedPins = pins.map((pin) => ({
+        x: Number(pin?.x) || 0,
+        y: Number(pin?.y) || 0,
+        z: Number(pin?.z) || 0,
+        trackName: String(pin?.trackName || ''),
+      }));
+      const sameTrackName = (() => {
+        const names = normalizedPins.map((pin) => pin.trackName).filter(Boolean);
+        if (names.length !== normalizedPins.length) { return ''; }
+        const first = names[0];
+        return names.every((name) => name === first) ? first : '';
+      })();
+
+      // 可能なら線路カーブの弧長に対して等間隔サンプリングする。
+      if (allowTrackCurve && sameTrackName) {
+        const track = getRailTrackByName(sameTrackName);
+        const curve = track?.curve;
+        if (curve
+          && typeof curve.getPointAt === 'function'
+          && typeof curve.getUtoTmapping === 'function'
+          && typeof curve.getLengths === 'function') {
+          const nearestSamples = normalizedPins
+            .map((pin) => {
+              const point = new THREE.Vector3(pin.x, pin.y, pin.z);
+              const nearest = getNearestPointOnRailTrackCurve(track, point, 900);
+              if (!nearest || !Number.isFinite(nearest.t)) { return null; }
+              return { pin, t: THREE.MathUtils.clamp(nearest.t, 0, 1) };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.t - b.t);
+          if (nearestSamples.length >= 2) {
+            const divs = 1024;
+            const lengths = curve.getLengths(divs);
+            const totalLen = Number(lengths[lengths.length - 1]) || 0;
+            const lengthAtT = (t) => {
+              const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+              const scaled = clampedT * divs;
+              const idx = Math.floor(scaled);
+              const frac = scaled - idx;
+              const l0 = Number(lengths[idx]) || 0;
+              const l1 = Number(lengths[Math.min(divs, idx + 1)]) || l0;
+              return l0 + (l1 - l0) * frac;
+            };
+            const startT = nearestSamples[0].t;
+            const endT = nearestSamples[nearestSamples.length - 1].t;
+            const startLen = lengthAtT(startT);
+            const endLen = lengthAtT(endT);
+            const dir = endLen >= startLen ? 1 : -1;
+            const span = Math.abs(endLen - startLen);
+            const out = [];
+            const steps = Math.floor(span / spacingValue);
+            for (let i = 0; i <= steps; i += 1) {
+              const targetLen = THREE.MathUtils.clamp(startLen + (dir * i * spacingValue), 0, totalLen);
+              const t = curve.getUtoTmapping(0, targetLen);
+              const p = curve.getPointAt(THREE.MathUtils.clamp(t, 0, 1));
+              out.push({
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                trackName: sameTrackName,
+              });
+            }
+            return out.length > 0 ? out : [normalizedPins[0]];
+          }
+        }
+      }
+
+      // フォールバック: ピン列を折れ線として等間隔サンプリングする。
+      const points = normalizedPins.map((pin) => new THREE.Vector3(pin.x, pin.y, pin.z));
+      const segLengths = [];
+      let total = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const len = points[i].distanceTo(points[i + 1]);
+        segLengths.push(len);
+        total += len;
+      }
+      if (total <= 1e-8) { return [normalizedPins[0]]; }
+      const out = [];
+      const steps = Math.floor(total / spacingValue);
+      for (let i = 0; i <= steps; i += 1) {
+        const d = i * spacingValue;
+        let remain = d;
+        let segIdx = 0;
+        while (segIdx < segLengths.length && remain > segLengths[segIdx]) {
+          remain -= segLengths[segIdx];
+          segIdx += 1;
+        }
+        const a = points[Math.min(segIdx, points.length - 1)];
+        const b = points[Math.min(segIdx + 1, points.length - 1)];
+        const segLen = segLengths[Math.min(segIdx, segLengths.length - 1)] || 1;
+        const t = THREE.MathUtils.clamp(remain / segLen, 0, 1);
+        const p = a.clone().lerp(b, t);
+        out.push({
+          x: p.x,
+          y: p.y,
+          z: p.z,
+          trackName: normalizedPins[Math.min(segIdx, normalizedPins.length - 1)]?.trackName || '',
+        });
+      }
+      return out.length > 0 ? out : [normalizedPins[0]];
+    };
+    const buildEffectivePinsAlongOffsetTrack = (pins) => {
+      if (!Array.isArray(pins) || pins.length < 1) { return []; }
+      const normalizedPins = pins.map((pin) => ({
+        x: Number(pin?.x) || 0,
+        y: Number(pin?.y) || 0,
+        z: Number(pin?.z) || 0,
+        trackName: String(pin?.trackName || ''),
+      }));
+      const names = normalizedPins.map((pin) => pin.trackName).filter(Boolean);
+      if (names.length !== normalizedPins.length) { return []; }
+      const firstName = names[0];
+      if (!names.every((name) => name === firstName)) { return []; }
+      const track = getRailTrackByName(firstName);
+      const curve = track?.curve;
+      if (!curve
+        || typeof curve.getPointAt !== 'function'
+        || typeof curve.getTangentAt !== 'function'
+        || typeof curve.getUtoTmapping !== 'function'
+        || typeof curve.getLengths !== 'function') {
+        return [];
+      }
+      const nearestSamples = normalizedPins
+        .map((pin) => {
+          const point = new THREE.Vector3(pin.x, pin.y, pin.z);
+          const nearest = getNearestPointOnRailTrackCurve(track, point, 900);
+          if (!nearest || !Number.isFinite(nearest.t)) { return null; }
+          return { t: THREE.MathUtils.clamp(nearest.t, 0, 1) };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.t - b.t);
+      if (nearestSamples.length < 1) { return []; }
+
+      const divs = 1024;
+      const lengths = curve.getLengths(divs);
+      const totalLen = Number(lengths[lengths.length - 1]) || 0;
+      const lengthAtT = (t) => {
+        const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+        const scaled = clampedT * divs;
+        const idx = Math.floor(scaled);
+        const frac = scaled - idx;
+        const l0 = Number(lengths[idx]) || 0;
+        const l1 = Number(lengths[Math.min(divs, idx + 1)]) || l0;
+        return l0 + (l1 - l0) * frac;
+      };
+
+      const startT = nearestSamples[0].t;
+      const endT = nearestSamples[nearestSamples.length - 1].t;
+      const startLen = lengthAtT(startT);
+      const endLen = lengthAtT(endT);
+      const dir = endLen >= startLen ? 1 : -1;
+      const span = Math.abs(endLen - startLen);
+      const upOffset = new THREE.Vector3(0, verticalOffsetValue, 0);
+      const sampleCount = spacingValue > 0
+        ? Math.max(0, Math.floor(span / spacingValue))
+        : Math.max(1, nearestSamples.length - 1);
+
+      const out = [];
+      for (let i = 0; i <= sampleCount; i += 1) {
+        const targetLen = spacingValue > 0
+          ? THREE.MathUtils.clamp(startLen + (dir * i * spacingValue), 0, totalLen)
+          : THREE.MathUtils.clamp(startLen + (dir * (span * (i / Math.max(1, sampleCount)))), 0, totalLen);
+        const t = curve.getUtoTmapping(0, targetLen);
+        const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+        const point = curve.getPointAt(clampedT).clone();
+        const tangent = curve.getTangentAt(clampedT).clone().setY(0);
+        if (tangent.lengthSq() > 1e-8) {
+          tangent.normalize();
+        } else {
+          tangent.set(0, 0, 1);
+        }
+        const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+        point.addScaledVector(right, lateralOffsetValue);
+        point.add(upOffset);
+        out.push({
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          trackName: firstName,
+          _offsetApplied: true,
+        });
+      }
+      return out;
+    };
+    const offsetTrackPins = buildEffectivePinsAlongOffsetTrack(pinsPayload);
+    const effectivePins = offsetTrackPins.length > 0
+      ? offsetTrackPins
+      : buildEffectivePinsAtFixedSpacing(pinsPayload, { allowTrackCurve: true }).map((pin) => ({
+        ...pin,
+        _offsetApplied: false,
+      }));
+
+    effectivePins.forEach((pin) => {
+      const railPlacementGroupId = allocateRailPlacementGroupId();
+      const targetPos = new THREE.Vector3(
+        Number(pin?.x) || 0,
+        Number(pin?.y) || 0,
+        Number(pin?.z) || 0
+      );
+      const targetPose = getTrackPoseAtPoint(targetPos, String(pin?.trackName || ''));
+      const targetYaw = Number.isFinite(targetPose?.yaw) ? targetPose.yaw : null;
+      const yawDelta = (Number.isFinite(sourceYaw) && Number.isFinite(targetYaw))
+        ? (targetYaw - sourceYaw)
+        : 0;
+      const rotationQuat = new THREE.Quaternion().setFromAxisAngle(yAxis, yawDelta + yawOffsetRad);
+      const isOffsetAppliedPin = Boolean(pin?._offsetApplied);
+      const lateralDir = targetPose?.right?.clone?.() || new THREE.Vector3(1, 0, 0);
+      const placementOffset = isOffsetAppliedPin
+        ? new THREE.Vector3(0, 0, 0)
+        : lateralDir.multiplyScalar(lateralOffsetValue).add(new THREE.Vector3(0, verticalOffsetValue, 0));
+      const targetBasePos = targetPos.clone().add(placementOffset);
+      const projectPosition = (srcPos) => srcPos.clone()
+        .sub(sourceCenter)
+        .multiplyScalar(sourceGroupScale)
+        .applyQuaternion(rotationQuat)
+        .add(targetBasePos);
+      const sourceToCopiedPoint = new Map();
+      const ensureCopiedPoint = (src) => {
+        if (!src?.userData?.steelFramePoint) { return null; }
+        const existing = sourceToCopiedPoint.get(src);
+        if (existing?.parent) { return existing; }
+        const lineIndex = Number.isInteger(src?.userData?.steelFrameLine) ? src.userData.steelFrameLine : 0;
+        const mesh = new THREE.Mesh(cube_geometry, cube_material.clone());
+        mesh.position.copy(projectPosition(src.position));
+        mesh.scale.copy(src.scale);
+        mesh.scale.multiplyScalar(sourceGroupScale);
+        mesh.userData = {
+          ...(src.userData || {}),
+          steelFramePoint: true,
+          steelFrameLine: lineIndex,
+          steelFrameCopied: Boolean(src?.userData?.steelFrameCopied),
+          steelFrameCopyGroupId: src?.userData?.steelFrameCopyGroupId ?? null,
+          structureGroupScale: sourceGroupScale,
+          railOffsetLateral: lateralOffsetValue,
+          railOffsetVertical: verticalOffsetValue,
+          railPlacementGroupId,
+        };
+        delete mesh.userData.guideCurve;
+        delete mesh.userData.guideControlIndex;
+        steelFrameMode.addExistingPoint(mesh, lineIndex);
+        sourceToCopiedPoint.set(src, mesh);
+        pointItems.push({ mesh, lineIndex });
+        return mesh;
+      };
+
+      sourceObjects.forEach((src) => {
+        const structureGroupId = src?.userData?.structureGroupId ?? null;
+        const decorationType = normalizeDecorationType(src?.userData?.decorationType);
+        if (decorationType === 'led_board') {
+          const cloned = cloneLedBoardDecoration(src, new THREE.Vector3(), {
+            structureGroupId,
+            structureGroupScale: sourceGroupScale,
+          });
+          if (cloned) {
+            cloned.position.copy(projectPosition(src.position));
+            cloned.quaternion.copy(src.quaternion);
+            cloned.quaternion.premultiply(rotationQuat);
+            cloned.userData = {
+              ...(cloned.userData || {}),
+              structureGroupScale: sourceGroupScale,
+              railOffsetLateral: lateralOffsetValue,
+              railOffsetVertical: verticalOffsetValue,
+              railOffsetYawDeg: Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0,
+              railPlacementGroupId,
+            };
+            scene.add(cloned);
+            decorationObjects.push(cloned);
+            objectItems.push(cloned);
+            createdObjects.push(cloned);
+          }
+          return;
+        }
+        if (decorationType === 'rect_spot_light') {
+          const cloned = cloneRectSpotLightDecoration(src, new THREE.Vector3(), {
+            structureGroupId,
+            structureGroupScale: sourceGroupScale,
+          });
+          if (cloned) {
+            cloned.position.copy(projectPosition(src.position));
+            cloned.quaternion.copy(src.quaternion);
+            cloned.quaternion.premultiply(rotationQuat);
+            cloned.userData = {
+              ...(cloned.userData || {}),
+              structureGroupScale: sourceGroupScale,
+              railOffsetLateral: lateralOffsetValue,
+              railOffsetVertical: verticalOffsetValue,
+              railOffsetYawDeg: Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0,
+              railPlacementGroupId,
+            };
+            scene.add(cloned);
+            decorationObjects.push(cloned);
+            objectItems.push(cloned);
+            createdObjects.push(cloned);
+          }
+          return;
+        }
+        if (src?.name === 'SteelFrameSegment') {
+          const srcPointRefs = getCopyStructurePointMeshes(src);
+          const copiedPointRefs = srcPointRefs.map((pointMesh) => ensureCopiedPoint(pointMesh)).filter(Boolean);
+          let cloned = null;
+          try {
+            cloned = cloneObjectVisualTreeWithoutUserData(src) || src.clone(true);
+          } catch (err) {
+            console.warn('[rail construction group] segment clone failed', err);
+            cloned = cloneObjectVisualTreeWithoutUserData(src);
+          }
+          if (!cloned) { return; }
+          cloned.name = src?.name || cloned.name || 'SteelFrameSegment';
+          cloned.position.copy(projectPosition(src.position));
+          cloned.quaternion.copy(src.quaternion);
+          cloned.quaternion.premultiply(rotationQuat);
+          if (cloned?.scale?.multiplyScalar) {
+            cloned.scale.multiplyScalar(sourceGroupScale);
+          }
+          cloned.userData = {
+            ...(src.userData || {}),
+            steelFrameSegmentPointRefs: copiedPointRefs,
+            structureGroupId,
+            structureGroupScale: sourceGroupScale,
+            railOffsetLateral: lateralOffsetValue,
+            railOffsetVertical: verticalOffsetValue,
+            railOffsetYawDeg: Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0,
+            railPlacementGroupId,
+          };
+          scene.add(cloned);
+          registerCopyObject(cloned);
+          steelFrameMode?.addExistingSegmentMesh?.(cloned);
+          objectItems.push(cloned);
+          createdObjects.push(cloned);
+          return;
+        }
+        if (!src?.clone) { return; }
+        const cloned = src.clone(true);
+        cloned.position.copy(projectPosition(src.position));
+        if (src?.quaternion) {
+          cloned.quaternion.copy(src.quaternion);
+          cloned.quaternion.premultiply(rotationQuat);
+        }
+        if (cloned?.scale?.multiplyScalar) {
+          cloned.scale.multiplyScalar(sourceGroupScale);
+        }
+        cloned.userData = {
+          ...(src.userData || {}),
+          structureGroupId,
+          structureGroupScale: sourceGroupScale,
+          railOffsetLateral: lateralOffsetValue,
+          railOffsetVertical: verticalOffsetValue,
+          railOffsetYawDeg: Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0,
+          railPlacementGroupId,
+        };
+        scene.add(cloned);
+        objectItems.push(cloned);
+        createdObjects.push(cloned);
+      });
+    });
+
+    if (pointItems.length < 1 && objectItems.length < 1) {
+      if (railConstructionStatus) {
+        railConstructionStatus.textContent = `group 生成失敗: ${id}`;
+      }
+      return false;
+    }
+    pushCreateHistory({
+      type: 'copy_items',
+      pointItems,
+      objectItems,
+    });
+    if (pointItems.length > 0) {
+      drawingObject(pointItems.map((item) => item.mesh));
+    }
+    refreshCreateTargetsForSearch();
+    showRailGeneratedStructures();
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
+    }
+    if (railConstructionStatus) {
+      railConstructionStatus.textContent = `生成完了: group(${id}) / pins=${effectivePins.length} / objects=${createdObjects.length} / spacing=${spacingValue.toFixed(2)} / lateral=${lateralOffsetValue.toFixed(2)} / vertical=${verticalOffsetValue.toFixed(2)} / yaw=${(Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0).toFixed(1)}deg`;
+    }
+    createdObjects.forEach((mesh) => { ensureStructureObjectId(mesh); });
+    lastRailConstructionCreatedObjects = createdObjects.slice();
+    return true;
+  }
+
   function runRailConstructionByCategory(category) {
-    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect'].includes(category)
+    lastRailConstructionCreatedObjects = [];
+    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'platform', 'group'].includes(category)
       ? category
       : 'bridge';
     const bridgeSourcePins = getBridgeSourcePins();
-    const minPins = kind === 'bridge' ? 1 : (kind === 'pillar' ? 1 : 2);
+    const pinsForLink = kind === 'bridge'
+      ? bridgeSourcePins.slice()
+      : constructionSelectedPins.slice();
+    const beforeIds = snapshotExistingStructureObjectIds();
+    const minPins = kind === 'bridge' ? 1 : (kind === 'pillar' ? 1 : (kind === 'group' ? 1 : (kind === 'platform' ? 1 : 2)));
     const activePinCount = kind === 'bridge' ? bridgeSourcePins.length : constructionSelectedPins.length;
     if (activePinCount < minPins) {
       const msg = kind === 'bridge'
         ? 'bridge は最低1つのピン選択が必要です。'
         : kind === 'pillar'
         ? 'pillar は最低1つのピン選択が必要です。'
+        : kind === 'group'
+        ? 'group は最低1つのピン選択が必要です。'
+        : kind === 'platform'
+        ? 'platform は最低1つのピン選択が必要です。'
         : kind === 'catenary_pole'
         ? 'catenary_pole は最低2つのピン選択が必要です。'
         : `${kind} は最低2つのピン選択が必要です。`;
@@ -1111,6 +1960,15 @@ const threeUi = document.getElementById('three-ui');
       return false;
     }
     const pins = getConstructionPinsPayload();
+    if (kind === 'group') {
+      const ok = runRailConstructionGroupByPins(selectedRailConstructionGroupId, pins);
+      if (!ok) { return false; }
+      const created = lastRailConstructionCreatedObjects.length > 0
+        ? lastRailConstructionCreatedObjects.slice()
+        : collectNewStructureObjectsSince(beforeIds);
+      appendLinkedObjectIdsToPins(pinsForLink, created);
+      return true;
+    }
     if (kind === 'bridge') {
       const placement = getBridgePlacementFromSelectedPins();
       if (!placement) {
@@ -1163,8 +2021,208 @@ const threeUi = document.getElementById('three-ui');
         yOffset: -0.1,
         color: 0x8b8f94,
       });
+    } else if (kind === 'platform') {
+      const runRailPlatformConstruction = () => {
+        const selectedTrackCurves = getSelectedTrackCurvesForConstruction();
+        const trackCount = selectedTrackCurves.length;
+        if (trackCount === 1) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = 'platform: 1路線モードは未実装です。2路線を選択してください。';
+          }
+          return false;
+        }
+        if (trackCount !== 2) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = `platform: 1路線/2路線のみ対応です（現在 ${trackCount} 路線）。`;
+          }
+          return false;
+        }
+        const ordered = getOrderedTracksByLateralPosition(selectedTrackCurves, 0.5);
+        if (!Array.isArray(ordered) || ordered.length !== 2) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = 'platform: 左右路線の判定に失敗しました。';
+          }
+          return false;
+        }
+        const rightTrack = ordered[0];
+        const leftTrack = ordered[1];
+        if (!rightTrack?.curve || !leftTrack?.curve) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = 'platform: 線路情報が不足しています。';
+          }
+          return false;
+        }
+
+        const buildRailPlatformMeshFromTwoTracks = ({
+          rightCurve,
+          leftCurve,
+          rightTrackName = '',
+          leftTrackName = '',
+          innerOffset = 0.6,
+          thickness = 0.22,
+          topLift = 0.1,
+          sampleStepMeters = 2.0,
+        }) => {
+          if (!rightCurve || !leftCurve) { return null; }
+          const up = new THREE.Vector3(0, 1, 0);
+          const rightLength = Number(rightCurve.getLength?.()) || 0;
+          const leftLength = Number(leftCurve.getLength?.()) || 0;
+          const baseLength = Math.max(rightLength, leftLength, 1);
+          const steps = THREE.MathUtils.clamp(Math.floor(baseLength / Math.max(0.5, sampleStepMeters)), 16, 420);
+          const safeInnerOffset = Math.max(0, Number(innerOffset) || 0);
+          const safeThickness = Math.max(0.02, Number(thickness) || 0.22);
+          const safeTopLift = Number(topLift) || 0;
+
+          const frameAt = (curve, t, fallbackDir = new THREE.Vector3(0, 0, 1)) => {
+            const tc = THREE.MathUtils.clamp(t, 0, 1);
+            const point = curve.getPointAt(tc).clone();
+            let tangent = (typeof curve.getTangentAt === 'function')
+              ? curve.getTangentAt(tc).clone()
+              : fallbackDir.clone();
+            tangent.setY(0);
+            if (tangent.lengthSq() < 1e-8) {
+              tangent.copy(fallbackDir).setY(0);
+            }
+            if (tangent.lengthSq() < 1e-8) {
+              tangent.set(0, 0, 1);
+            }
+            tangent.normalize();
+            let right = new THREE.Vector3().crossVectors(up, tangent);
+            if (right.lengthSq() < 1e-8) {
+              right = new THREE.Vector3(1, 0, 0);
+            } else {
+              right.normalize();
+            }
+            return { point, tangent, right };
+          };
+
+          const rightTop = [];
+          const leftTop = [];
+          const rightBottom = [];
+          const leftBottom = [];
+          let prevRightTangent = new THREE.Vector3(0, 0, 1);
+          let prevLeftTangent = new THREE.Vector3(0, 0, 1);
+          for (let i = 0; i <= steps; i += 1) {
+            const t = i / steps;
+            const rf = frameAt(rightCurve, t, prevRightTangent);
+            const lf = frameAt(leftCurve, t, prevLeftTangent);
+            prevRightTangent = rf.tangent.clone();
+            prevLeftTangent = lf.tangent.clone();
+            const ri = rf.point.clone().addScaledVector(rf.right, -safeInnerOffset);
+            const li = lf.point.clone().addScaledVector(lf.right, safeInnerOffset);
+            const y = ((rf.point.y + lf.point.y) * 0.5) + safeTopLift;
+            ri.y = y;
+            li.y = y;
+            if (ri.distanceToSquared(li) < 1e-8) {
+              li.add(new THREE.Vector3(0.02, 0, 0));
+            }
+            rightTop.push(ri);
+            leftTop.push(li);
+            rightBottom.push(ri.clone().addScaledVector(up, -safeThickness));
+            leftBottom.push(li.clone().addScaledVector(up, -safeThickness));
+          }
+          if (rightTop.length < 2 || leftTop.length < 2) { return null; }
+
+          const positions = [];
+          const pushTri = (a, b, c) => {
+            positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+          };
+          const addQuad = (a, b, c, d, flip = false) => {
+            if (!flip) {
+              pushTri(a, b, c);
+              pushTri(a, c, d);
+            } else {
+              pushTri(a, c, b);
+              pushTri(a, d, c);
+            }
+          };
+
+          for (let i = 0; i < rightTop.length - 1; i += 1) {
+            const j = i + 1;
+            addQuad(rightTop[i], rightTop[j], leftTop[j], leftTop[i], false);
+            addQuad(rightBottom[i], leftBottom[i], leftBottom[j], rightBottom[j], false);
+            addQuad(rightTop[i], rightBottom[i], rightBottom[j], rightTop[j], false);
+            addQuad(leftTop[i], leftTop[j], leftBottom[j], leftBottom[i], false);
+          }
+          addQuad(rightTop[0], leftTop[0], leftBottom[0], rightBottom[0], false);
+          const last = rightTop.length - 1;
+          addQuad(rightTop[last], rightBottom[last], leftBottom[last], leftTop[last], false);
+
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geometry.computeVertexNormals();
+          geometry.computeBoundingBox?.();
+          geometry.computeBoundingSphere?.();
+
+          const material = new THREE.MeshStandardMaterial({
+            color: 0x8a939e,
+            roughness: 0.86,
+            metalness: 0.08,
+            side: THREE.DoubleSide,
+          });
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.name = 'RailPlatformMesh';
+          mesh.userData = {
+            ...(mesh.userData || {}),
+            decorationType: 'rail_platform',
+            railPlatform: true,
+            railConstructionCategory: 'platform',
+            rightTrackName: rightTrackName || '',
+            leftTrackName: leftTrackName || '',
+            innerOffset: safeInnerOffset,
+            thickness: safeThickness,
+          };
+          return mesh;
+        };
+
+        const platformMesh = buildRailPlatformMeshFromTwoTracks({
+          rightCurve: rightTrack.curve,
+          leftCurve: leftTrack.curve,
+          rightTrackName: rightTrack.trackName,
+          leftTrackName: leftTrack.trackName,
+          innerOffset: 0.6,
+          thickness: 0.15,
+          topLift: 0.55,
+          sampleStepMeters: 2.0,
+        });
+        if (!platformMesh) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = 'platform: ホームメッシュ生成に失敗しました。';
+          }
+          return false;
+        }
+        scene.add(platformMesh);
+        decorationObjects.push(platformMesh);
+        if (typeof registerCopyObject === 'function') {
+          registerCopyObject(platformMesh);
+        }
+        if (railConstructionStatus) {
+          railConstructionStatus.textContent = `生成完了: platform / 2路線 (${rightTrack.trackName} - ${leftTrack.trackName})`;
+        }
+        ensureStructureObjectId(platformMesh);
+        lastRailConstructionCreatedObjects = [platformMesh];
+        return true;
+      };
+      const platformOk = runRailPlatformConstruction();
+      if (!platformOk) {
+        return false;
+      }
+      showRailGeneratedStructures();
+      if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+        refreshRailSelectionTargets();
+        setMeshListOpacity(targetObjects, 1);
+      }
+      return true;
     } else {
       TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
+    }
+    const created = collectNewStructureObjectsSince(beforeIds);
+    appendLinkedObjectIdsToPins(pinsForLink, created);
+    lastRailConstructionCreatedObjects = created;
+    showRailGeneratedStructures();
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
     }
     if (railConstructionStatus) {
       railConstructionStatus.textContent = `生成完了: ${kind} / pins=${pins.length}`;
@@ -1190,6 +2248,57 @@ const threeUi = document.getElementById('three-ui');
       differencePathType = differencePathSelect.value || 'smooth';
       refreshDifferencePreview();
     });
+  }
+  differenceLineSelect = ensureDifferenceLineSelect();
+  if (differenceLineSelect) {
+    differenceLineSelect.addEventListener('change', () => {
+      differenceLineTrackNames = getDifferenceSelectedLineTrackNamesFromUI();
+      syncDifferenceLineSelectSelectionUI();
+      refreshDifferenceLineOnlyPreview();
+      updateDifferenceLineSelectionStatus();
+    });
+  }
+  if (differenceLineHeightInput) {
+    const applyDifferenceLineHeight = () => {
+      readDifferenceLineBandHeight();
+      differenceLineHeightInput.value = String(differenceLineBandHeight);
+      console.log('[Difference][line] apply height:', differenceLineBandHeight);
+      if (!differenceLinePickModeActive && differenceSpaceTransformMode !== 'line') {
+        differenceSpaceModeActive = true;
+        differenceLinePickModeActive = true;
+        differenceSpaceTransformMode = 'line';
+        if (differencePanel) {
+          differencePanel.style.display = 'block';
+        }
+        toggleRailTube(true);
+        setDifferenceLineOptions();
+      }
+      const refreshed = refreshDifferenceLineOnlyPreview(true);
+      if (!refreshed && differenceStatus) {
+        differenceStatus.textContent = 'lineモードで適用するとプレビューを更新できます。';
+      }
+    };
+    differenceLineHeightInput.addEventListener('change', () => {
+      readDifferenceLineBandHeight();
+      differenceLineHeightInput.value = String(differenceLineBandHeight);
+    });
+    differenceLineHeightInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') { return; }
+      event.preventDefault();
+      applyDifferenceLineHeight();
+    });
+    if (differenceLineHeightApplyButton) {
+      const onApplyPress = (event) => {
+        event?.preventDefault?.();
+        applyDifferenceLineHeight();
+      };
+      differenceLineHeightApplyButton.addEventListener('click', onApplyPress);
+      differenceLineHeightApplyButton.addEventListener('pointerup', onApplyPress);
+      differenceLineHeightApplyButton.addEventListener('touchend', onApplyPress, { passive: false });
+    } else {
+      // フォールバック: ボタンが無いレイアウトでは change 時に適用
+      refreshDifferenceLineOnlyPreview();
+    }
   }
   if (differenceUnifyButton) {
     differenceUnifyButton.addEventListener('click', () => {
@@ -1546,6 +2655,11 @@ const threeUi = document.getElementById('three-ui');
     styleSelectedObjects.clear();
   }
 
+  function clearGroupSelection() {
+    groupSelectedObjects.forEach((mesh) => setCopyObjectVisual(mesh, false));
+    groupSelectedObjects.clear();
+  }
+
   function ensureCopyObjectRefId(mesh) {
     if (!mesh) { return null; }
     const current = mesh?.userData?.copyObjectRefId;
@@ -1617,17 +2731,30 @@ const threeUi = document.getElementById('three-ui');
 
   function getConstructionCopyTargets() {
     const out = [];
+    const seenIds = new Set();
+    const pushUnique = (obj) => {
+      if (!obj?.parent) { return; }
+      if (seenIds.has(obj.id)) { return; }
+      seenIds.add(obj.id);
+      out.push(obj);
+    };
     decorationObjects.forEach((mesh) => {
       if (mesh?.parent && mesh?.userData?.decorationType) {
-        out.push(mesh);
+        pushUnique(mesh);
       }
     });
     scene.traverse((obj) => {
       if (!obj?.parent) { return; }
-      if (obj?.name !== 'SteelFrameSegment') { return; }
       if (obj?.userData?.steelFramePoint) { return; }
+      const hasConstructionMeta = Boolean(
+        obj?.name === 'SteelFrameSegment'
+        || obj?.userData?.decorationType
+        || String(obj?.userData?.railPlacementGroupId || '').trim()
+        || String(obj?.userData?.structureGroupId || '').trim()
+      );
+      if (!hasConstructionMeta) { return; }
       registerCopyObject(obj);
-      out.push(obj);
+      pushUnique(obj);
     });
     return out;
   }
@@ -1675,6 +2802,13 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function resolveSelectableHitObject(mesh) {
+    if (editObject === 'RAIL'
+      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      const railStructureHandle = resolveRailStructureHandleFromHit(mesh);
+      if (railStructureHandle) {
+        return railStructureHandle;
+      }
+    }
     const guideGrid = resolveGuideGridFromHit(mesh);
     if (guideGrid) {
       return guideGrid;
@@ -1692,11 +2826,28 @@ const threeUi = document.getElementById('three-ui');
     }
     decoRoot = decoRoot || mesh;
     const inConstructionObjectSelectMode = (copyModeActive && objectEditMode === 'COPY')
-      || (styleModeActive && objectEditMode === 'STYLE');
+      || (styleModeActive && objectEditMode === 'STYLE')
+      || (groupModeActive && objectEditMode === 'GROUP');
     if (!inConstructionObjectSelectMode) {
       return decoRoot;
     }
     return resolveCopySelectableFromHit(decoRoot) || decoRoot;
+  }
+
+  function resolveRailStructureHandleFromHit(mesh) {
+    if (!mesh?.parent) { return null; }
+    if (mesh?.userData?.railStructureHandle && mesh?.userData?.railStructurePickHandle) {
+      return mesh;
+    }
+    return null;
+  }
+
+  function resolveRailStructurePickHandleFromObject(obj) {
+    if (!obj) { return null; }
+    if (obj?.userData?.railStructureHandle && obj?.userData?.railStructurePickHandle) {
+      return obj;
+    }
+    return resolveRailStructureHandleFromHit(obj);
   }
 
   function isCopySelectableMesh(mesh) {
@@ -1707,6 +2858,12 @@ const threeUi = document.getElementById('three-ui');
     const target = resolveCopySelectableFromHit(mesh);
     if (!target || target?.userData?.steelFramePoint) { return false; }
     return target?.name === 'SteelFrameSegment';
+  }
+
+  function isGroupSelectableMesh(mesh) {
+    const target = resolveCopySelectableFromHit(mesh);
+    if (!target || target?.userData?.steelFramePoint) { return false; }
+    return Boolean(target?.userData?.decorationType) || target?.name === 'SteelFrameSegment';
   }
 
   function toggleCopySelection(mesh) {
@@ -1739,6 +2896,31 @@ const threeUi = document.getElementById('three-ui');
     }
     styleSelectedObjects.add(target);
     setCopyObjectVisual(target, true);
+    return true;
+  }
+
+  function toggleGroupSelection(mesh) {
+    const target = resolveCopySelectableFromHit(mesh);
+    if (!target || target?.userData?.steelFramePoint) { return false; }
+    if (!(target?.userData?.decorationType || target?.name === 'SteelFrameSegment')) {
+      return false;
+    }
+    const groupId = String(target?.userData?.structureGroupId || '').trim();
+    const groupedTargets = groupId
+      ? getConstructionCopyTargets().filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === groupId)
+      : [target];
+    const allSelected = groupedTargets.length > 0 && groupedTargets.every((obj) => groupSelectedObjects.has(obj));
+    if (allSelected) {
+      groupedTargets.forEach((obj) => {
+        groupSelectedObjects.delete(obj);
+        setCopyObjectVisual(obj, false);
+      });
+      return false;
+    }
+    groupedTargets.forEach((obj) => {
+      groupSelectedObjects.add(obj);
+      setCopyObjectVisual(obj, true);
+    });
     return true;
   }
 
@@ -1836,6 +3018,458 @@ const threeUi = document.getElementById('three-ui');
     updateStylePanelUI({ clearInputs: true });
   }
 
+  function updateGroupModePanelUI() {
+    ensureGroupModeScaleControls();
+    const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
+    const count = selected.length;
+    setGroupModeIdOptions();
+    if (groupModeCreateButton) {
+      groupModeCreateButton.disabled = count < 1;
+    }
+    if (groupModeAppendButton) {
+      groupModeAppendButton.disabled = count < 1 || !selectedAppendGroupId;
+    }
+    if (groupModeArrangeButton) {
+      groupModeArrangeButton.disabled = count < 1 || !selectedGroupTrackName;
+    }
+    const selectedGroupId = getSelectedSingleStructureGroupId();
+    if (groupModeScaleButton) {
+      groupModeScaleButton.disabled = !selectedGroupId;
+    }
+    if (groupModeScaleInput && selectedGroupId) {
+      const currentScale = getCurrentStructureGroupScale(selectedGroupId);
+      if (Number.isFinite(currentScale) && currentScale > 0) {
+        groupModeScaleInput.placeholder = currentScale.toFixed(3);
+      }
+    }
+    if (!groupModeActive) { return; }
+    const ids = selected
+      .map((mesh) => String(mesh?.userData?.structureGroupId || '未設定'))
+      .filter((v, i, arr) => arr.indexOf(v) === i && v !== '未設定');
+    const groupText = ids.length > 0 ? ids.join(', ') : '未設定';
+    setGroupModeStatus([
+      `選択構造物: ${count}`,
+      `グループID: ${groupText}`,
+      selectedAppendGroupId ? `追加先ID: ${selectedAppendGroupId}` : '追加先ID: 未選択',
+      selectedGroupTrackName ? `路線: ${selectedGroupTrackName}` : '路線: 未選択',
+    ].join('\n'));
+  }
+
+  function syncStructureGroupSequenceFromExisting() {
+    let maxSeq = 0;
+    const collect = (idRaw) => {
+      const id = String(idRaw || '');
+      const m = id.match(/^structure_group_(\d+)$/);
+      if (!m) { return; }
+      const n = Number(m[1]) || 0;
+      if (n > maxSeq) { maxSeq = n; }
+    };
+    (steelFrameMode?.getSegmentMeshes?.() || []).forEach((mesh) => collect(mesh?.userData?.structureGroupId));
+    decorationObjects.forEach((mesh) => collect(mesh?.userData?.structureGroupId));
+    structureGroupSeq = Math.max(structureGroupSeq, maxSeq + 1);
+  }
+
+  function getStructureAnchorInfo(mesh) {
+    if (!mesh?.parent) { return null; }
+    if (mesh?.name === 'SteelFrameSegment') {
+      const refs = getCopyStructurePointMeshes(mesh).filter((point) => point?.parent && point?.position);
+      if (refs.length > 0) {
+        const center = refs
+          .reduce((acc, point) => acc.add(point.position), new THREE.Vector3())
+          .multiplyScalar(1 / refs.length);
+        return { mesh, refs, anchor: center };
+      }
+    }
+    if (mesh?.position) {
+      return { mesh, refs: [], anchor: mesh.position.clone() };
+    }
+    return null;
+  }
+
+  function getSelectedSingleStructureGroupId() {
+    const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
+    const ids = selected
+      .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
+      .filter((id) => id.length > 0);
+    if (ids.length < 1) { return ''; }
+    const first = ids[0];
+    return ids.every((id) => id === first) ? first : '';
+  }
+
+  function getCurrentStructureGroupScale(groupId) {
+    const id = String(groupId || '').trim();
+    if (!id) { return DEFAULT_STRUCTURE_GROUP_SCALE; }
+    const members = getConstructionCopyTargets()
+      .filter((obj) => obj?.parent)
+      .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === id);
+    for (let i = 0; i < members.length; i += 1) {
+      const s = Number(members[i]?.userData?.structureGroupScale);
+      if (Number.isFinite(s) && s > 0) {
+        return s;
+      }
+    }
+    return DEFAULT_STRUCTURE_GROUP_SCALE;
+  }
+
+  function applyStructureGroupScale(groupId, targetScaleRaw) {
+    const id = String(groupId || '').trim();
+    const targetScale = Number(targetScaleRaw);
+    if (!id) {
+      setGroupModeStatus('同一のグループIDを選択してください。');
+      return false;
+    }
+    if (!Number.isFinite(targetScale) || targetScale <= 0) {
+      setGroupModeStatus('scale は 0 より大きい数値を入力してください。');
+      return false;
+    }
+    const members = getConstructionCopyTargets()
+      .filter((obj) => obj?.parent)
+      .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === id);
+    if (members.length < 1) {
+      setGroupModeStatus(`グループが見つかりません: ${id}`);
+      return false;
+    }
+    const currentScale = getCurrentStructureGroupScale(id);
+    const factor = targetScale / currentScale;
+    if (!Number.isFinite(factor) || factor <= 0) {
+      setGroupModeStatus('scale の適用係数が不正です。');
+      return false;
+    }
+    const anchors = members.map((mesh) => getStructureAnchorInfo(mesh)).filter(Boolean);
+    if (anchors.length < 1) {
+      setGroupModeStatus('グループ中心を計算できません。');
+      return false;
+    }
+    const center = anchors
+      .reduce((acc, info) => acc.add(info.anchor), new THREE.Vector3())
+      .multiplyScalar(1 / anchors.length);
+    const movedPointMeshes = [];
+    const movedPointIds = new Set();
+    const scaleSegmentStyleByFactor = (mesh, scaleFactor) => {
+      if (!mesh || mesh.name !== 'SteelFrameSegment') { return; }
+      const profile = normalizeSteelFrameSegmentProfile(mesh?.userData?.steelFrameSegmentProfile || 'round');
+      const rawStyle = mesh?.userData?.steelFrameSegmentStyle;
+      if (!rawStyle || typeof rawStyle !== 'object') { return; }
+      const nextStyle = { ...rawStyle };
+      if (Number.isFinite(nextStyle.beamWidthHorizontal)) {
+        nextStyle.beamWidthHorizontal = Number(nextStyle.beamWidthHorizontal) * scaleFactor;
+      }
+      // corrugated_bar は Y=角度, Z=波密度として使っているため倍率変更しない。
+      if (profile !== 'corrugated_bar') {
+        if (Number.isFinite(nextStyle.beamHeightVertical)) {
+          nextStyle.beamHeightVertical = Number(nextStyle.beamHeightVertical) * scaleFactor;
+        }
+        if (Number.isFinite(nextStyle.beamThickness)) {
+          nextStyle.beamThickness = Number(nextStyle.beamThickness) * scaleFactor;
+        }
+      }
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        steelFrameSegmentStyle: nextStyle,
+      };
+    };
+    const movePointMesh = (pointMesh) => {
+      if (!pointMesh?.parent || !pointMesh?.position || movedPointIds.has(pointMesh.id)) { return; }
+      const offset = pointMesh.position.clone().sub(center).multiplyScalar(factor);
+      pointMesh.position.copy(center.clone().add(offset));
+      pointMesh.userData = {
+        ...(pointMesh.userData || {}),
+        structureGroupScale: targetScale,
+      };
+      movedPointIds.add(pointMesh.id);
+      movedPointMeshes.push(pointMesh);
+    };
+
+    members.forEach((mesh) => {
+      if (!mesh?.parent) { return; }
+      if (mesh?.name === 'SteelFrameSegment') {
+        scaleSegmentStyleByFactor(mesh, factor);
+        const refs = getCopyStructurePointMeshes(mesh);
+        refs.forEach((pointMesh) => movePointMesh(pointMesh));
+      } else if (mesh?.position) {
+        const offset = mesh.position.clone().sub(center).multiplyScalar(factor);
+        mesh.position.copy(center.clone().add(offset));
+        if (mesh?.scale?.multiplyScalar) {
+          mesh.scale.multiplyScalar(factor);
+        }
+      }
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        structureGroupScale: targetScale,
+      };
+    });
+    drawingObject(movedPointMeshes.length > 0 ? movedPointMeshes : null);
+    refreshCreateTargetsForSearch();
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
+    }
+    setGroupModeStatus(`グループ拡縮: ${id}\nscale: ${currentScale.toFixed(3)} -> ${targetScale.toFixed(3)}`);
+    updateGroupModePanelUI();
+    return true;
+  }
+
+  function applyStructureGrouping() {
+    syncStructureGroupSequenceFromExisting();
+    const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
+    if (selected.length < 1) {
+      setGroupModeStatus('構造物を1つ以上選択してください。');
+      return false;
+    }
+    const groupId = `structure_group_${structureGroupSeq}`;
+    structureGroupSeq += 1;
+    const groupScale = DEFAULT_STRUCTURE_GROUP_SCALE;
+    selected.forEach((mesh) => {
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        structureGroupId: groupId,
+        structureGroupScale: groupScale,
+      };
+    });
+    setGroupModeStatus(`グループ化しました: ${groupId}\n対象: ${selected.length}\nscale: ${groupScale}`);
+    updateGroupModePanelUI();
+    return true;
+  }
+
+  function appendSelectionToStructureGroup(groupId) {
+    const id = String(groupId || '').trim();
+    if (!id) {
+      setGroupModeStatus('追加先グループIDを選択してください。');
+      return false;
+    }
+    const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
+    if (selected.length < 1) {
+      setGroupModeStatus('追加対象の構造物を選択してください。');
+      return false;
+    }
+    const currentMembers = getConstructionCopyTargets()
+      .filter((obj) => obj?.parent)
+      .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === id);
+    const inheritedScale = (() => {
+      for (let i = 0; i < currentMembers.length; i += 1) {
+        const raw = Number(currentMembers[i]?.userData?.structureGroupScale);
+        if (Number.isFinite(raw) && raw > 0) {
+          return raw;
+        }
+      }
+      return DEFAULT_STRUCTURE_GROUP_SCALE;
+    })();
+    selected.forEach((mesh) => {
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        structureGroupId: id,
+        structureGroupScale: inheritedScale,
+      };
+    });
+    selectedAppendGroupId = id;
+    setGroupModeStatus(`既存グループへ追加: ${id}\n対象: ${selected.length}\nscale: ${inheritedScale}`);
+    updateGroupModePanelUI();
+    return true;
+  }
+
+  function arrangeGroupObjectsEvenlyOnTrack(trackName) {
+    const selectedRaw = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
+    const selected = (() => {
+      const out = [];
+      const seen = new Set();
+      const push = (mesh) => {
+        if (!mesh?.parent || seen.has(mesh.id)) { return; }
+        seen.add(mesh.id);
+        out.push(mesh);
+      };
+      selectedRaw.forEach((mesh) => push(mesh));
+      const groupIds = new Set(
+        selectedRaw
+          .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
+          .filter((id) => id.length > 0)
+      );
+      if (groupIds.size > 0) {
+        getConstructionCopyTargets().forEach((mesh) => {
+          const gid = String(mesh?.userData?.structureGroupId || '').trim();
+          if (gid && groupIds.has(gid)) {
+            push(mesh);
+          }
+        });
+      }
+      return out;
+    })();
+    if (selected.length < 1) {
+      setGroupModeStatus('等間隔配置には構造物選択が必要です。');
+      return false;
+    }
+    const track = getRailTrackByName(trackName);
+    if (!track?.curve) {
+      setGroupModeStatus(`路線が見つかりません: ${trackName || '(empty)'}`);
+      return false;
+    }
+
+    const items = selected
+      .map((mesh) => getStructureAnchorInfo(mesh))
+      .filter(Boolean)
+      .map((entry) => {
+        const nearest = getNearestPointOnRailTrackCurve(track, entry.anchor, 900);
+        if (!nearest) { return null; }
+        return {
+          ...entry,
+          t: nearest.t,
+          nearestPoint: nearest.point,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.t - b.t);
+
+    if (items.length < 1) {
+      setGroupModeStatus('路線上の配置位置を算出できませんでした。');
+      return false;
+    }
+
+    const tStart = items[0].t;
+    const tEnd = items[items.length - 1].t;
+    const pointItems = [];
+    const objectItems = [];
+    const createdObjects = [];
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const getTrackYawAt = (tRaw) => {
+      const tClamped = THREE.MathUtils.clamp(Number(tRaw) || 0, 0, 1);
+      if (!track?.curve || typeof track.curve.getTangentAt !== 'function') {
+        return 0;
+      }
+      const tangent = track.curve.getTangentAt(tClamped).clone().setY(0);
+      if (tangent.lengthSq() <= 1e-8) { return 0; }
+      tangent.normalize();
+      return Math.atan2(tangent.x, tangent.z);
+    };
+    const applyTransformByTrackYaw = (source, targetMesh, sourceAnchor, targetAnchor, yawDeltaRad) => {
+      if (!source || !targetMesh || !sourceAnchor || !targetAnchor) { return; }
+      const quat = new THREE.Quaternion().setFromAxisAngle(yAxis, yawDeltaRad);
+      const offset = source.position.clone().sub(sourceAnchor).applyQuaternion(quat);
+      targetMesh.position.copy(targetAnchor.clone().add(offset));
+      if (source?.quaternion?.isQuaternion && targetMesh?.quaternion?.isQuaternion) {
+        targetMesh.quaternion.copy(source.quaternion);
+        targetMesh.quaternion.premultiply(quat);
+      } else if (source?.rotation && targetMesh?.rotation) {
+        targetMesh.rotation.copy(source.rotation);
+        targetMesh.rotation.y += yawDeltaRad;
+      }
+    };
+
+    items.forEach((entry, index) => {
+      const sourceT = THREE.MathUtils.clamp(entry.t, 0, 1);
+      const t = items.length === 1
+        ? entry.t
+        : (tStart + ((tEnd - tStart) * index) / (items.length - 1));
+      const targetT = THREE.MathUtils.clamp(t, 0, 1);
+      const target = track.curve.getPointAt(targetT);
+      const delta = target.clone().sub(entry.anchor);
+      const sourceYaw = getTrackYawAt(sourceT);
+      const targetYaw = getTrackYawAt(targetT);
+      const yawDeltaRad = targetYaw - sourceYaw;
+      const rotateQuat = new THREE.Quaternion().setFromAxisAngle(yAxis, yawDeltaRad);
+      const src = entry.mesh;
+      const structureGroupId = src?.userData?.structureGroupId ?? null;
+
+      if (src?.userData?.decorationType) {
+        const decorationType = normalizeDecorationType(src.userData.decorationType);
+        const cloned = decorationType === 'led_board'
+          ? cloneLedBoardDecoration(src, new THREE.Vector3(), { structureGroupId })
+          : cloneRectSpotLightDecoration(src, new THREE.Vector3(), { structureGroupId });
+        if (cloned) {
+          applyTransformByTrackYaw(src, cloned, entry.anchor, target, yawDeltaRad);
+          scene.add(cloned);
+          decorationObjects.push(cloned);
+          objectItems.push(cloned);
+          createdObjects.push(cloned);
+        }
+        return;
+      }
+
+      if (src?.name === 'SteelFrameSegment') {
+        const srcPointRefs = getCopyStructurePointMeshes(src);
+        const copiedPointRefs = srcPointRefs
+          .map((pointMesh) => {
+            if (!pointMesh?.userData?.steelFramePoint) { return null; }
+            const lineIndex = Number.isInteger(pointMesh?.userData?.steelFrameLine)
+              ? pointMesh.userData.steelFrameLine
+              : 0;
+            const copiedPoint = new THREE.Mesh(cube_geometry, cube_material.clone());
+            const local = pointMesh.position.clone().sub(entry.anchor).applyQuaternion(rotateQuat);
+            copiedPoint.position.copy(target.clone().add(local));
+            copiedPoint.scale.copy(pointMesh.scale);
+            copiedPoint.userData = {
+              ...(pointMesh.userData || {}),
+              steelFramePoint: true,
+              steelFrameLine: lineIndex,
+              steelFrameCopied: Boolean(pointMesh?.userData?.steelFrameCopied),
+              steelFrameCopyGroupId: pointMesh?.userData?.steelFrameCopyGroupId ?? null,
+            };
+            delete copiedPoint.userData.guideCurve;
+            delete copiedPoint.userData.guideControlIndex;
+            steelFrameMode.addExistingPoint(copiedPoint, lineIndex);
+            pointItems.push({ mesh: copiedPoint, lineIndex });
+            return copiedPoint;
+          })
+          .filter(Boolean);
+
+        let clonedSegment = null;
+        try {
+          clonedSegment = cloneObjectVisualTreeWithoutUserData(src) || src.clone(true);
+        } catch (err) {
+          console.warn('[group] segment clone failed', err);
+          clonedSegment = cloneObjectVisualTreeWithoutUserData(src);
+        }
+        if (clonedSegment) {
+          clonedSegment.name = src?.name || clonedSegment.name || 'SteelFrameSegment';
+          applyTransformByTrackYaw(src, clonedSegment, entry.anchor, target, yawDeltaRad);
+          clonedSegment.userData = {
+            ...(src.userData || {}),
+            steelFrameSegmentPointRefs: copiedPointRefs,
+            structureGroupId,
+          };
+          scene.add(clonedSegment);
+          registerCopyObject(clonedSegment);
+          steelFrameMode?.addExistingSegmentMesh?.(clonedSegment);
+          objectItems.push(clonedSegment);
+          createdObjects.push(clonedSegment);
+        }
+        return;
+      }
+
+      if (src?.clone) {
+        const cloned = src.clone(true);
+        applyTransformByTrackYaw(src, cloned, entry.anchor, target, yawDeltaRad);
+        cloned.userData = {
+          ...(src.userData || {}),
+          structureGroupId,
+        };
+        scene.add(cloned);
+        objectItems.push(cloned);
+        createdObjects.push(cloned);
+      }
+    });
+
+    if (pointItems.length > 0 || objectItems.length > 0) {
+      pushCreateHistory({
+        type: 'copy_items',
+        pointItems,
+        objectItems,
+      });
+      if (pointItems.length > 0) {
+        drawingObject(pointItems.map((item) => item.mesh));
+      }
+      clearGroupSelection();
+      createdObjects.forEach((mesh) => {
+        if (!mesh?.parent) { return; }
+        groupSelectedObjects.add(mesh);
+        setCopyObjectVisual(mesh, true);
+      });
+    }
+
+    refreshCreateTargetsForSearch();
+    setGroupModeStatus(`コピー等間隔配置: ${trackName}\n生成: ${createdObjects.length}`);
+    updateGroupModePanelUI();
+    return true;
+  }
+
   function parseCopyOffsetInput(raw, fallback = 0) {
     const text = String(raw ?? '').trim();
     if (!text) { return fallback; }
@@ -1874,10 +3508,16 @@ const threeUi = document.getElementById('three-ui');
     syncRotationInputGhostHints();
   }
 
-  function cloneLedBoardDecoration(source, offset) {
+  function cloneLedBoardDecoration(source, offset, options = {}) {
+    const structureGroupId = options?.structureGroupId ?? source?.userData?.structureGroupId ?? null;
+    const structureGroupScale = Number(options?.structureGroupScale ?? source?.userData?.structureGroupScale ?? 1) || 1;
+    const scaleMultiplier = Number(options?.structureGroupScale);
     const cloned = createLedBoardDecoration(source.position.clone().add(offset));
     cloned.quaternion.copy(source.quaternion);
     cloned.scale.copy(source.scale);
+    if (Number.isFinite(scaleMultiplier) && scaleMultiplier > 0) {
+      cloned.scale.multiplyScalar(scaleMultiplier);
+    }
     const srcData = source?.userData?.ledBoardData || {};
     cloned.userData = {
       ...(cloned.userData || {}),
@@ -1889,19 +3529,29 @@ const threeUi = document.getElementById('three-ui');
         line2: String(srcData.line2 || ''),
         line3: String(srcData.line3 || ''),
       },
+      structureGroupId,
+      structureGroupScale,
     };
     renderLedBoardTexture(cloned);
     return cloned;
   }
 
-  function cloneRectSpotLightDecoration(source, offset) {
+  function cloneRectSpotLightDecoration(source, offset, options = {}) {
+    const structureGroupId = options?.structureGroupId ?? source?.userData?.structureGroupId ?? null;
+    const structureGroupScale = Number(options?.structureGroupScale ?? source?.userData?.structureGroupScale ?? 1) || 1;
+    const scaleMultiplier = Number(options?.structureGroupScale);
     const cloned = createRectSpotLightDecoration(source.position.clone().add(offset));
     cloned.quaternion.copy(source.quaternion);
     cloned.scale.copy(source.scale);
+    if (Number.isFinite(scaleMultiplier) && scaleMultiplier > 0) {
+      cloned.scale.multiplyScalar(scaleMultiplier);
+    }
     cloned.userData = {
       ...(cloned.userData || {}),
       planeRef: source?.userData?.planeRef || null,
       baseColor: Number(source?.userData?.baseColor) || Number(cloned?.userData?.baseColor) || 0x2b2f36,
+      structureGroupId,
+      structureGroupScale,
     };
     return cloned;
   }
@@ -2166,6 +3816,12 @@ const threeUi = document.getElementById('three-ui');
   function allocateSteelFrameCopyGroupId() {
     const id = `steel_copy_group_${steelFrameCopyGroupSeq}`;
     steelFrameCopyGroupSeq += 1;
+    return id;
+  }
+
+  function allocateRailPlacementGroupId() {
+    const id = `rail_place_group_${railPlacementGroupSeq}`;
+    railPlacementGroupSeq += 1;
     return id;
   }
 
@@ -2642,6 +4298,33 @@ const threeUi = document.getElementById('three-ui');
       && !pointRotateModeActive
       && movePlaneMode !== 'change_angle') {
       applyMovePointFromPanel();
+      return;
+    }
+    if (editObject === 'RAIL'
+      && objectEditMode === ROTATE_MODE
+      && choice_object?.userData?.railStructureHandle
+      && choice_object?.userData?.railStructurePickHandle) {
+      const yRaw = rotationInputY?.value?.trim?.() ?? '';
+      const deltaDeg = Number.parseFloat(yRaw);
+      if (!Number.isFinite(deltaDeg)) { return; }
+      const ok = applyRailStructureGroupYawDelta(choice_object.userData.railStructureGroupKey, deltaDeg);
+      if (!ok) { return; }
+      if (rotationInputY) {
+        rotationInputY.value = '';
+        rotationInputY.placeholder = `+${Number(deltaDeg).toFixed(1)}`;
+      }
+      showRailGeneratedStructures();
+      refreshRailSelectionTargets();
+      const selectedMesh = targetObjects.find((mesh) =>
+        mesh?.userData?.railStructureHandle
+        && mesh?.userData?.railStructureGroupKey === choice_object?.userData?.railStructureGroupKey
+      ) || null;
+      if (selectedMesh) {
+        choice_object = selectedMesh;
+        if (selectedMesh?.material?.color?.set) {
+          selectedMesh.material.color.set(0x00ff00);
+        }
+      }
       return;
     }
     if (pointRotateModeActive && pointRotateTarget) {
@@ -4652,6 +6335,9 @@ const {
   railTrackDefs,
   railTrackCurveMap,
 } = trackSetup;
+setGroupModeTrackOptions();
+setDifferenceLineOptions();
+updateGroupModePanelUI();
 
 let railTubeMesh = null;
 let railTubeDirty = false;
@@ -4694,6 +6380,9 @@ let structureHoverTrackName = null;
 let structureHoverPin = null;
 const structurePinnedPins = [];
 const constructionSelectedPins = [];
+let railStructurePickMeshes = [];
+let railGroupDragState = null;
+let railRotateDragState = null;
 let lastPointerScreen = null;
 let structurePointerBlockedByUI = false;
 let pointerBlockedByUI = false;
@@ -4771,6 +6460,122 @@ function toggleRailTube(visible) {
 
 function getRailTrackByName(trackName) {
   return railTrackDefs.find((track) => track.name === trackName) || null;
+}
+
+function setDifferenceLineOptions() {
+  differenceLineSelect = ensureDifferenceLineSelect();
+  if (!differenceLineSelect) { return; }
+  differenceLineSelect.multiple = true;
+  differenceLineSelect.size = 6;
+  const currentValues = Array.isArray(differenceLineTrackNames)
+    ? differenceLineTrackNames.slice()
+    : [];
+  differenceLineSelect.innerHTML = '';
+  const allOption = document.createElement('option');
+  allOption.value = 'all';
+  allOption.textContent = '全路線';
+  differenceLineSelect.appendChild(allOption);
+  railTrackDefs.forEach((track) => {
+    if (!track?.name) { return; }
+    const option = document.createElement('option');
+    option.value = String(track.name);
+    option.textContent = String(track.name);
+    differenceLineSelect.appendChild(option);
+  });
+  const validSet = new Set(railTrackDefs.map((track) => String(track?.name || '')));
+  const nextValues = currentValues.filter((name) => validSet.has(String(name)));
+  differenceLineTrackNames = Array.from(new Set(nextValues));
+  const useAll = differenceLineTrackNames.length < 1;
+  Array.from(differenceLineSelect.options).forEach((opt) => {
+    if (!opt) { return; }
+    if (opt.value === 'all') {
+      opt.selected = useAll;
+      return;
+    }
+    opt.selected = differenceLineTrackNames.includes(opt.value);
+  });
+}
+
+function updateDifferenceLineSelectionStatus() {
+  if (!differenceStatus) { return; }
+  if (!Array.isArray(differenceLineTrackNames) || differenceLineTrackNames.length < 1) {
+    differenceStatus.textContent = 'line: 全路線が対象です。線路をクリック/タップで選択できます。';
+    return;
+  }
+  differenceStatus.textContent = `line選択: ${differenceLineTrackNames.join(', ')}`;
+}
+
+function refreshDifferenceLineOnlyPreview(force = false) {
+  if (!force && !differenceLinePickModeActive && differenceSpaceTransformMode !== 'line') { return false; }
+  const appliedHeight = readDifferenceLineBandHeight();
+  console.log('[Difference][line] refresh preview start', {
+    force,
+    height: appliedHeight,
+    mode: differenceSpaceTransformMode,
+    pickMode: differenceLinePickModeActive,
+    selectedTracks: Array.isArray(differenceLineTrackNames) ? differenceLineTrackNames.slice() : [],
+  });
+  clearDifferencePreviewTube();
+  const cutter = buildDifferenceCutterMeshFromRailTracks({ bandHeight: appliedHeight });
+  if (!cutter) {
+    console.warn('[Difference][line] refresh preview failed: cutter is null');
+    updateDifferenceStatus('line: カッター形状の作成に失敗しました。');
+    return false;
+  }
+  differencePreviewTube = cutter;
+  scene.add(cutter);
+  console.log('[Difference][line] refresh preview done', {
+    source: cutter.userData?.differenceCutterSource || '',
+    railTrackCount: cutter.userData?.railTrackCount || 0,
+    rightEdge: cutter.userData?.rightEdgeTrackName || '',
+    leftEdge: cutter.userData?.leftEdgeTrackName || '',
+    height: appliedHeight,
+  });
+  return true;
+}
+
+function syncDifferenceLineSelectSelectionUI() {
+  differenceLineSelect = ensureDifferenceLineSelect();
+  if (!differenceLineSelect) { return; }
+  const useAll = !Array.isArray(differenceLineTrackNames) || differenceLineTrackNames.length < 1;
+  Array.from(differenceLineSelect.options).forEach((opt) => {
+    if (!opt) { return; }
+    if (opt.value === 'all') {
+      opt.selected = useAll;
+      return;
+    }
+    opt.selected = !useAll && differenceLineTrackNames.includes(opt.value);
+  });
+}
+
+function toggleDifferenceLineTrackSelection(trackName) {
+  const name = String(trackName || '').trim();
+  if (!name) { return false; }
+  const set = new Set(Array.isArray(differenceLineTrackNames) ? differenceLineTrackNames : []);
+  if (set.has(name)) {
+    set.delete(name);
+  } else {
+    set.add(name);
+  }
+  differenceLineTrackNames = Array.from(set);
+  syncDifferenceLineSelectSelectionUI();
+  refreshDifferenceLineOnlyPreview();
+  updateDifferenceLineSelectionStatus();
+  return true;
+}
+
+function pickDifferenceLineTrackFromPointer() {
+  if (!differenceLinePickModeActive) { return null; }
+  if (!railTubeMesh || railTubeDirty || !railTubeMesh.parent) {
+    toggleRailTube(true);
+  }
+  if (!railTubeMesh?.parent) { return null; }
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObject(railTubeMesh, true)[0] || null;
+  if (!hit) { return null; }
+  const track = resolveRailTrackByTubeHit(hit);
+  const name = String(track?.name || '').trim();
+  return name || null;
 }
 
 function clearRailSelectionLine() {
@@ -4917,6 +6722,37 @@ function resolveRailTrackByTubeHit(hit) {
   return railTrackDefs[idx] || null;
 }
 
+function isRailPointPickMesh(mesh) {
+  return Boolean(
+    mesh?.userData
+    && mesh.userData.trackName != null
+    && mesh.userData.pointIndex != null
+  );
+}
+
+function pickRailMoveTargetFromPointer({ allowRailPoint = true } = {}) {
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(targetObjects, true);
+  if (!Array.isArray(intersects) || intersects.length < 1) { return null; }
+  if (allowRailPoint) {
+    const pointHit = intersects.find((hit) => {
+      const obj = resolveSelectableHitObject(hit?.object || null);
+      return isRailPointPickMesh(obj);
+    }) || null;
+    if (pointHit) {
+      return resolveSelectableHitObject(pointHit.object);
+    }
+  }
+  const handleHit = intersects.find((hit) => {
+    const obj = resolveSelectableHitObject(hit?.object || null);
+    return Boolean(obj?.userData?.railStructureHandle && obj?.userData?.railStructurePickHandle);
+  }) || null;
+  if (handleHit) {
+    return resolveSelectableHitObject(handleHit.object);
+  }
+  return resolveSelectableHitObject(intersects[0].object);
+}
+
 function getInsertIndexOnTrackPoints(points, worldPoint) {
   if (!Array.isArray(points) || points.length < 2 || !worldPoint) { return null; }
   let bestSeg = 0;
@@ -4989,9 +6825,61 @@ function insertRailControlPointFromPointer() {
 }
 
 function refreshRailSelectionTargets() {
-  removeMeshes(targetObjects);
+  clearRailSelectionTargetsOnly();
+  targetObjects = [];
   selectedRailPoint = null;
   clearRailSelectionLine();
+
+  const useStructureHandles = editObject === 'RAIL'
+    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE);
+  if (useStructureHandles) {
+    railStructurePickMeshes = [];
+    const groups = collectRailStructureGroups();
+    groups.forEach((entry) => {
+      const bounds = new THREE.Box3();
+      entry.members.forEach((member) => {
+        if (!member?.parent) { return; }
+        bounds.expandByObject(member);
+      });
+      const boundsCenter = (!bounds.isEmpty())
+        ? bounds.getCenter(new THREE.Vector3())
+        : entry.center.clone();
+      const boundsSize = (!bounds.isEmpty())
+        ? bounds.getSize(new THREE.Vector3())
+        : new THREE.Vector3(1, 1, 1);
+      const sx = Math.max(1.4, boundsSize.x + 0.6);
+      const sy = Math.max(1.2, boundsSize.y + 0.6);
+      const sz = Math.max(1.4, boundsSize.z + 0.6);
+      const footprint = Math.max(sx, sz);
+      const handleMaterial = new THREE.MeshStandardMaterial({
+        color: 0x12b6ff,
+        emissive: 0x0a4f76,
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.45,
+        depthTest: false,
+        depthWrite: false,
+        wireframe: true,
+      });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), handleMaterial);
+      mesh.position.copy(boundsCenter);
+      mesh.scale.set(footprint, sy, footprint);
+      mesh.renderOrder = 9000;
+      mesh.visible = true;
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        railStructureHandle: true,
+        railStructurePickHandle: true,
+        railStructureGroupKey: entry.key,
+      };
+      scene.add(mesh);
+      targetObjects.push(mesh);
+      railStructurePickMeshes.push(mesh);
+    });
+  }
+  if (!useStructureHandles) {
+    railStructurePickMeshes = [];
+  }
 
   railTrackDefs.forEach((track) => {
     track.points.forEach((point, index) => {
@@ -5003,6 +6891,271 @@ function refreshRailSelectionTargets() {
       targetObjects.push(mesh);
     });
   });
+  updateRailSelectionStatus();
+}
+
+function applyRailStructureGroupYawDelta(groupKey, deltaDeg) {
+  const key = String(groupKey || '').trim();
+  const delta = Number(deltaDeg);
+  if (!key || !Number.isFinite(delta) || Math.abs(delta) < 1e-8) { return false; }
+  const group = collectRailStructureGroups().find((entry) => entry.key === key) || null;
+  if (!group || !Array.isArray(group.members) || group.members.length < 1) { return false; }
+  const rad = THREE.MathUtils.degToRad(delta);
+  const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rad);
+  const center = group.center.clone();
+  group.members.forEach((mesh) => {
+    if (!mesh?.parent) { return; }
+    if (mesh?.position?.isVector3) {
+      const offset = mesh.position.clone().sub(center).applyQuaternion(quat);
+      mesh.position.copy(center.clone().add(offset));
+    }
+    if (mesh?.quaternion?.isQuaternion) {
+      mesh.quaternion.premultiply(quat);
+    }
+  });
+  return true;
+}
+
+function clearRailSelectionTargetsOnly() {
+  for (let i = targetObjects.length - 1; i >= 0; i -= 1) {
+    const mesh = targetObjects[i];
+    if (!mesh?.isMesh) { continue; }
+    const isRailPointTarget = mesh?.userData
+      && mesh.userData.trackName != null
+      && mesh.userData.pointIndex != null;
+    const isRailStructureHandle = Boolean(mesh?.userData?.railStructureHandle && mesh?.userData?.railStructurePickHandle);
+    if (!isRailPointTarget && !isRailStructureHandle) { continue; }
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    if (mesh.geometry && typeof mesh.geometry.dispose === 'function') {
+      mesh.geometry.dispose();
+    }
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      mesh.material?.dispose?.();
+    }
+    targetObjects.splice(i, 1);
+  }
+}
+
+function showRailGeneratedStructures() {
+  const structures = getConstructionCopyTargets().filter((mesh) => mesh?.parent);
+  structures.forEach((mesh) => {
+    mesh.visible = true;
+    if (mesh?.userData?.steelFrameCopiedObject) {
+      setCopyObjectVisual(mesh, false);
+    }
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((mat) => {
+        if (!mat) { return; }
+        if ('opacity' in mat) { mat.opacity = 1; }
+        mat.transparent = false;
+      });
+    } else if (mesh.material) {
+      if ('opacity' in mesh.material) { mesh.material.opacity = 1; }
+      mesh.material.transparent = false;
+    }
+  });
+}
+
+function collectRailStructureGroups() {
+  const targets = getConstructionCopyTargets()
+    .filter((obj) => obj?.parent)
+    .filter((obj) => !obj?.userData?.steelFramePoint);
+  const segmentTargets = targets.filter((mesh) => mesh?.name === 'SteelFrameSegment');
+  const parentBySegId = new Map();
+  const findSeg = (id) => {
+    const current = parentBySegId.get(id);
+    if (current == null || current === id) {
+      parentBySegId.set(id, id);
+      return id;
+    }
+    const root = findSeg(current);
+    parentBySegId.set(id, root);
+    return root;
+  };
+  const unionSeg = (aId, bId) => {
+    const ra = findSeg(aId);
+    const rb = findSeg(bId);
+    if (ra === rb) { return; }
+    if (ra < rb) {
+      parentBySegId.set(rb, ra);
+    } else {
+      parentBySegId.set(ra, rb);
+    }
+  };
+  segmentTargets.forEach((seg) => {
+    parentBySegId.set(seg.id, seg.id);
+  });
+
+  const pointToSegIds = new Map();
+  segmentTargets.forEach((seg) => {
+    const refs = getCopyStructurePointMeshes(seg);
+    refs.forEach((pointMesh) => {
+      if (!pointMesh?.parent) { return; }
+      const pointId = Number(pointMesh.id);
+      if (!Number.isFinite(pointId)) { return; }
+      if (!pointToSegIds.has(pointId)) {
+        pointToSegIds.set(pointId, []);
+      }
+      pointToSegIds.get(pointId).push(seg.id);
+    });
+  });
+  pointToSegIds.forEach((segIds) => {
+    if (!Array.isArray(segIds) || segIds.length < 2) { return; }
+    const first = segIds[0];
+    for (let i = 1; i < segIds.length; i += 1) {
+      unionSeg(first, segIds[i]);
+    }
+  });
+
+  const segComponentKeyById = new Map();
+  segmentTargets.forEach((seg) => {
+    const root = findSeg(seg.id);
+    segComponentKeyById.set(seg.id, `seg_component_${root}`);
+  });
+
+  const groupMap = new Map();
+  const ensureGroup = (key, groupId = null) => {
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        key,
+        groupId: groupId || null,
+        members: [],
+      });
+    }
+    return groupMap.get(key);
+  };
+  targets.forEach((mesh) => {
+    const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+    const structureGroupId = String(mesh?.userData?.structureGroupId || '').trim();
+    const copyGroupId = String(mesh?.userData?.steelFrameCopyGroupId || '').trim();
+    const segComponentKey = mesh?.name === 'SteelFrameSegment'
+      ? (segComponentKeyById.get(mesh.id) || null)
+      : null;
+    const key = railPlacementGroupId
+      ? `rail:${railPlacementGroupId}`
+      : structureGroupId
+      ? `gid:${structureGroupId}`
+      : (copyGroupId
+        ? `copy:${copyGroupId}`
+        : (segComponentKey || `single_${mesh.id}`));
+    ensureGroup(key, structureGroupId || null).members.push(mesh);
+  });
+
+  // 装飾で groupId が無い場合、近傍セグメントのリンクグループへ寄せる。
+  const segmentAnchors = segmentTargets.map((seg) => {
+    const info = getStructureAnchorInfo(seg);
+    return info ? { seg, anchor: info.anchor } : null;
+  }).filter(Boolean);
+  const relinkDistanceSq = 0.7 * 0.7;
+  targets.forEach((mesh) => {
+    if (mesh?.name === 'SteelFrameSegment') { return; }
+    const gid = String(mesh?.userData?.structureGroupId || '').trim();
+    const cgid = String(mesh?.userData?.steelFrameCopyGroupId || '').trim();
+    if (gid || cgid) { return; }
+    const decoAnchor = getStructureAnchorInfo(mesh)?.anchor || null;
+    if (!decoAnchor) { return; }
+    let nearestSeg = null;
+    let bestDistSq = Infinity;
+    segmentAnchors.forEach((entry) => {
+      const d = entry.anchor.distanceToSquared(decoAnchor);
+      if (d < bestDistSq) {
+        bestDistSq = d;
+        nearestSeg = entry.seg;
+      }
+    });
+    if (!nearestSeg || bestDistSq > relinkDistanceSq) { return; }
+    const segKey = segComponentKeyById.get(nearestSeg.id);
+    if (!segKey) { return; }
+    // 現在所属(single_xxx)から外してセグメント系グループへ移す。
+    const currentKey = `single_${mesh.id}`;
+    const currentGroup = groupMap.get(currentKey);
+    if (currentGroup) {
+      currentGroup.members = currentGroup.members.filter((m) => m?.id !== mesh.id);
+      if (currentGroup.members.length < 1) {
+        groupMap.delete(currentKey);
+      }
+    }
+    ensureGroup(segKey, null).members.push(mesh);
+  });
+
+  const out = [];
+  groupMap.forEach((group) => {
+    const anchors = group.members
+      .map((mesh) => getStructureAnchorInfo(mesh))
+      .filter(Boolean);
+    if (anchors.length < 1) { return; }
+    const center = anchors
+      .reduce((acc, entry) => acc.add(entry.anchor), new THREE.Vector3())
+      .multiplyScalar(1 / anchors.length);
+    out.push({
+      ...group,
+      center,
+      anchors,
+    });
+  });
+  return out;
+}
+
+function beginRailStructureGroupDrag(handleMesh) {
+  railGroupDragState = null;
+  const resolvedHandle = resolveRailStructurePickHandleFromObject(handleMesh) || handleMesh;
+  if (!resolvedHandle?.userData?.railStructureHandle) {
+    railGroupDragState = null;
+    return false;
+  }
+  const groupKey = String(resolvedHandle?.userData?.railStructureGroupKey || '').trim();
+  if (!groupKey) {
+    railGroupDragState = null;
+    return false;
+  }
+  const group = collectRailStructureGroups().find((entry) => entry.key === groupKey) || null;
+  if (!group || !Array.isArray(group.members) || group.members.length < 1) {
+    railGroupDragState = null;
+    return false;
+  }
+  const members = group.members.map((mesh) => {
+    const anchorInfo = getStructureAnchorInfo(mesh);
+    if (!anchorInfo) { return null; }
+    return {
+      mesh,
+      startPos: mesh.position.clone(),
+      startQuat: mesh?.quaternion?.clone ? mesh.quaternion.clone() : null,
+      startAnchor: anchorInfo.anchor.clone(),
+    };
+  }).filter(Boolean);
+  if (members.length < 1) {
+    railGroupDragState = null;
+    return false;
+  }
+
+  // ドラッグ基準はアンカー平均ではなく、選択ボックス中心に統一する。
+  // 再ドラッグ時の中心ずれで移動量が膨らむのを防ぐ。
+  const dragCenter = resolvedHandle?.position?.clone?.() || group.center.clone();
+  const leaderNearest = getNearestRailTrackHitFromPoint(dragCenter, 900);
+  const leaderTrack = leaderNearest?.trackName ? getRailTrackByName(leaderNearest.trackName) : null;
+  let leaderStartYaw = 0;
+  if (leaderTrack?.curve && Number.isFinite(leaderNearest?.t) && typeof leaderTrack.curve.getTangentAt === 'function') {
+    const tangent = leaderTrack.curve.getTangentAt(THREE.MathUtils.clamp(leaderNearest.t, 0, 1)).clone().setY(0);
+    if (tangent.lengthSq() > 1e-8) {
+      tangent.normalize();
+      leaderStartYaw = Math.atan2(tangent.x, tangent.z);
+    }
+  }
+  railGroupDragState = {
+    groupKey,
+    handleMesh: resolvedHandle,
+    leaderTrack,
+    leaderStartPoint: leaderNearest?.point?.clone?.() || dragCenter.clone(),
+    leaderStartT: Number.isFinite(leaderNearest?.t) ? leaderNearest.t : 0,
+    leaderStartYaw,
+    centerStart: dragCenter.clone(),
+    members,
+  };
+  return true;
 }
 
 function buildStructureSamplePoints() {
@@ -5115,7 +7268,18 @@ function placeStructurePinnedPinAt(position, trackName = null) {
     structurePinnedColor
   );
   pin.name = 'StructurePinnedPin';
-  pin.userData = { ...pin.userData, constructionSelected: false, trackName: resolvedTrackName };
+  const linkedIdsRaw = Array.isArray(position?.linkedStructureObjectIds)
+    ? position.linkedStructureObjectIds
+    : [];
+  const linkedIds = linkedIdsRaw
+    .map((v) => String(v || '').trim())
+    .filter((v) => v.length > 0);
+  pin.userData = {
+    ...pin.userData,
+    constructionSelected: false,
+    trackName: resolvedTrackName,
+    linkedStructureObjectIds: Array.from(new Set(linkedIds)),
+  };
   pin.visible = structureViewActive || structureModeActive || constructionModeActive;
   structurePinnedPins.push(pin);
 }
@@ -5383,7 +7547,7 @@ async function loadStructureData(url) {
 function buildStructurePayload() {
   return {
     meta: {
-      version: 1,
+      version: 2,
       savedAt: new Date().toISOString(),
     },
     pins: structurePinnedPins.map((pin) => ({
@@ -5391,6 +7555,11 @@ function buildStructurePayload() {
       y: pin.position.y,
       z: pin.position.z,
       trackName: pin.userData?.trackName ?? null,
+      linkedStructureObjectIds: Array.isArray(pin?.userData?.linkedStructureObjectIds)
+        ? pin.userData.linkedStructureObjectIds
+          .map((v) => String(v || '').trim())
+          .filter((v) => v.length > 0)
+        : [],
     })),
   };
 }
@@ -5614,8 +7783,11 @@ function serializeSteelFrameState(gridToKey = new Map()) {
       pointKeys: refKeys,
       profile,
       style: normalizeSerializedSegmentStyle(profile, mesh?.userData?.steelFrameSegmentStyle || null),
+      scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
       steelFrameCopiedObject: Boolean(mesh?.userData?.steelFrameCopiedObject),
       steelFrameCopyGroupId: mesh?.userData?.steelFrameCopyGroupId ?? null,
+      structureGroupId: mesh?.userData?.structureGroupId ?? null,
+      structureGroupScale: Number(mesh?.userData?.structureGroupScale) || null,
       copyObjectSourceRefId: mesh?.userData?.copyObjectSourceRefId ?? null,
       copyObjectRefId: mesh?.userData?.copyObjectRefId ?? null,
     };
@@ -5647,6 +7819,7 @@ function clearSteelFrameForImport() {
   });
   steelFrameMode?.clearSelection?.();
   clearCopySelection?.();
+  clearGroupSelection?.();
 }
 
 function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
@@ -5694,11 +7867,16 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
       userData: {
         steelFrameCopiedObject: Boolean(s?.steelFrameCopiedObject),
         steelFrameCopyGroupId: s?.steelFrameCopyGroupId ?? null,
+        structureGroupId: s?.structureGroupId ?? null,
+        structureGroupScale: Number(s?.structureGroupScale) || null,
         copyObjectSourceRefId: s?.copyObjectSourceRefId ?? null,
         copyObjectRefId: s?.copyObjectRefId ?? null,
       },
     });
     if (!seg) { return; }
+    if (Array.isArray(s?.scale) && s.scale.length >= 3) {
+      seg.scale.set(Number(s.scale[0]) || 1, Number(s.scale[1]) || 1, Number(s.scale[2]) || 1);
+    }
     if (Boolean(s?.steelFrameCopiedObject)) {
       setCopyObjectVisual(seg, false);
     }
@@ -5724,6 +7902,8 @@ function serializeDecorationState(mesh, gridToKey = new Map()) {
     scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
     planeRefKey,
     baseColor: Number(mesh?.userData?.baseColor) || null,
+    structureGroupId: mesh?.userData?.structureGroupId ?? null,
+    structureGroupScale: Number(mesh?.userData?.structureGroupScale) || null,
   };
   if (type === 'led_board') {
     out.ledBoardData = mesh?.userData?.ledBoardData && typeof mesh.userData.ledBoardData === 'object'
@@ -5779,6 +7959,8 @@ function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
       ...(mesh.userData || {}),
       planeRef: planeRef || null,
       baseColor: Number(state?.baseColor) || (mesh?.userData?.baseColor || null),
+      structureGroupId: state?.structureGroupId ?? null,
+      structureGroupScale: Number(state?.structureGroupScale) || null,
     };
     if (type === 'led_board' && state?.ledBoardData && typeof state.ledBoardData === 'object') {
       mesh.userData.ledBoardData = { ...state.ledBoardData };
@@ -5826,6 +8008,10 @@ function buildCreateModePayload() {
       differenceSpaceTransformMode,
       differenceShapeType,
       differencePathType,
+      differenceLineTrackNames: Array.isArray(differenceLineTrackNames)
+        ? differenceLineTrackNames.slice()
+        : [],
+      differenceLineBandHeight,
     },
     uiState,
     baseGuideGrid,
@@ -5860,6 +8046,7 @@ const undoActionButton = document.getElementById('undo-action');
 const redoActionButton = document.getElementById('redo-action');
 
 const loadMapDataButton = document.getElementById('load-map-data');
+const loadMapDataAppendGroupButton = document.getElementById('load-map-data-append-group');
 const loadMapDataInput = document.getElementById('load-map-data-input');
 if (undoActionButton) {
   undoActionButton.addEventListener('click', undoHistoryByContext);
@@ -5986,6 +8173,7 @@ function applyCreateModePayload(payload) {
   restoreSteelFrameState(steelFrameState, keyToGrid);
   clearDecorationsForImport();
   restoreDecorationsState(decorationStates, keyToGrid);
+  syncStructureGroupSequenceFromExisting();
   rebuildMirrorFromStatesRuntime({
     mirrorStates: mirrorGuideStates,
     maxPasses: 6,
@@ -6027,11 +8215,28 @@ function applyCreateModePayload(payload) {
     : differenceSpaceTransformMode;
   differenceShapeType = typeof mode.differenceShapeType === 'string' ? mode.differenceShapeType : differenceShapeType;
   differencePathType = typeof mode.differencePathType === 'string' ? mode.differencePathType : differencePathType;
+  if (Array.isArray(mode.differenceLineTrackNames)) {
+    differenceLineTrackNames = mode.differenceLineTrackNames
+      .map((name) => String(name || '').trim())
+      .filter((name) => name.length > 0);
+  } else if (typeof mode.differenceLineTrackName === 'string') {
+    const legacy = String(mode.differenceLineTrackName).trim();
+    differenceLineTrackNames = (legacy && legacy !== 'all') ? [legacy] : [];
+  }
+  if (Number.isFinite(Number(mode.differenceLineBandHeight))) {
+    differenceLineBandHeight = Math.max(0.2, Number(mode.differenceLineBandHeight));
+  }
   if (differenceShapeSelect) {
     differenceShapeSelect.value = differenceShapeType;
   }
   if (differencePathSelect) {
     differencePathSelect.value = differencePathType;
+  }
+  if (differenceLineHeightInput) {
+    differenceLineHeightInput.value = String(differenceLineBandHeight);
+  }
+  if (differenceLineSelect) {
+    setDifferenceLineOptions();
   }
   targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
   setMeshListOpacity(targetObjects, 1);
@@ -6046,6 +8251,138 @@ function applyCreateModePayload(payload) {
       console.warn('failed to store uiState', err);
     }
   }
+  setRailConstructionGroupOptions();
+  updateGroupModePanelUI();
+}
+
+function buildExistingGuideGridKeyMap() {
+  const keyToGrid = new Map();
+  keyToGrid.set('base', AddPointGuideGrid);
+  guideAddGrids.forEach((grid) => {
+    const key = typeof grid?.userData?.saveKey === 'string' ? grid.userData.saveKey : null;
+    if (key && !keyToGrid.has(key)) {
+      keyToGrid.set(key, grid);
+    }
+  });
+  return keyToGrid;
+}
+
+function hasAnyGroupTagOnSegmentState(state) {
+  const structureGroupId = String(state?.structureGroupId || '').trim();
+  const copyGroupId = String(state?.steelFrameCopyGroupId || '').trim();
+  return Boolean(structureGroupId || copyGroupId || Boolean(state?.steelFrameCopiedObject));
+}
+
+function filterGroupedSteelFrameState(payloadSteelFrame) {
+  if (!payloadSteelFrame || typeof payloadSteelFrame !== 'object') { return null; }
+  const allPoints = Array.isArray(payloadSteelFrame.points) ? payloadSteelFrame.points : [];
+  const allSegments = Array.isArray(payloadSteelFrame.segments) ? payloadSteelFrame.segments : [];
+  const groupedSegments = allSegments.filter((state) => hasAnyGroupTagOnSegmentState(state));
+  if (groupedSegments.length < 1) { return null; }
+  const usedPointKeys = new Set();
+  groupedSegments.forEach((seg) => {
+    const keys = Array.isArray(seg?.pointKeys) ? seg.pointKeys : [];
+    keys.forEach((key) => {
+      const k = String(key || '').trim();
+      if (k) { usedPointKeys.add(k); }
+    });
+  });
+  const groupedPoints = allPoints.filter((point) => {
+    const key = String(point?.key || '').trim();
+    return Boolean(key && usedPointKeys.has(key));
+  });
+  return {
+    points: groupedPoints,
+    segments: groupedSegments,
+  };
+}
+
+function filterGroupedDecorationStates(payloadDecorations) {
+  const states = Array.isArray(payloadDecorations) ? payloadDecorations : [];
+  return states.filter((state) => {
+    const structureGroupId = String(state?.structureGroupId || '').trim();
+    return Boolean(structureGroupId);
+  });
+}
+
+function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
+  const idMap = new Map();
+  const getRemappedId = (rawId) => {
+    const src = String(rawId || '').trim();
+    if (!src) { return ''; }
+    if (!idMap.has(src)) {
+      const nextId = `structure_group_${structureGroupSeq}`;
+      structureGroupSeq += 1;
+      idMap.set(src, nextId);
+    }
+    return idMap.get(src);
+  };
+
+  const mappedSteelFrameState = steelFrameState && typeof steelFrameState === 'object'
+    ? {
+      points: Array.isArray(steelFrameState.points) ? steelFrameState.points.map((point) => ({ ...point })) : [],
+      segments: Array.isArray(steelFrameState.segments)
+        ? steelFrameState.segments.map((seg) => {
+          const next = { ...seg };
+          const gid = String(seg?.structureGroupId || '').trim();
+          if (gid) {
+            next.structureGroupId = getRemappedId(gid);
+          }
+          return next;
+        })
+        : [],
+    }
+    : null;
+
+  const mappedDecorationStates = Array.isArray(decorationStates)
+    ? decorationStates.map((state) => {
+      const next = { ...state };
+      const gid = String(state?.structureGroupId || '').trim();
+      if (gid) {
+        next.structureGroupId = getRemappedId(gid);
+      }
+      return next;
+    })
+    : [];
+
+  return {
+    steelFrameState: mappedSteelFrameState,
+    decorationStates: mappedDecorationStates,
+    remappedCount: idMap.size,
+  };
+}
+
+function appendCreateModeGroupsPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('map_data の形式が不正です。');
+  }
+  syncStructureGroupSequenceFromExisting();
+  const keyToGrid = buildExistingGuideGridKeyMap();
+  const groupedSteelFrameState = filterGroupedSteelFrameState(payload?.steelFrame);
+  const groupedDecorationStates = filterGroupedDecorationStates(payload?.decorations);
+  const mapped = remapStructureGroupIdsForAppend(groupedSteelFrameState, groupedDecorationStates);
+  const steelFrameState = mapped.steelFrameState;
+  const decorationStates = mapped.decorationStates;
+  const appendSegmentCount = Array.isArray(steelFrameState?.segments) ? steelFrameState.segments.length : 0;
+  const appendDecorationCount = decorationStates.length;
+  if (appendSegmentCount < 1 && appendDecorationCount < 1) {
+    throw new Error('追加対象のグループ付き構造物が見つかりませんでした。');
+  }
+  if (appendSegmentCount > 0) {
+    restoreSteelFrameState(steelFrameState, keyToGrid);
+  }
+  if (appendDecorationCount > 0) {
+    restoreDecorationsState(decorationStates, keyToGrid);
+  }
+  syncStructureGroupSequenceFromExisting();
+  setRailConstructionGroupOptions();
+  updateGroupModePanelUI();
+  refreshSteelFrameMirrorPreviews();
+  return {
+    segmentCount: appendSegmentCount,
+    decorationCount: appendDecorationCount,
+    remappedGroupCount: mapped.remappedCount || 0,
+  };
 }
 
 function readMapDataFile(file) {
@@ -6111,6 +8448,7 @@ if (loadMapDataButton && loadMapDataInput) {
   }
   let mapPickerOpenLock = false;
   let mapPickerOpenedByPointer = false;
+  let mapLoadMode = 'replace';
   const notifyMapLoadStatus = (message) => {
     const text = String(message || '');
     if (mapLoadStatus) {
@@ -6124,11 +8462,12 @@ if (loadMapDataButton && loadMapDataInput) {
       railConstructionStatus.textContent = text;
     }
   };
-  const openMapDataPicker = (event) => {
+  const openMapDataPicker = (event, mode = 'replace') => {
     if (event) {
       event.preventDefault();
       event.stopPropagation();
     }
+    mapLoadMode = mode === 'append_groups' ? 'append_groups' : 'replace';
     if (mapPickerOpenLock) { return; }
     mapPickerOpenLock = true;
     setTimeout(() => { mapPickerOpenLock = false; }, 240);
@@ -6143,28 +8482,39 @@ if (loadMapDataButton && loadMapDataInput) {
     }
     loadMapDataInput.click();
   };
-  loadMapDataButton.addEventListener('pointerdown', (event) => {
-    mapPickerOpenedByPointer = true;
-    openMapDataPicker(event);
-  }, { passive: false });
-  loadMapDataButton.addEventListener('click', (event) => {
-    // pointerdown で既に開いている場合の二重発火を防止
-    if (mapPickerOpenedByPointer) {
-      mapPickerOpenedByPointer = false;
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    openMapDataPicker(event);
-  });
+  const bindMapPickerButton = (button, mode) => {
+    if (!button) { return; }
+    button.addEventListener('pointerdown', (event) => {
+      mapPickerOpenedByPointer = true;
+      openMapDataPicker(event, mode);
+    }, { passive: false });
+    button.addEventListener('click', (event) => {
+      // pointerdown で既に開いている場合の二重発火を防止
+      if (mapPickerOpenedByPointer) {
+        mapPickerOpenedByPointer = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      openMapDataPicker(event, mode);
+    });
+  };
+  bindMapPickerButton(loadMapDataButton, 'replace');
+  bindMapPickerButton(loadMapDataAppendGroupButton, 'append_groups');
   loadMapDataInput.addEventListener('change', async (event) => {
     const file = event.target?.files?.[0];
     if (!file) { return; }
     try {
-      notifyMapLoadStatus(`map_data 読み込み中: ${file.name || 'selected file'}`);
+      const modeLabel = mapLoadMode === 'append_groups' ? 'グループ追加' : '通常読込';
+      notifyMapLoadStatus(`map_data 読み込み中(${modeLabel}): ${file.name || 'selected file'}`);
       const payload = await readMapDataFile(file);
-      applyCreateModePayload(payload);
-      notifyMapLoadStatus(`map_data 読込完了: ${file.name || 'selected file'}`);
+      if (mapLoadMode === 'append_groups') {
+        const result = appendCreateModeGroupsPayload(payload);
+        notifyMapLoadStatus(`group追加完了: segment ${result.segmentCount} / decoration ${result.decorationCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
+      } else {
+        applyCreateModePayload(payload);
+        notifyMapLoadStatus(`map_data 読込完了: ${file.name || 'selected file'}`);
+      }
     } catch (err) {
       console.warn(err);
       const rawMessage = String(err?.message || '不明なエラー');
@@ -6309,6 +8659,46 @@ railConstructionCards.forEach((card) => {
     setRailConstructionCategory(card.dataset.railConstructionCategory);
   });
 });
+if (railConstructionGroupSelect) {
+  railConstructionGroupSelect.addEventListener('change', () => {
+    selectedRailConstructionGroupId = railConstructionGroupSelect.value || '';
+  });
+}
+if (groupModeTrackSelect) {
+  groupModeTrackSelect.addEventListener('change', () => {
+    selectedGroupTrackName = groupModeTrackSelect.value || '';
+    updateGroupModePanelUI();
+  });
+}
+if (groupModeIdSelect) {
+  groupModeIdSelect.addEventListener('change', () => {
+    selectedAppendGroupId = groupModeIdSelect.value || '';
+    updateGroupModePanelUI();
+  });
+}
+if (groupModeCreateButton) {
+  groupModeCreateButton.addEventListener('click', () => {
+    applyStructureGrouping();
+  });
+}
+if (groupModeAppendButton) {
+  groupModeAppendButton.addEventListener('click', () => {
+    appendSelectionToStructureGroup(selectedAppendGroupId);
+  });
+}
+if (groupModeArrangeButton) {
+  groupModeArrangeButton.addEventListener('click', () => {
+    arrangeGroupObjectsEvenlyOnTrack(selectedGroupTrackName);
+  });
+}
+ensureGroupModeScaleControls();
+if (groupModeScaleButton) {
+  groupModeScaleButton.addEventListener('click', () => {
+    const groupId = getSelectedSingleStructureGroupId();
+    const scale = Number(String(groupModeScaleInput?.value || '').trim());
+    applyStructureGroupScale(groupId, scale);
+  });
+}
 if (constructionGenerateButton) {
   constructionGenerateButton.addEventListener('click', () => {
     if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'CONSTRUCT') {
@@ -6351,11 +8741,18 @@ if (railConstructionGenerateButton) {
       }
       return;
     }
-    runRailConstructionByCategory(selectedRailConstructionCategory);
+    const ok = runRailConstructionByCategory(selectedRailConstructionCategory);
+    if (ok && editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
+    }
   });
 }
 setConstructionCategory(null);
 setRailConstructionCategory(null);
+setRailConstructionGroupOptions();
+setGroupModePanelVisible(false);
+updateGroupModePanelUI();
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
@@ -6826,7 +9223,10 @@ function handleMouseMove(x, y) {
   lastPointerClient = { x, y };
   const element = canvas;
   const hovered = document.elementFromPoint(x, y);
-  pointerBlockedByUI = Boolean(hovered?.closest?.('button'));
+  pointerBlockedByUI = Boolean(
+    hovered?.closest?.('button')
+    || hovered?.closest?.('#group-mode-panel')
+  );
   structurePointerBlockedByUI = pointerBlockedByUI;
   // Use bounding rect to correctly account for CSS, padding and page offsets
   const rect = element.getBoundingClientRect();
@@ -7664,6 +10064,8 @@ function vecMoved(a, b, eps = HISTORY_EPS) {
     } else if (objectEditMode === 'COPY') {
       targetObjects = steelFrameMode.getAllPointMeshes().concat(constructionObjects);
     } else if (objectEditMode === 'STYLE') {
+      targetObjects = constructionObjects;
+    } else if (objectEditMode === 'GROUP') {
       targetObjects = constructionObjects;
     }
   }
@@ -12684,37 +15086,51 @@ function applyDifferenceToSinjyuku(cutterMesh) {
 
   scene.updateMatrixWorld(true);
   cutterMesh.updateMatrixWorld(true);
-  const cutterBox = new THREE.Box3().setFromObject(cutterMesh);
+
+  // 1) 画面に見えているカッターをワールド座標で固定化
+  // 2) 対象メッシュも一度ワールドへ変換して CSG
+  // 3) 結果を対象メッシュのローカルへ戻す
+  // という順で、プレビュー形状との差分を最小化する。
+  const cutterWorldGeometry = cutterMesh.geometry.clone();
+  cutterWorldGeometry.applyMatrix4(cutterMesh.matrixWorld);
+  cutterWorldGeometry.computeBoundingBox?.();
+  cutterWorldGeometry.computeBoundingSphere?.();
+  const cutterBox = cutterWorldGeometry.boundingBox?.clone?.() || new THREE.Box3().setFromObject(cutterMesh);
 
   let changedCount = 0;
   sinjyukuCity.traverse((node) => {
     if (!node?.isMesh || !node.geometry) { return; }
-    const meshBox = new THREE.Box3().setFromObject(node);
-    if (!meshBox.intersectsBox(cutterBox)) { return; }
 
-    const targetGeometry = node.geometry.clone();
-    const cutterLocalGeometry = cutterMesh.geometry.clone();
-    const worldToLocal = node.matrixWorld.clone().invert();
-    cutterLocalGeometry.applyMatrix4(worldToLocal.multiply(cutterMesh.matrixWorld));
+    const sourceGeometry = node.geometry;
+    const sourcePosition = sourceGeometry.attributes?.position;
+    if (!sourcePosition || sourcePosition.count < 3) { return; }
 
-    const aBrush = new Brush(targetGeometry);
-    const bBrush = new Brush(cutterLocalGeometry);
+    const nodeWorldBox = new THREE.Box3().setFromObject(node);
+    if (!nodeWorldBox.intersectsBox(cutterBox)) { return; }
+
+    const targetWorldGeometry = sourceGeometry.clone();
+    targetWorldGeometry.applyMatrix4(node.matrixWorld);
+
+    const aBrush = new Brush(targetWorldGeometry);
+    const bBrush = new Brush(cutterWorldGeometry.clone());
     let result = null;
     try {
       result = differenceCsgEvaluator.evaluate(aBrush, bBrush, differenceCsgOperation);
     } catch (err) {
       console.warn('Difference CSG failed for one mesh.', err);
-      targetGeometry.dispose?.();
-      cutterLocalGeometry.dispose?.();
+      targetWorldGeometry.dispose?.();
+      bBrush.geometry?.dispose?.();
       return;
     }
-    if (!result?.geometry) {
-      targetGeometry.dispose?.();
-      cutterLocalGeometry.dispose?.();
-      return;
-    }
+    targetWorldGeometry.dispose?.();
+    bBrush.geometry?.dispose?.();
 
+    if (!result?.geometry) { return; }
+
+    const worldToLocal = node.matrixWorld.clone().invert();
+    result.geometry.applyMatrix4(worldToLocal);
     result.geometry.computeVertexNormals();
+
     if (node.geometry?.dispose) {
       node.geometry.dispose();
     }
@@ -12727,7 +15143,175 @@ function applyDifferenceToSinjyuku(cutterMesh) {
     changedCount += 1;
   });
 
+  cutterWorldGeometry.dispose?.();
   return changedCount;
+}
+
+function buildWorldBakedDifferenceCutterFromMesh(sourceMesh) {
+  if (!sourceMesh?.geometry) { return null; }
+  sourceMesh.updateMatrixWorld(true);
+  const bakedGeom = sourceMesh.geometry.clone();
+  bakedGeom.applyMatrix4(sourceMesh.matrixWorld);
+  bakedGeom.computeBoundingBox?.();
+  bakedGeom.computeBoundingSphere?.();
+  const baked = new THREE.Mesh(
+    bakedGeom,
+    new THREE.MeshBasicMaterial({ color: 0x2ed0c9, visible: false }),
+  );
+  baked.name = 'DifferenceBakedCutter';
+  baked.position.set(0, 0, 0);
+  baked.quaternion.identity();
+  baked.scale.set(1, 1, 1);
+  baked.updateMatrixWorld(true);
+  return baked;
+}
+
+function clearDifferenceRailWallMeshes() {
+  const toRemove = [];
+  scene.traverse((obj) => {
+    if (obj?.isMesh && (obj?.userData?.differenceRailWallMesh || obj?.userData?.differenceRailOpeningWallMesh)) {
+      toRemove.push(obj);
+    }
+  });
+  toRemove.forEach((mesh) => {
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    mesh.geometry?.dispose?.();
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      mesh.material?.dispose?.();
+    }
+  });
+}
+
+function buildDifferenceRailOpeningWallMeshesFromCutter(cutterMesh) {
+  const caps = cutterMesh?.userData?.differenceRailCaps || null;
+  if (!caps) { return []; }
+  const startPointsRaw = Array.isArray(caps.startPoints) ? caps.startPoints : [];
+  const endPointsRaw = Array.isArray(caps.endPoints) ? caps.endPoints : [];
+  if (startPointsRaw.length !== 4 && endPointsRaw.length !== 4) { return []; }
+
+  const toWorld = (arr) => new THREE.Vector3(Number(arr?.[0]) || 0, Number(arr?.[1]) || 0, Number(arr?.[2]) || 0)
+    .applyMatrix4(cutterMesh.matrixWorld);
+  const startPoints = startPointsRaw.length === 4 ? startPointsRaw.map(toWorld) : null;
+  const endPoints = endPointsRaw.length === 4 ? endPointsRaw.map(toWorld) : null;
+  const startOutward = Array.isArray(caps.startOutward)
+    ? new THREE.Vector3(Number(caps.startOutward[0]) || 0, Number(caps.startOutward[1]) || 0, Number(caps.startOutward[2]) || 0)
+      .transformDirection(cutterMesh.matrixWorld)
+    : null;
+  const endOutward = Array.isArray(caps.endOutward)
+    ? new THREE.Vector3(Number(caps.endOutward[0]) || 0, Number(caps.endOutward[1]) || 0, Number(caps.endOutward[2]) || 0)
+      .transformDirection(cutterMesh.matrixWorld)
+    : null;
+
+  const makeCapMesh = (points, outward, nameSuffix) => {
+    if (!Array.isArray(points) || points.length !== 4) { return null; }
+    const indicesForward = [0, 1, 2, 0, 2, 3];
+    const indicesReverse = [0, 2, 1, 0, 3, 2];
+    const normal = new THREE.Vector3()
+      .crossVectors(points[1].clone().sub(points[0]), points[2].clone().sub(points[0]))
+      .normalize();
+    const useReverse = outward?.isVector3 ? (normal.dot(outward) < 0) : false;
+    const tri = useReverse ? indicesReverse : indicesForward;
+    const positions = [];
+    for (let i = 0; i < tri.length; i += 1) {
+      const p = points[tri[i]];
+      positions.push(p.x, p.y, p.z);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x3f444a,
+      roughness: 0.88,
+      metalness: 0.08,
+      side: THREE.FrontSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = `DifferenceRailOpeningWall_${nameSuffix}`;
+    mesh.renderOrder = 1310;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      differenceRailOpeningWallMesh: true,
+    };
+    return mesh;
+  };
+
+  const out = [];
+  const startMesh = makeCapMesh(startPoints, startOutward, 'Start');
+  const endMesh = makeCapMesh(endPoints, endOutward, 'End');
+  if (startMesh) { out.push(startMesh); }
+  if (endMesh) { out.push(endMesh); }
+  return out;
+}
+
+function buildDifferenceRailCutSectionWallMeshFromCutter(cutterMesh, { normalYThreshold = 0.35 } = {}) {
+  if (!cutterMesh?.geometry) { return null; }
+  cutterMesh.updateMatrixWorld(true);
+  const src = cutterMesh.geometry.clone();
+  src.applyMatrix4(cutterMesh.matrixWorld);
+  const nonIndexed = src.toNonIndexed();
+  src.dispose?.();
+  if (!nonIndexed?.attributes?.position) {
+    nonIndexed?.dispose?.();
+    return null;
+  }
+  nonIndexed.computeVertexNormals();
+  const posAttr = nonIndexed.getAttribute('position');
+  const normalAttr = nonIndexed.getAttribute('normal');
+  if (!posAttr || posAttr.count < 3 || !normalAttr || normalAttr.count < 3) {
+    nonIndexed.dispose?.();
+    return null;
+  }
+
+  const wallPositions = [];
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const na = new THREE.Vector3();
+  const nb = new THREE.Vector3();
+  const nc = new THREE.Vector3();
+  for (let i = 0; i < posAttr.count; i += 3) {
+    a.fromBufferAttribute(posAttr, i);
+    b.fromBufferAttribute(posAttr, i + 1);
+    c.fromBufferAttribute(posAttr, i + 2);
+    na.fromBufferAttribute(normalAttr, i);
+    nb.fromBufferAttribute(normalAttr, i + 1);
+    nc.fromBufferAttribute(normalAttr, i + 2);
+    const ny = (Math.abs(na.y) + Math.abs(nb.y) + Math.abs(nc.y)) / 3;
+    // 上下面を除き、切断断面に相当する側面だけ壁として使う。
+    if (ny > normalYThreshold) { continue; }
+    wallPositions.push(
+      a.x, a.y, a.z,
+      b.x, b.y, b.z,
+      c.x, c.y, c.z,
+    );
+  }
+  nonIndexed.dispose?.();
+  if (wallPositions.length < 9) { return null; }
+
+  const wallGeometry = new THREE.BufferGeometry();
+  wallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
+  wallGeometry.computeVertexNormals();
+  wallGeometry.computeBoundingBox?.();
+  wallGeometry.computeBoundingSphere?.();
+
+  const wallMaterial = new THREE.MeshStandardMaterial({
+    color: 0x3f444a,
+    roughness: 0.88,
+    metalness: 0.08,
+    side: THREE.FrontSide,
+  });
+  const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial);
+  wallMesh.name = 'DifferenceRailCutSectionWallMesh';
+  wallMesh.renderOrder = 1305;
+  wallMesh.userData = {
+    ...(wallMesh.userData || {}),
+    differenceRailWallMesh: true,
+  };
+  return wallMesh;
 }
 
 function runDifferenceOnSinjyukuFromSelectedPoints() {
@@ -12771,6 +15355,313 @@ function runDifferenceOnSinjyukuFromSelectedPoints() {
   }
   console.log(`Difference applied to ${changedCount} sinjyuku meshes.`);
   updateDifferenceStatus(`excavation完了: ${changedCount} メッシュ更新`);
+  return true;
+}
+
+function buildDifferenceCutterMeshFromRailTracks({
+  trackNames = null,
+  sidePadding = 0.6,
+  innerPadding = 0.6,
+  minBandWidth = 1.2,
+  bandHeight = null,
+  sampleStepMeters = 2.0,
+} = {}) {
+  let trackDefs = null;
+  try {
+    trackDefs = railTrackDefs;
+  } catch (_err) {
+    trackDefs = null;
+  }
+  if (!Array.isArray(trackDefs) || trackDefs.length < 1) { return null; }
+  const selectedByPanel = (!Array.isArray(trackNames) || trackNames.length < 1)
+    ? (Array.isArray(differenceLineTrackNames) && differenceLineTrackNames.length > 0
+      ? differenceLineTrackNames
+      : null)
+    : null;
+  const names = Array.isArray(trackNames) && trackNames.length > 0
+    ? trackNames
+    : selectedByPanel;
+  const allowedNames = Array.isArray(names) && names.length > 0
+    ? new Set(names.map((name) => String(name)))
+    : null;
+
+  const selectedTrackCurves = getSelectedTrackCurvesForConstruction()
+    .filter((entry) => !allowedNames || allowedNames.has(String(entry.trackName || '')));
+
+  const sourceTrackCurves = selectedTrackCurves.length > 0
+    ? selectedTrackCurves
+    : trackDefs
+      .filter((track) => track?.curve && (!allowedNames || allowedNames.has(String(track.name || ''))))
+      .map((track) => ({ trackName: track.name, curve: track.curve.clone() }));
+
+  const ordered = getOrderedTracksByLateralPosition(sourceTrackCurves, 0.5);
+  if (!Array.isArray(ordered) || ordered.length < 1) { return null; }
+  const rightEdge = ordered[0];
+  const leftEdge = ordered[ordered.length - 1];
+  if (!rightEdge?.curve || !leftEdge?.curve) { return null; }
+
+  const stepMeters = Math.max(0.5, Number(sampleStepMeters) || 2.0);
+  const rightLen = Number(rightEdge.curve.getLength?.()) || 0;
+  const leftLen = Number(leftEdge.curve.getLength?.()) || 0;
+  const baseLen = Math.max(rightLen, leftLen, 1);
+  const steps = THREE.MathUtils.clamp(Math.floor(baseLen / stepMeters), 12, 240);
+
+  const outerOffset = Math.max(0, Number(sidePadding) || 0);
+  const innerOffset = Math.max(0, Number(innerPadding) || 0);
+  const minWidth = Math.max(0.2, Number(minBandWidth) || 1.2);
+  const currentUiHeight = readDifferenceLineBandHeight();
+  const resolvedHeight = Number.isFinite(Number(bandHeight))
+    ? Number(bandHeight)
+    : Number(currentUiHeight);
+  const height = Math.max(0.2, Number.isFinite(resolvedHeight) ? resolvedHeight : 2.8);
+  console.log('[Difference][line] build cutter params', {
+    bandHeightInput: bandHeight,
+    uiReadHeight: currentUiHeight,
+    resolvedHeight: height,
+    sidePadding,
+    innerPadding,
+    minBandWidth,
+    sampleStepMeters,
+  });
+  const worldUp = new THREE.Vector3(0, 1, 0);
+
+  const getTrackFrameAt = (curve, t, fallbackDir = new THREE.Vector3(0, 0, 1)) => {
+    const tc = THREE.MathUtils.clamp(t, 0, 1);
+    const point = curve.getPointAt(tc).clone();
+    let tangent = null;
+    if (typeof curve.getTangentAt === 'function') {
+      tangent = curve.getTangentAt(tc).clone();
+    }
+    if (!tangent || tangent.lengthSq() < 1e-8) {
+      tangent = fallbackDir.clone();
+    }
+    tangent.setY(0);
+    if (tangent.lengthSq() < 1e-8) {
+      tangent.copy(fallbackDir).setY(0);
+    }
+    if (tangent.lengthSq() < 1e-8) {
+      tangent.set(0, 0, 1);
+    }
+    tangent.normalize();
+    let right = new THREE.Vector3().crossVectors(worldUp, tangent);
+    if (right.lengthSq() < 1e-8) {
+      right = new THREE.Vector3(1, 0, 0);
+    } else {
+      right.normalize();
+    }
+    return { point, tangent, right };
+  };
+
+  const outerLine = [];
+  const innerLine = [];
+  const widths = [];
+  let prevRightDir = new THREE.Vector3(0, 0, 1);
+  let prevLeftDir = new THREE.Vector3(0, 0, 1);
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps;
+    const rf = getTrackFrameAt(rightEdge.curve, t, prevRightDir);
+    const lf = getTrackFrameAt(leftEdge.curve, t, prevLeftDir);
+    prevRightDir = rf.tangent.clone();
+    prevLeftDir = lf.tangent.clone();
+
+    let outerPoint;
+    let innerPoint;
+    if (ordered.length === 1) {
+      outerPoint = rf.point.clone().add(rf.right.clone().multiplyScalar(outerOffset));
+      innerPoint = rf.point.clone().add(rf.right.clone().multiplyScalar(-innerOffset));
+    } else {
+      // 左右でオフセット方向を逆にする。
+      outerPoint = rf.point.clone().add(rf.right.clone().multiplyScalar(outerOffset));
+      innerPoint = lf.point.clone().add(lf.right.clone().multiplyScalar(-innerOffset));
+    }
+    // 線路の高さを基準にチューブ断面を生成する（左右の高低差は中心高さへ正規化）。
+    const lineHeight = (ordered.length === 1)
+      ? rf.point.y
+      : ((rf.point.y + lf.point.y) * 0.5);
+    outerPoint.y = lineHeight;
+    innerPoint.y = lineHeight;
+    outerLine.push(outerPoint);
+    innerLine.push(innerPoint);
+    widths.push(outerPoint.distanceTo(innerPoint));
+  }
+
+  if (outerLine.length < 2 || innerLine.length < 2) { return null; }
+  const avgWidth = widths.reduce((sum, value) => sum + (Number(value) || 0), 0) / Math.max(1, widths.length);
+  if (avgWidth < minWidth) {
+    const grow = (minWidth - avgWidth) * 0.5;
+    for (let i = 0; i < outerLine.length; i += 1) {
+      const dir = outerLine[i].clone().sub(innerLine[i]);
+      if (dir.lengthSq() < 1e-10) { continue; }
+      dir.normalize();
+      outerLine[i].addScaledVector(dir, grow);
+      innerLine[i].addScaledVector(dir, -grow);
+    }
+  }
+
+  const n = outerLine.length;
+  // 底面を線路高さに合わせ、上方向へだけ厚みを持たせる。
+  const upOffset = worldUp.clone().multiplyScalar(height);
+  const downOffset = new THREE.Vector3(0, 0, 0);
+  const ot = [];
+  const it = [];
+  const ob = [];
+  const ib = [];
+  for (let i = 0; i < n; i += 1) {
+    const o = outerLine[i];
+    const inn = innerLine[i];
+    if (o.distanceToSquared(inn) < 1e-8) {
+      const fallback = (i > 0)
+        ? outerLine[i - 1].clone().sub(innerLine[i - 1])
+        : new THREE.Vector3(1, 0, 0);
+      if (fallback.lengthSq() < 1e-8) { fallback.set(1, 0, 0); }
+      fallback.normalize().multiplyScalar(0.01);
+      outerLine[i].add(fallback);
+      innerLine[i].addScaledVector(fallback, -1);
+    }
+    ot.push(outerLine[i].clone().add(upOffset));
+    it.push(innerLine[i].clone().add(upOffset));
+    ob.push(outerLine[i].clone().add(downOffset));
+    ib.push(innerLine[i].clone().add(downOffset));
+  }
+
+  const positions = [];
+  const tmpAB = new THREE.Vector3();
+  const tmpAC = new THREE.Vector3();
+  const tmpNormal = new THREE.Vector3();
+  const faceCenter = new THREE.Vector3();
+  const tmpCenter = new THREE.Vector3();
+  const pushTri = (a, b, c) => {
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  };
+  const addOrientedQuadByCenter = (a, b, c, d, center) => {
+    tmpAB.copy(b).sub(a);
+    tmpAC.copy(c).sub(a);
+    tmpNormal.crossVectors(tmpAB, tmpAC);
+    faceCenter.copy(a).add(b).add(c).add(d).multiplyScalar(0.25);
+    const outward = faceCenter.clone().sub(center);
+    const useFlip = tmpNormal.dot(outward) < 0;
+    if (!useFlip) {
+      pushTri(a, b, c);
+      pushTri(a, c, d);
+    } else {
+      pushTri(a, c, b);
+      pushTri(a, d, c);
+    }
+  };
+  const addOrientedQuadByDirection = (a, b, c, d, outwardDir) => {
+    tmpAB.copy(b).sub(a);
+    tmpAC.copy(c).sub(a);
+    tmpNormal.crossVectors(tmpAB, tmpAC);
+    const useFlip = tmpNormal.dot(outwardDir) < 0;
+    if (!useFlip) {
+      pushTri(a, b, c);
+      pushTri(a, c, d);
+    } else {
+      pushTri(a, c, b);
+      pushTri(a, d, c);
+    }
+  };
+
+  for (let i = 0; i < n - 1; i += 1) {
+    tmpCenter
+      .copy(ot[i]).add(it[i]).add(ob[i]).add(ib[i])
+      .add(ot[i + 1]).add(it[i + 1]).add(ob[i + 1]).add(ib[i + 1])
+      .multiplyScalar(1 / 8);
+    // Top
+    addOrientedQuadByCenter(ot[i], ot[i + 1], it[i + 1], it[i], tmpCenter);
+    // Bottom
+    addOrientedQuadByCenter(ob[i], ib[i], ib[i + 1], ob[i + 1], tmpCenter);
+    // Outer side
+    addOrientedQuadByCenter(ot[i], ob[i], ob[i + 1], ot[i + 1], tmpCenter);
+    // Inner side
+    addOrientedQuadByCenter(it[i], it[i + 1], ib[i + 1], ib[i], tmpCenter);
+  }
+
+  const startCenter = ot[0].clone().add(it[0]).add(ob[0]).add(ib[0]).multiplyScalar(0.25);
+  const endCenter = ot[n - 1].clone().add(it[n - 1]).add(ob[n - 1]).add(ib[n - 1]).multiplyScalar(0.25);
+  const startForward = (n > 1)
+    ? ot[1].clone().add(it[1]).add(ob[1]).add(ib[1]).multiplyScalar(0.25).sub(startCenter)
+    : new THREE.Vector3(0, 0, 1);
+  if (startForward.lengthSq() < 1e-8) { startForward.set(0, 0, 1); }
+  startForward.normalize();
+  const endForward = (n > 1)
+    ? endCenter.clone().sub(ot[n - 2].clone().add(it[n - 2]).add(ob[n - 2]).add(ib[n - 2]).multiplyScalar(0.25))
+    : new THREE.Vector3(0, 0, 1);
+  if (endForward.lengthSq() < 1e-8) { endForward.set(0, 0, 1); }
+  endForward.normalize();
+
+  // Start cap (outward = backward)
+  addOrientedQuadByDirection(ot[0], it[0], ib[0], ob[0], startForward.clone().multiplyScalar(-1));
+  // End cap (outward = forward)
+  addOrientedQuadByDirection(ot[n - 1], ob[n - 1], ib[n - 1], it[n - 1], endForward);
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  merged.computeVertexNormals();
+  merged.computeBoundingBox?.();
+  merged.computeBoundingSphere?.();
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x2ed0c9,
+    transparent: true,
+    opacity: 0.5,
+    metalness: 0.1,
+    roughness: 0.42,
+    depthWrite: false,
+  });
+  const cutter = new THREE.Mesh(merged, material);
+  cutter.name = 'DifferencePreviewCutter';
+  cutter.renderOrder = 1200;
+  cutter.userData = {
+    ...(cutter.userData || {}),
+    differenceCutterSource: 'rail_track_offset_solid',
+    railTrackCount: ordered.length,
+    rightEdgeTrackName: rightEdge.trackName,
+    leftEdgeTrackName: leftEdge.trackName,
+    outerOffset,
+    innerOffset,
+    differenceRailCaps: {
+      startPoints: [ot[0], it[0], ib[0], ob[0]].map((p) => [p.x, p.y, p.z]),
+      endPoints: [ot[n - 1], ob[n - 1], ib[n - 1], it[n - 1]].map((p) => [p.x, p.y, p.z]),
+      startOutward: [startForward.x * -1, startForward.y * -1, startForward.z * -1],
+      endOutward: [endForward.x, endForward.y, endForward.z],
+    },
+  };
+  return cutter;
+}
+
+function runDifferenceOnSinjyukuFromRailTracks() {
+  const appliedHeight = readDifferenceLineBandHeight();
+  const cutter = buildDifferenceCutterMeshFromRailTracks({ bandHeight: appliedHeight });
+  if (!cutter) {
+    updateDifferenceStatus('線路カッターの作成に失敗しました。');
+    return false;
+  }
+
+  if (differencePreviewTube?.parent) {
+    differencePreviewTube.parent.remove(differencePreviewTube);
+  }
+  if (differencePreviewTube?.geometry?.dispose) {
+    differencePreviewTube.geometry.dispose();
+  }
+  if (differencePreviewTube?.material?.dispose) {
+    differencePreviewTube.material.dispose();
+  }
+  differencePreviewTube = cutter;
+  scene.add(cutter);
+
+  // くり抜き時の縦壁表示は無効化（既存壁のみクリア）。
+  clearDifferenceRailWallMeshes();
+
+  const changedCount = applyDifferenceToSinjyuku(cutter);
+  if (changedCount < 1) {
+    updateDifferenceStatus('線路形状でのくり抜き対象が見つかりませんでした。');
+    return false;
+  }
+  const usedTrackCount = Number(cutter.userData?.railTrackCount) || 0;
+  const rightEdge = String(cutter.userData?.rightEdgeTrackName || '');
+  const leftEdge = String(cutter.userData?.leftEdgeTrackName || '');
+  updateDifferenceStatus(`線路くり抜き完了: ${changedCount} メッシュ更新 / 対象線路 ${usedTrackCount} 本 / 端: ${rightEdge} - ${leftEdge}`);
   return true;
 }
 
@@ -14012,6 +16903,10 @@ function resetChoiceObjectColor(mesh) {
     setCopyObjectVisual(mesh, true);
     return;
   }
+  if (groupModeActive && groupSelectedObjects.has(mesh)) {
+    setCopyObjectVisual(mesh, true);
+    return;
+  }
   if (isMovePointReferenceSource(mesh)) {
     setMeshColorSafe(mesh, MOVE_POINT_REF_HIGHLIGHT);
     return;
@@ -14063,6 +16958,10 @@ function resetChoiceObjectColor(mesh) {
     setGuideAddGridColor(mesh, baseColor);
     return;
   }
+  if (mesh?.userData?.railStructureHandle && mesh?.userData?.railStructurePickHandle) {
+    setMeshColorSafe(mesh, 0x00a8ff);
+    return;
+  }
   if (objectEditMode === 'CONSTRUCT' && !pick_vertexs.includes(mesh.id)) {
     setMeshColorSafe(mesh, 0xff0000);
     return;
@@ -14074,6 +16973,28 @@ function resetChoiceObjectColor(mesh) {
 async function search_point() {
   
   if (!search_object){return}
+
+  if (editObject === 'RAIL'
+    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+    await sleep(80);
+    const picked = pickRailMoveTargetFromPointer({ allowRailPoint: objectEditMode === 'MOVE_EXISTING' });
+    if (picked && choice_object !== picked && !dragging && !rotateDragging) {
+      if (choice_object && choice_object !== false && choice_object?.material?.color?.set) {
+        resetChoiceObjectColor(choice_object);
+      }
+      choice_object = picked;
+      if (choice_object?.material?.color?.set) {
+        choice_object.material.color.set(0x00ff00);
+      }
+      if (objectEditMode === ROTATE_MODE) {
+        updateRotateGizmo();
+      }
+    }
+    updateRailSelectionStatus();
+    renderer.render(scene, camera);
+    await search_point();
+    return;
+  }
 
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
@@ -14168,11 +17089,28 @@ async function search_point() {
   }  
 
   // レンダリング
+  updateRailSelectionStatus();
   renderer.render(scene, camera);
   await search_point();
 }
 
 async function onerun_search_point() {
+  if (editObject === 'RAIL'
+    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+    const picked = pickRailMoveTargetFromPointer({ allowRailPoint: objectEditMode === 'MOVE_EXISTING' });
+    if (picked && choice_object !== picked) {
+      if (choice_object && choice_object !== false && choice_object?.material?.color?.set) {
+        resetChoiceObjectColor(choice_object);
+      }
+      choice_object = picked;
+      if (choice_object?.material?.color?.set) {
+        choice_object.material.color.set(0x00ff00);
+      }
+    }
+    updateRailSelectionStatus();
+    renderer.render(scene, camera);
+    return picked || choice_object || false;
+  }
   
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
@@ -14257,6 +17195,7 @@ async function onerun_search_point() {
     GuideGrid.quaternion.identity();
   }  
 
+  updateRailSelectionStatus();
   renderer.render(scene, camera);
   return choice_object;
 }
@@ -15040,6 +17979,42 @@ function handleDrag() {
   }
 
   let changedSteelFramePoints = null;
+  const isRailStructureDrag = editObject === 'RAIL'
+    && objectEditMode === 'MOVE_EXISTING'
+    && railGroupDragState
+    && railGroupDragState.handleMesh?.parent;
+  if (isRailStructureDrag) {
+    const leaderTrack = railGroupDragState.leaderTrack;
+    const leaderNearest = leaderTrack
+      ? getNearestPointOnRailTrackCurve(leaderTrack, point, 900)
+      : getNearestRailTrackHitFromPoint(point, 900);
+    const leaderPoint = leaderNearest?.point?.clone?.() || railGroupDragState.leaderStartPoint.clone();
+    let leaderYaw = Number(railGroupDragState.leaderStartYaw) || 0;
+    if (leaderTrack?.curve && Number.isFinite(leaderNearest?.t) && typeof leaderTrack.curve.getTangentAt === 'function') {
+      const tangent = leaderTrack.curve.getTangentAt(THREE.MathUtils.clamp(leaderNearest.t, 0, 1)).clone().setY(0);
+      if (tangent.lengthSq() > 1e-8) {
+        tangent.normalize();
+        leaderYaw = Math.atan2(tangent.x, tangent.z);
+      }
+    }
+    const yawDelta = leaderYaw - (Number(railGroupDragState.leaderStartYaw) || 0);
+    const rotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawDelta);
+    railGroupDragState.members.forEach((entry) => {
+      const rotatedOffset = entry.startPos.clone()
+        .sub(railGroupDragState.centerStart)
+        .applyQuaternion(rotQuat);
+      entry.mesh.position.copy(leaderPoint.clone().add(rotatedOffset));
+      if (entry.startQuat) {
+        entry.mesh.quaternion.copy(entry.startQuat);
+        entry.mesh.quaternion.premultiply(rotQuat);
+      }
+    });
+    if (GuideLine?.position) {
+      GuideLine.position.copy(leaderPoint);
+    }
+    drawingObject();
+    return;
+  }
   if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && moveDragStartPositions.length > 0) {
     const delta = new THREE.Vector3(
       point.x - moveDragAnchorStart.x,
@@ -15254,6 +18229,7 @@ async function handleMouseUp(mobile = false) {
   }
   if (rotateDragging) {
     rotateDragging = false;
+    railRotateDragState = null;
     updateRotateGizmo();
     efficacy = true;
     return;
@@ -15262,6 +18238,7 @@ async function handleMouseUp(mobile = false) {
   if (dragging === true) {
     // ドラッグ中なら必ずここで終了処理
     commitMoveHistoryIfNeeded();
+    const draggedRailGroupKey = String(railGroupDragState?.groupKey || '').trim();
     if (editObject === 'RAIL' && choice_object) {
       updateRailPointFromMesh(choice_object);
       if (railModeActive && railTubeDirty) {
@@ -15279,7 +18256,23 @@ async function handleMouseUp(mobile = false) {
     shouldToggle = false;
     moveDragStartPositions = [];
     moveDragAnchorStart = null;
+    railGroupDragState = null;
     GuideLine.visible = false;
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      if (draggedRailGroupKey) {
+        const refreshedHandle = railStructurePickMeshes.find((mesh) =>
+          String(mesh?.userData?.railStructureGroupKey || '').trim() === draggedRailGroupKey
+        ) || null;
+        if (refreshedHandle) {
+          choice_object = refreshedHandle;
+          if (choice_object?.material?.color?.set) {
+            choice_object.material.color.set(0x00ff00);
+          }
+        }
+      }
+      updateRotateGizmo();
+    }
     drawingObject();
     refreshPointEditPanelUI({ clearInputs: true });
     return;
@@ -15289,6 +18282,15 @@ async function handleMouseUp(mobile = false) {
     movePlaneRotateDragging = false;
     efficacy = true;
     return;
+  }
+
+  if (differenceLinePickModeActive && editObject === 'DIFFERENCE_SPACE') {
+    const pickedTrackName = pickDifferenceLineTrackFromPointer();
+    if (pickedTrackName) {
+      toggleDifferenceLineTrackSelection(pickedTrackName);
+      efficacy = true;
+      return;
+    }
   }
 
   if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && moveClickPending) {
@@ -15370,6 +18372,7 @@ async function handleMouseUp(mobile = false) {
       shouldToggle = false;
       moveDragStartPositions = [];
       moveDragAnchorStart = null;
+      railGroupDragState = null;
 
       // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
       let point= 0
@@ -15520,6 +18523,15 @@ async function handleMouseDown() {
     return;
   }
 
+  if (groupModeActive && editObject === 'STEEL_FRAME' && objectEditMode === 'GROUP') {
+    await onerun_search_point();
+    if (choice_object && isGroupSelectableMesh(choice_object)) {
+      toggleGroupSelection(choice_object);
+      updateGroupModePanelUI();
+    }
+    return;
+  }
+
   if (objectEditMode === 'CREATE_NEW'
     && editObject === 'STEEL_FRAME'
     && guideAddModeActive) {
@@ -15550,6 +18562,30 @@ async function handleMouseDown() {
   }
 
   if (objectEditMode === ROTATE_MODE) {
+    if (editObject === 'RAIL') {
+      raycaster.setFromCamera(mouse, camera);
+      const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
+      if (gizmoHit && choice_object?.userData?.railStructureHandle && choice_object?.userData?.railStructurePickHandle) {
+        beginRotateDrag(gizmoHit.object);
+        return;
+      }
+      const handleHit = raycaster.intersectObjects(railStructurePickMeshes, true)[0] || null;
+      const handle = resolveRailStructurePickHandleFromObject(handleHit?.object || null);
+      if (handle) {
+        if (choice_object?.material?.color?.set && choice_object !== handle) {
+          choice_object.material.color.set(0x00a8ff);
+        }
+        choice_object = handle;
+        if (handle?.material?.color?.set) {
+          handle.material.color.set(0x00ff00);
+        }
+        updateRotateGizmo();
+        return;
+      }
+      // 空クリックでは選択を維持し、キズモの掴みを優先する。
+      updateRotateGizmo();
+      return;
+    }
     raycaster.setFromCamera(mouse, camera);
     if (rotateTargetObject?.userData?.decorationType) {
       rotateTargetObject = null;
@@ -16296,6 +19332,74 @@ async function handleMouseDown() {
   if (objectEditMode === 'MOVE_EXISTING' || objectEditMode === 'PICK' || objectEditMode === 'CONSTRUCT' || objectEditMode === EDIT_RAIL){
 
     console.log('selecting object...')
+
+    if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
+      search_object = false;
+      moveClickPending = false;
+      shouldToggle = false;
+      const hasRailPickTargets = Array.isArray(targetObjects)
+        && targetObjects.some((mesh) =>
+          isRailPointPickMesh(mesh)
+          || Boolean(mesh?.userData?.railStructureHandle && mesh?.userData?.railStructurePickHandle)
+        );
+      if (!hasRailPickTargets) {
+        refreshRailSelectionTargets();
+        setMeshListOpacity(targetObjects, 1);
+      }
+      const picked = pickRailMoveTargetFromPointer({ allowRailPoint: true });
+      if (!picked) {
+        updateRailSelectionStatus();
+        return;
+      }
+      if (choice_object && choice_object !== false && choice_object !== picked) {
+        resetChoiceObjectColor(choice_object);
+      }
+      choice_object = picked;
+      if (choice_object?.material?.color?.set) {
+        choice_object.material.color.set(0x0000ff);
+      }
+      const pickedIsHandle = Boolean(
+        choice_object?.userData?.railStructureHandle
+        && choice_object?.userData?.railStructurePickHandle
+      );
+      if (pickedIsHandle) {
+        const ok = beginRailStructureGroupDrag(choice_object);
+        if (!ok) {
+          railGroupDragState = null;
+          updateRailSelectionStatus();
+          return;
+        }
+        if (railGroupDragState?.handleMesh) {
+          choice_object = railGroupDragState.handleMesh;
+        }
+      } else {
+        railGroupDragState = null;
+      }
+      const pos = camera.position;
+      if (!move_direction_y) {
+        const set_y = choice_object.position.y;
+        raycaster.setFromCamera(mouse, camera);
+        const dir = raycaster.ray.direction;
+        const t = Math.abs((pos.y - set_y) / dir.y);
+        TargetDiff = [
+          choice_object.position.x - (pos.x + dir.x * t),
+          choice_object.position.z - (pos.z + dir.z * t),
+        ];
+      } else {
+        raycaster.setFromCamera(mouse, camera);
+        const dir = raycaster.ray.direction;
+        const diff = { x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z };
+        const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x ** 2 + diff.z ** 2);
+        const t = hypotenuse / (Math.cos(cameraAngleY) * dir.z + Math.sin(cameraAngleY) * dir.x);
+        TargetDiff = choice_object.position.y - (pos.y + dir.y * t);
+      }
+      dragging = true;
+      efficacy = false;
+      GuideLine.visible = true;
+      updateRailSelectionStatus();
+      return;
+    }
+
     moveClickPending = true;
 
     if (objectEditMode === 'MOVE_EXISTING') {
@@ -16361,7 +19465,9 @@ async function handleMouseDown() {
         TargetDiff = choice_object.position.y - (pos.y + dir.y * t); 
       }
 
-      choice_object.material.color.set(0x0000ff)
+      if (choice_object?.material?.color?.set) {
+        choice_object.material.color.set(0x0000ff);
+      }
 
       dragging = true;
       efficacy = false;
@@ -18309,6 +21415,19 @@ function updateRotateGizmo() {
     updateRotationSelectionInfo();
     return;
   }
+  if (editObject === 'RAIL'
+    && choice_object?.userData?.railStructureHandle
+    && choice_object?.userData?.railStructurePickHandle) {
+    rotateCenter.copy(choice_object.position);
+    rotateGizmoGroup.position.copy(rotateCenter);
+    rotateGizmoGroup.quaternion.identity();
+    rotateGizmoGroup.scale.setScalar(1.8);
+    rotateGizmoGroup.visible = true;
+    if (rotationInputX) rotationInputX.placeholder = '0';
+    if (rotationInputY) rotationInputY.placeholder = '+10.0';
+    if (rotationInputZ) rotationInputZ.placeholder = '0';
+    return;
+  }
   if (pointRotateModeActive && pointRotateTarget?.userData?.decorationType) {
     rotateGizmoGroup.visible = false;
     updateRotationSelectionInfo();
@@ -18363,6 +21482,37 @@ function updateRotateGizmo() {
 }
 
 function beginRotateDrag(axisMesh) {
+  if (editObject === 'RAIL'
+    && objectEditMode === ROTATE_MODE
+    && choice_object?.userData?.railStructureHandle
+    && choice_object?.userData?.railStructurePickHandle) {
+    const groupKey = String(choice_object?.userData?.railStructureGroupKey || '').trim();
+    const group = collectRailStructureGroups().find((entry) => entry.key === groupKey) || null;
+    if (!group || !Array.isArray(group.members) || group.members.length < 1) { return; }
+    rotateAxisLocal = axisMesh?.userData?.axis?.clone?.()?.normalize?.() || new THREE.Vector3(0, 1, 0);
+    rotateDragAction = axisMesh?.userData?.action || 'rotate_points';
+    rotateAxis = rotateAxisLocal.clone();
+    rotateCenter = choice_object.position.clone();
+    rotatePlane.setFromNormalAndCoplanarPoint(rotateAxis, rotateCenter);
+    raycaster.setFromCamera(mouse, camera);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(rotatePlane, hit);
+    if (!ok) { return; }
+    rotateStartVector.copy(hit).sub(rotateCenter).normalize();
+    railRotateDragState = {
+      groupKey,
+      center: rotateCenter.clone(),
+      centerStart: group.center.clone(),
+      members: group.members.map((mesh) => ({
+        mesh,
+        startPos: mesh.position.clone(),
+        startQuat: mesh?.quaternion?.clone ? mesh.quaternion.clone() : null,
+      })),
+    };
+    rotateDragging = true;
+    efficacy = false;
+    return;
+  }
   const isDecorationRotate = false;
   const meshes = isDecorationRotate
     ? [rotateTargetObject]
@@ -18400,6 +21550,27 @@ function beginRotateDrag(axisMesh) {
 }
 
 function updateRotateDrag() {
+  if (editObject === 'RAIL' && railRotateDragState) {
+    raycaster.setFromCamera(mouse, camera);
+    const hit = new THREE.Vector3();
+    const ok = raycaster.ray.intersectPlane(rotatePlane, hit);
+    if (!ok) { return; }
+    const current = hit.clone().sub(rotateCenter).normalize();
+    const cross = new THREE.Vector3().crossVectors(rotateStartVector, current);
+    const dot = rotateStartVector.dot(current);
+    const angle = Math.atan2(cross.dot(rotateAxis), dot);
+    const dq = new THREE.Quaternion().setFromAxisAngle(rotateAxis, angle);
+    railRotateDragState.members.forEach((entry) => {
+      if (!entry?.mesh?.parent) { return; }
+      const offset = entry.startPos.clone().sub(railRotateDragState.center).applyQuaternion(dq);
+      entry.mesh.position.copy(railRotateDragState.center.clone().add(offset));
+      if (entry.startQuat) {
+        entry.mesh.quaternion.copy(entry.startQuat);
+        entry.mesh.quaternion.premultiply(dq);
+      }
+    });
+    return;
+  }
   raycaster.setFromCamera(mouse, camera);
   const hit = new THREE.Vector3();
   const ok = raycaster.ray.intersectPlane(rotatePlane, hit);
@@ -18515,14 +21686,19 @@ export function UIevent (uiID, toggle){
     move_direction_y = false
     editObject = 'RAIL'
     // objectEditMode = EDIT_RAIL;
-    removeMeshes(targetObjects);
+    clearRailSelectionTargetsOnly();
+    targetObjects = [];
     clearRailSelectionLine();
     selectedRailPoint = null;
     railModeActive = true;
     toggleRailTube(true);
+    showRailGeneratedStructures();
     refreshRailSelectionTargets();
     setMeshListOpacity(targetObjects, 1);
     updateRailInsertHoverFromPointer();
+    railGroupDragState = null;
+    railRotateDragState = null;
+    updateRailSelectionStatus();
  
   } else {
     console.log( 'rail _inactive' )
@@ -18536,9 +21712,12 @@ export function UIevent (uiID, toggle){
       objectEditMode = 'Standby';
     }
     railModeActive = false;
+    railGroupDragState = null;
+    railRotateDragState = null;
     toggleRailTube(false);
     setRailConstructionPanelVisible(false);
     hideRailInsertHoverPin();
+    updateRailSelectionStatus();
 
   }} else if ( uiID === 'new' ){ if ( toggle === 'active' ){
     console.log( 'new _active' )
@@ -18555,8 +21734,12 @@ export function UIevent (uiID, toggle){
     objectEditMode = 'MOVE_EXISTING'
     hideRailInsertHoverPin();
     if (editObject === 'RAIL') {
+      showRailGeneratedStructures();
       refreshRailSelectionTargets();
       setMeshListOpacity(targetObjects, 1);
+      railGroupDragState = null;
+      railRotateDragState = null;
+      updateRailSelectionStatus();
     }
 
   } else {
@@ -18569,6 +21752,9 @@ export function UIevent (uiID, toggle){
       removeMeshes(targetObjects);
       clearRailSelectionLine();
       selectedRailPoint = null;
+      railGroupDragState = null;
+      railRotateDragState = null;
+      updateRailSelectionStatus();
     }
 
   }} else if ( uiID === 'x_z' ){ if ( toggle === 'active' ){
@@ -18599,13 +21785,58 @@ export function UIevent (uiID, toggle){
   } else {
     console.log( 'y _inactive' )
     search_object = false
+  }} else if ( uiID === 'rotation_rail' ){ if ( toggle === 'active' ){
+    console.log( 'rotation_rail _active' )
+    movePointPanelActive = false
+    scalePointPanelActive = false
+    angleSearchModeActive = false
+    pointRotateModeActive = false
+    clearPointRotateState()
+    rotateTargetObject = null
+    rotatePanelState.idsKey = ''
+    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
+    editObject = 'RAIL'
+    objectEditMode = ROTATE_MODE
+    search_object = true
+    move_direction_y = false
+    showRailGeneratedStructures()
+    refreshRailSelectionTargets()
+    setMeshListOpacity(targetObjects, 1)
+    setRotationPanelMode('rotation')
+    setRotationPanelVisible(true)
+    if (rotationInputX) { rotationInputX.value = ''; rotationInputX.placeholder = '0'; }
+    if (rotationInputY) { rotationInputY.value = ''; rotationInputY.placeholder = '+10.0'; }
+    if (rotationInputZ) { rotationInputZ.value = ''; rotationInputZ.placeholder = '0'; }
+    search_point()
+    updateRailSelectionStatus()
+  } else {
+    console.log( 'rotation_rail _inactive' )
+    if (editObject === 'RAIL' && objectEditMode === ROTATE_MODE) {
+      objectEditMode = 'Standby'
+    }
+    railRotateDragState = null
+    search_object = false
+    setRotationPanelVisible(false)
+    refreshRailSelectionTargets()
+    setMeshListOpacity(targetObjects, 1)
+    updateRailSelectionStatus()
   }} else if ( uiID === 'structure' ){ if ( toggle === 'active' ){
     console.log( 'structure _active' )
     structureViewActive = true;
     updateStructurePinnedVisibility();
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
+      updateRailSelectionStatus();
+    }
   } else {
     structureViewActive = false;
     updateStructurePinnedVisibility();
+    if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+      refreshRailSelectionTargets();
+      setMeshListOpacity(targetObjects, 1);
+      updateRailSelectionStatus();
+    }
   }} else if ( uiID === 'new/2' ){ if ( toggle === 'active' ){
     console.log( 'new/2 _active' )
     structureModeActive = true;
@@ -18628,6 +21859,10 @@ export function UIevent (uiID, toggle){
   setRailConstructionPanelVisible(true);
   setRailConstructionCategory(selectedRailConstructionCategory);
   updateStructurePinnedVisibility();
+  if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
+    refreshRailSelectionTargets();
+    setMeshListOpacity(targetObjects, 1);
+  }
   } else {
   console.log( 'construction _inactive' )
   resetConstructionStrokeState();
@@ -18635,6 +21870,10 @@ export function UIevent (uiID, toggle){
   setRailConstructionPanelVisible(false);
   clearConstructionSelection();
   updateStructurePinnedVisibility();
+  if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
+    refreshRailSelectionTargets();
+    setMeshListOpacity(targetObjects, 1);
+  }
   }} else if ( uiID === 'bridge' ){ if ( toggle === 'active' ){
   console.log( 'bridge _active' )
   setRailConstructionCategory('bridge');
@@ -18667,6 +21906,14 @@ export function UIevent (uiID, toggle){
   console.log( 'tunnel_rect _active' )
   setRailConstructionCategory('tunnel_rect');
   runRailConstructionByCategory('tunnel_rect');
+  }} else if ( uiID === 'platform' ){ if ( toggle === 'active' ){
+  console.log( 'platform _active' )
+  setRailConstructionCategory('platform');
+  runRailConstructionByCategory('platform');
+  }} else if ( uiID === 'group_rail' ){ if ( toggle === 'active' ){
+  console.log( 'group_rail _active' )
+  setRailConstructionCategory('group');
+  runRailConstructionByCategory('group');
   }} else if ( uiID === 'move/2_legacy' ){ if ( toggle === 'active' ){
   console.log( 'move/2_legacy _active' )
   } else {
@@ -18717,6 +21964,9 @@ export function UIevent (uiID, toggle){
     }
     clearDifferencePreviewTube();
     setCreateModeWorldFocus(false);
+    groupModeActive = false;
+    clearGroupSelection();
+    setGroupModePanelVisible(false);
 
   }} else if ( uiID === 'view' ){ if ( toggle === 'active' ){
   console.log( 'view _active' )
@@ -19064,6 +22314,9 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'copy' ){ if ( toggle === 'active' ){
   console.log( 'copy _active' )
     copyModeActive = true
+    groupModeActive = false
+    clearGroupSelection()
+    setGroupModePanelVisible(false)
     styleModeActive = false
     clearStyleSelection()
     movePointPanelActive = false
@@ -19092,9 +22345,13 @@ export function UIevent (uiID, toggle){
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'COPY') {
       objectEditMode = 'Standby'
     }
+    updateGroupModePanelUI();
   }} else if ( uiID === 'style' ){ if ( toggle === 'active' ){
   console.log( 'style _active' )
     styleModeActive = true
+    groupModeActive = false
+    clearGroupSelection()
+    setGroupModePanelVisible(false)
     copyModeActive = false
     clearCopySelection()
     movePointPanelActive = false
@@ -19121,6 +22378,40 @@ export function UIevent (uiID, toggle){
     setRotationPanelVisible(false);
     search_object = false
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'STYLE') {
+      objectEditMode = 'Standby'
+    }
+    updateGroupModePanelUI();
+  }} else if ( uiID === 'group' ){ if ( toggle === 'active' ){
+  console.log( 'group _active' )
+    groupModeActive = true
+    copyModeActive = false
+    styleModeActive = false
+    clearCopySelection()
+    clearStyleSelection()
+    movePointPanelActive = false
+    scalePointPanelActive = false
+    pointRotateModeActive = false
+    clearPointRotateState()
+    editObject = 'STEEL_FRAME'
+    steelFrameMode.setAllowPointAppend(false)
+    objectEditMode = 'GROUP'
+    targetObjects = getConstructionCopyTargets()
+    setMeshListOpacity(targetObjects, 1)
+    steelFrameMode.setActive(true)
+    search_object = true
+    setGroupModeTrackOptions()
+    setGroupModePanelVisible(true)
+    updateGroupModePanelUI()
+    search_point()
+
+  } else {
+  console.log( 'group _inactive' )
+    groupModeActive = false
+    clearGroupSelection()
+    setGroupModePanelVisible(false)
+    updateGroupModePanelUI()
+    search_object = false
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'GROUP') {
       objectEditMode = 'Standby'
     }
   }} else if ( uiID === 'scale' ){ if ( toggle === 'active' ){
@@ -19623,10 +22914,46 @@ export function UIevent (uiID, toggle){
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
     refreshDifferenceSelectedEdgeHighlights();
+  }} else if ( uiID === 'line' ){ if ( toggle === 'active' ){
+  console.log( 'line _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
+    differenceLinePickModeActive = true
+    differenceSpaceModeActive = true
+    differenceSpaceTransformMode = 'line'
+    editObject = 'DIFFERENCE_SPACE'
+    objectEditMode = 'Standby'
+    search_object = false
+    targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+    // lineモードでは「削除予定カッター」のみを見せる。
+    setMeshListOpacity(targetObjects, 0)
+    toggleRailTube(true);
+    if (differencePanel) {
+      differencePanel.style.display = 'block';
+    }
+    setDifferenceLineOptions();
+    refreshDifferenceLineOnlyPreview();
+    updateDifferenceLineSelectionStatus();
+  } else {
+  console.log( 'line _inactive' )
+    differenceLinePickModeActive = false
+    clearDifferencePreviewTube();
+    if (!railModeActive) {
+      setRailTubeRenderVisible(false);
+    }
   }} else if ( uiID === 'excavation' ){ if ( toggle === 'active' ){
   console.log( 'excavation _active' )
     if (blockManualDioramaSpaceMode()) { return; }
-    if (!runDifferenceOnSinjyukuFromSelectedPoints()) {
+    const hasDifferenceSpaces = getActiveDifferenceSpaces().length > 0;
+    const previewSource = String(differencePreviewTube?.userData?.differenceCutterSource || '');
+    const useRailLineCutter = differenceLinePickModeActive
+      || differenceSpaceTransformMode === 'line'
+      || previewSource.startsWith('rail_track_');
+    const done = useRailLineCutter
+      ? runDifferenceOnSinjyukuFromRailTracks()
+      : (hasDifferenceSpaces
+        ? runDifferenceOnSinjyukuFromSelectedPoints()
+        : runDifferenceOnSinjyukuFromRailTracks());
+    if (!done) {
       console.warn('excavation failed.');
     }
   } else {
@@ -19832,7 +23159,7 @@ window.addEventListener('mousedown', (e) => {
 
 window.addEventListener('touchstart', (e) => {
   const uiTarget = e.target instanceof Element
-    ? e.target.closest('#save-buttons, #show-instructions-btn, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel')
+    ? e.target.closest('#save-buttons, #show-instructions-btn, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel')
     : null;
   if (uiTarget) { return; }
 
