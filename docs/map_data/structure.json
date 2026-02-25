@@ -1,32 +1,386 @@
 {
   "meta": {
-    "version": 1,
-    "savedAt": "2026-02-14T19:53:31.501Z"
+    "version": 3,
+    "savedAt": "2026-02-25T07:11:48.525Z"
   },
   "pins": [
     {
       "x": 14.500011959447946,
       "y": 1,
       "z": 0,
-      "trackName": "Points_0"
+      "trackName": "Points_0",
+      "linkedStructureObjectIds": []
     },
     {
       "x": -12.500007705440801,
       "y": 1,
       "z": 0,
-      "trackName": "Points_0"
+      "trackName": "Points_0",
+      "linkedStructureObjectIds": []
     },
     {
       "x": 14.500011959447946,
       "y": 1,
       "z": -1.2,
-      "trackName": "Points_1"
+      "trackName": "Points_1",
+      "linkedStructureObjectIds": []
     },
     {
       "x": -12.500007705440801,
       "y": 1,
       "z": -1.2,
-      "trackName": "Points_1"
+      "trackName": "Points_1",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": -56.44284858435894,
+      "y": 8.45767693090801,
+      "z": 59.94886187107396,
+      "trackName": "Points_2",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": -54.92585527497435,
+      "y": 8.45767693090801,
+      "z": 65.0631714943418,
+      "trackName": "Points_3",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": 11.39840109602597,
+      "y": 8.45767693090801,
+      "z": 18.815378134887858,
+      "trackName": "Points_2",
+      "linkedStructureObjectIds": [
+        "structure_obj_56",
+        "structure_obj_57",
+        "structure_obj_58",
+        "structure_obj_9",
+        "structure_obj_10",
+        "structure_obj_11",
+        "structure_obj_12",
+        "structure_obj_13",
+        "structure_obj_14",
+        "structure_obj_15",
+        "structure_obj_16",
+        "structure_obj_17",
+        "structure_obj_18",
+        "structure_obj_19",
+        "structure_obj_20",
+        "structure_obj_21",
+        "structure_obj_22",
+        "structure_obj_23",
+        "structure_obj_24",
+        "structure_obj_25",
+        "structure_obj_26",
+        "structure_obj_27",
+        "structure_obj_28",
+        "structure_obj_29",
+        "structure_obj_30",
+        "structure_obj_31",
+        "structure_obj_32",
+        "structure_obj_33",
+        "structure_obj_34",
+        "structure_obj_35",
+        "structure_obj_36",
+        "structure_obj_37",
+        "structure_obj_38",
+        "structure_obj_39",
+        "structure_obj_40",
+        "structure_obj_41",
+        "structure_obj_42",
+        "structure_obj_43",
+        "structure_obj_59",
+        "structure_obj_60",
+        "structure_obj_61",
+        "structure_obj_62",
+        "structure_obj_63",
+        "structure_obj_64",
+        "structure_obj_65",
+        "structure_obj_66",
+        "structure_obj_67",
+        "structure_obj_68",
+        "structure_obj_69",
+        "structure_obj_70",
+        "structure_obj_71",
+        "structure_obj_72",
+        "structure_obj_73",
+        "structure_obj_74",
+        "structure_obj_75",
+        "structure_obj_76",
+        "structure_obj_77",
+        "structure_obj_78",
+        "structure_obj_79",
+        "structure_obj_80",
+        "structure_obj_81",
+        "structure_obj_82",
+        "structure_obj_83",
+        "structure_obj_84",
+        "structure_obj_85",
+        "structure_obj_86",
+        "structure_obj_87",
+        "structure_obj_88",
+        "structure_obj_89",
+        "structure_obj_90",
+        "structure_obj_91",
+        "structure_obj_92",
+        "structure_obj_93",
+        "structure_obj_94",
+        "structure_obj_95",
+        "structure_obj_96",
+        "structure_obj_97",
+        "structure_obj_98",
+        "structure_obj_99",
+        "structure_obj_100",
+        "structure_obj_101",
+        "structure_obj_102",
+        "structure_obj_103",
+        "structure_obj_104",
+        "structure_obj_105",
+        "structure_obj_106",
+        "structure_obj_107",
+        "structure_obj_108",
+        "structure_obj_109",
+        "structure_obj_110",
+        "structure_obj_111",
+        "structure_obj_112"
+      ]
+    },
+    {
+      "x": 14.990723778592985,
+      "y": 8.45767693090801,
+      "z": 23.11012075403841,
+      "trackName": "Points_3",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": -36.0251364968281,
+      "y": 8.45767693090801,
+      "z": 47.83866263993102,
+      "trackName": "Points_1",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": -39.44002058177068,
+      "y": 8.45767693090801,
+      "z": 42.86646356461696,
+      "trackName": "Points_0",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": 33.7209997447469,
+      "y": 8.45767693090801,
+      "z": -8.53669071212982,
+      "trackName": "Points_0",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": 37.254556092893154,
+      "y": 8.45767693090801,
+      "z": -4.100513965894391,
+      "trackName": "Points_1",
+      "linkedStructureObjectIds": []
+    },
+    {
+      "x": -22.486003399514544,
+      "y": 8.45767693090801,
+      "z": 41.876461696310635,
+      "trackName": "Points_2",
+      "linkedStructureObjectIds": [
+        "structure_obj_56",
+        "structure_obj_57",
+        "structure_obj_58",
+        "structure_obj_9",
+        "structure_obj_10",
+        "structure_obj_11",
+        "structure_obj_12",
+        "structure_obj_13",
+        "structure_obj_14",
+        "structure_obj_15",
+        "structure_obj_16",
+        "structure_obj_17",
+        "structure_obj_18",
+        "structure_obj_19",
+        "structure_obj_20",
+        "structure_obj_21",
+        "structure_obj_22",
+        "structure_obj_23",
+        "structure_obj_24",
+        "structure_obj_25",
+        "structure_obj_26",
+        "structure_obj_27",
+        "structure_obj_28",
+        "structure_obj_29",
+        "structure_obj_30",
+        "structure_obj_31",
+        "structure_obj_32",
+        "structure_obj_33",
+        "structure_obj_34",
+        "structure_obj_35",
+        "structure_obj_36",
+        "structure_obj_37",
+        "structure_obj_38",
+        "structure_obj_39",
+        "structure_obj_40",
+        "structure_obj_41",
+        "structure_obj_42",
+        "structure_obj_43",
+        "structure_obj_59",
+        "structure_obj_60",
+        "structure_obj_61",
+        "structure_obj_62",
+        "structure_obj_63",
+        "structure_obj_64",
+        "structure_obj_65",
+        "structure_obj_66",
+        "structure_obj_67",
+        "structure_obj_68",
+        "structure_obj_69",
+        "structure_obj_70",
+        "structure_obj_71",
+        "structure_obj_72",
+        "structure_obj_73",
+        "structure_obj_74",
+        "structure_obj_75",
+        "structure_obj_76",
+        "structure_obj_77",
+        "structure_obj_78",
+        "structure_obj_79",
+        "structure_obj_80",
+        "structure_obj_81",
+        "structure_obj_82",
+        "structure_obj_83",
+        "structure_obj_84",
+        "structure_obj_85",
+        "structure_obj_86",
+        "structure_obj_87",
+        "structure_obj_88",
+        "structure_obj_89",
+        "structure_obj_90",
+        "structure_obj_91",
+        "structure_obj_92",
+        "structure_obj_93",
+        "structure_obj_94",
+        "structure_obj_95",
+        "structure_obj_96",
+        "structure_obj_97",
+        "structure_obj_98",
+        "structure_obj_99",
+        "structure_obj_100",
+        "structure_obj_101",
+        "structure_obj_102",
+        "structure_obj_103",
+        "structure_obj_104",
+        "structure_obj_105",
+        "structure_obj_106",
+        "structure_obj_107",
+        "structure_obj_108",
+        "structure_obj_109",
+        "structure_obj_110",
+        "structure_obj_111",
+        "structure_obj_112"
+      ]
+    }
+  ],
+  "generationRuns": [
+    {
+      "category": "platform",
+      "pins": [
+        {
+          "x": -56.44284858435894,
+          "y": 8.45767693090801,
+          "z": 59.94886187107396,
+          "trackName": "Points_2"
+        },
+        {
+          "x": -54.92585527497435,
+          "y": 8.45767693090801,
+          "z": 65.0631714943418,
+          "trackName": "Points_3"
+        },
+        {
+          "x": 11.39840109602597,
+          "y": 8.45767693090801,
+          "z": 18.815378134887858,
+          "trackName": "Points_2"
+        },
+        {
+          "x": 14.990723778592985,
+          "y": 8.45767693090801,
+          "z": 23.11012075403841,
+          "trackName": "Points_3"
+        }
+      ],
+      "params": {}
+    },
+    {
+      "category": "platform",
+      "pins": [
+        {
+          "x": 37.254556092893154,
+          "y": 8.45767693090801,
+          "z": -4.100513965894391,
+          "trackName": "Points_1"
+        },
+        {
+          "x": 33.7209997447469,
+          "y": 8.45767693090801,
+          "z": -8.53669071212982,
+          "trackName": "Points_0"
+        },
+        {
+          "x": -39.44002058177068,
+          "y": 8.45767693090801,
+          "z": 42.86646356461696,
+          "trackName": "Points_0"
+        },
+        {
+          "x": -36.0251364968281,
+          "y": 8.45767693090801,
+          "z": 47.83866263993102,
+          "trackName": "Points_1"
+        }
+      ],
+      "params": {}
+    },
+    {
+      "category": "group",
+      "pins": [
+        {
+          "x": -22.486003399514544,
+          "y": 8.45767693090801,
+          "z": 41.876461696310635,
+          "trackName": "Points_2"
+        },
+        {
+          "x": 11.39840109602597,
+          "y": 8.45767693090801,
+          "z": 18.815378134887858,
+          "trackName": "Points_2"
+        }
+      ],
+      "params": {
+        "groupId": "structure_group_1",
+        "groupSourceKey": "sib::structure_group_1",
+        "groupSourceLabel": "sib/structure_group_1",
+        "range": {
+          "pinCount": 2,
+          "trackNames": [
+            "Points_2"
+          ],
+          "perTrack": [
+            {
+              "trackName": "Points_2",
+              "startT": 0.5777777777777777,
+              "endT": 0.7055555555555556
+            }
+          ]
+        },
+        "lateralOffset": 2,
+        "verticalOffset": 1.9,
+        "yawOffsetDeg": 214.5,
+        "spacing": 1.55
+      }
     }
   ]
 }

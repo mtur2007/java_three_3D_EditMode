@@ -17,6 +17,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   let allowPointAppend = false;
   const createPointScale = 0.1;
   let forcedCreatEnvMap = null;
+  const BEAM_BASE_COLOR = 0x9DA2A1;
 
   function getDefaultPointColor(mesh) {
     return mesh?.userData?.steelFrameCopied ? copiedPointColor : pointColor;
@@ -41,7 +42,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     });
   });
 
-  function createCreatStandardMaterial(color = 0x8a8f98) {
+  function createCreatStandardMaterial(color = BEAM_BASE_COLOR) {
     return new THREE.MeshStandardMaterial({
       color,
       metalness: 0.85,
@@ -188,7 +189,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const diameter = Number(dims?.beamWidthHorizontal);
     const radius = Number.isFinite(diameter) ? Math.max(0.005, diameter * 0.5) : 0.08;
     const geometry = new THREE.CylinderGeometry(radius, radius, len, 10);
-    const material = createCreatStandardMaterial(0x8a8f98);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = segmentName;
 
@@ -245,7 +246,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     });
     // ExtrudeGeometry depth is +Z from 0..len, center it around origin.
     geometry.translate(0, 0, -len * 0.5);
-    const material = createCreatStandardMaterial(0x8a8f98);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = segmentName;
 
@@ -307,7 +308,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       steps: 1,
     });
     geometry.translate(0, 0, -len * 0.5);
-    const material = createCreatStandardMaterial(0xf2f6ff);
+    const material = createCreatStandardMaterial(0xF7F4EF);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = segmentName;
 
@@ -367,7 +368,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const webHeight = Math.max(0.01, totalHeight - flangeThickness * 2);
     const flangeOffset = (totalHeight * 0.5) - (flangeThickness * 0.5);
 
-    const material = createCreatStandardMaterial(0x8a8f98);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
 
     const group = new THREE.Group();
     group.name = segmentName;
@@ -416,7 +417,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const flangeThickness = dims.beamThickness;
     const webHeight = Math.max(0.01, totalHeight - flangeThickness);
 
-    const material = createCreatStandardMaterial(0x8a8f98);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
     const group = new THREE.Group();
     group.name = segmentName;
 
@@ -458,7 +459,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const totalHeight = dims.beamHeightVertical;
     const legThickness = dims.beamThickness;
 
-    const material = createCreatStandardMaterial(0x8a8f98);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
     const group = new THREE.Group();
     group.name = segmentName;
 

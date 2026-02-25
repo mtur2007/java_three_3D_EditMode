@@ -89,6 +89,32 @@ async function loadMsgpackCodec() {
 }
 const { encode, decode } = await loadMsgpackCodec();
 const scene = new THREE.Scene();
+let constructionFixedEnvMap = null;
+const constructionFixedEnvMaterials = new Set();
+{
+  const envLoader = new THREE.TextureLoader();
+  envLoader.load('textures/ct.jpg', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    constructionFixedEnvMap = texture;
+    constructionFixedEnvMaterials.forEach((mat) => {
+      if (!mat) { return; }
+      mat.envMap = constructionFixedEnvMap;
+      mat.envMapIntensity = 1.0;
+      mat.needsUpdate = true;
+    });
+  });
+}
+
+function applyConstructionFixedEnvMapToMaterial(mat) {
+  if (!mat) { return; }
+  constructionFixedEnvMaterials.add(mat);
+  if (constructionFixedEnvMap) {
+    mat.envMap = constructionFixedEnvMap;
+    mat.envMapIntensity = 1.45;
+    mat.needsUpdate = true;
+  }
+}
 
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -507,6 +533,20 @@ const threeUi = document.getElementById('three-ui');
   let structureGroupSeq = 1;
   let railPlacementGroupSeq = 1;
   let lastRailConstructionCreatedObjects = [];
+  let structureLinkRuntimeReady = false;
+  let structureLinkRebuildTimer = null;
+  let structureLinkRebuildRetryCount = 0;
+  const STRUCTURE_LINK_REBUILD_MAX_RETRY = 24;
+  const STRUCTURE_LINK_REBUILD_RETRY_MS = 180;
+  let structureGenerationRuns = [];
+  let structureGenerationReplayActive = false;
+  let structureGenerationReplayPending = false;
+  let structureGenerationReplayTimer = null;
+  let structureGenerationReplayRetryCount = 0;
+  const STRUCTURE_GENERATION_REPLAY_MAX_RETRY = 40;
+  const STRUCTURE_GENERATION_REPLAY_RETRY_MS = 180;
+  const structureGroupSourceIndex = new Map();
+  const structureGroupSourceById = new Map();
   const DEFAULT_STRUCTURE_GROUP_SCALE = 1;
   let selectedGroupTrackName = '';
   let selectedAppendGroupId = '';
@@ -889,6 +929,332 @@ const threeUi = document.getElementById('three-ui');
     });
   }
 
+  function normalizePinsPayload(pinsPayload) {
+    if (!Array.isArray(pinsPayload)) { return []; }
+    return pinsPayload
+      .map((pin) => ({
+        x: Number(pin?.x) || 0,
+        y: Number(pin?.y) || 0,
+        z: Number(pin?.z) || 0,
+        trackName: String(pin?.trackName || ''),
+      }))
+      .filter((pin) => Number.isFinite(pin.x) && Number.isFinite(pin.y) && Number.isFinite(pin.z));
+  }
+
+  function recordStructureGenerationRun({ category = '', pins = [], params = {} } = {}) {
+    if (structureGenerationReplayActive) { return; }
+    const kind = String(category || '').trim();
+    if (!kind) { return; }
+    const normalizedPins = normalizePinsPayload(pins);
+    if (normalizedPins.length < 1) { return; }
+    structureGenerationRuns.push({
+      category: kind,
+      pins: normalizedPins,
+      params: { ...(params || {}) },
+    });
+  }
+
+  function normalizeStructureGroupSourceTag(raw) {
+    const text = String(raw || '').trim();
+    return text.length > 0 ? text : 'runtime';
+  }
+
+  function makeStructureGroupSourceKey(sourceTag, sourceGroupId) {
+    const tag = normalizeStructureGroupSourceTag(sourceTag);
+    const gid = String(sourceGroupId || '').trim();
+    if (!gid) { return ''; }
+    return `${tag}::${gid}`;
+  }
+
+  function registerStructureGroupSourceMappings(entries, sourceTag = 'runtime') {
+    const tag = normalizeStructureGroupSourceTag(sourceTag);
+    const rows = Array.isArray(entries) ? entries : [];
+    rows.forEach((entry) => {
+      const sourceGroupId = String(entry?.sourceGroupId || '').trim();
+      const remappedGroupId = String(entry?.remappedGroupId || '').trim();
+      if (!sourceGroupId || !remappedGroupId) { return; }
+      const sourceKey = makeStructureGroupSourceKey(tag, sourceGroupId);
+      const prev = structureGroupSourceIndex.get(sourceKey);
+      if (prev && prev !== remappedGroupId) {
+        console.warn('[structure_group] source mapping overwritten', { sourceKey, prev, next: remappedGroupId });
+      }
+      structureGroupSourceIndex.set(sourceKey, remappedGroupId);
+      structureGroupSourceById.set(remappedGroupId, {
+        sourceTag: tag,
+        sourceGroupId,
+        sourceKey,
+      });
+    });
+  }
+
+  function resolveStructureGroupIdForReplay(params = {}) {
+    const sourceKey = String(params?.groupSourceKey || '').trim();
+    if (sourceKey) {
+      if (structureGroupSourceIndex.has(sourceKey)) {
+        return String(structureGroupSourceIndex.get(sourceKey) || '').trim();
+      }
+      const directWithSource = String(params?.groupId || '').trim();
+      if (directWithSource) {
+        const existingIds = collectStructureGroupIds();
+        if (existingIds.includes(directWithSource)) {
+          return directWithSource;
+        }
+      }
+      return '';
+    }
+    const direct = String(params?.groupId || '').trim();
+    if (direct) { return direct; }
+    return '';
+  }
+
+  function buildGroupRailRangeSummary(pinsPayload) {
+    const pins = normalizePinsPayload(pinsPayload);
+    const perTrackMap = new Map();
+    pins.forEach((pin) => {
+      const trackName = String(pin?.trackName || '').trim();
+      if (!trackName) { return; }
+      const track = getRailTrackByName(trackName);
+      if (!track) { return; }
+      const nearest = getNearestPointOnRailTrackCurve(track, new THREE.Vector3(pin.x, pin.y, pin.z), 900);
+      if (!nearest || !Number.isFinite(nearest.t)) { return; }
+      const t = THREE.MathUtils.clamp(nearest.t, 0, 1);
+      if (!perTrackMap.has(trackName)) {
+        perTrackMap.set(trackName, { trackName, startT: t, endT: t });
+        return;
+      }
+      const row = perTrackMap.get(trackName);
+      row.startT = Math.min(row.startT, t);
+      row.endT = Math.max(row.endT, t);
+    });
+    const perTrack = Array.from(perTrackMap.values()).sort((a, b) => a.trackName.localeCompare(b.trackName));
+    return {
+      pinCount: pins.length,
+      trackNames: perTrack.map((row) => row.trackName),
+      perTrack,
+    };
+  }
+
+  function scheduleReplayStructureGenerationRuns({ resetRetry = false } = {}) {
+    if (resetRetry) {
+      structureGenerationReplayRetryCount = 0;
+    }
+    if (structureGenerationReplayTimer) { return; }
+    structureGenerationReplayTimer = setTimeout(() => {
+      structureGenerationReplayTimer = null;
+      replayStructureGenerationRunsFromStructureData();
+    }, STRUCTURE_GENERATION_REPLAY_RETRY_MS);
+  }
+
+  function scheduleRebuildStructureLinkedObjects({ resetRetry = false } = {}) {
+    if (resetRetry) {
+      structureLinkRebuildRetryCount = 0;
+    }
+    if (structureLinkRebuildTimer) { return; }
+    structureLinkRebuildTimer = setTimeout(() => {
+      structureLinkRebuildTimer = null;
+      rebuildStructureLinkedObjectsFromPins();
+    }, STRUCTURE_LINK_REBUILD_RETRY_MS);
+  }
+
+  function collectStructureTemplatesByObjectId() {
+    const map = new Map();
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        if (mesh?.userData?.structureLinkedGenerated) { return; }
+        const id = String(mesh?.userData?.structureObjectId || '').trim();
+        if (!id) { return; }
+        if (!map.has(id)) {
+          map.set(id, mesh);
+        }
+      });
+    return map;
+  }
+
+  function cloneLinkedStructureObjectsAtPin(pinMesh, sourceMeshes) {
+    const pin = pinMesh;
+    if (!pin?.parent || !Array.isArray(sourceMeshes) || sourceMeshes.length < 1) { return []; }
+    const sourceInfos = sourceMeshes
+      .map((mesh) => ({ mesh, anchorInfo: getStructureAnchorInfo(mesh) }))
+      .filter((entry) => Boolean(entry.anchorInfo?.anchor));
+    if (sourceInfos.length < 1) { return []; }
+    const sourceCenter = sourceInfos
+      .reduce((acc, entry) => acc.add(entry.anchorInfo.anchor), new THREE.Vector3())
+      .multiplyScalar(1 / sourceInfos.length);
+    const delta = pin.position.clone().sub(sourceCenter);
+
+    const created = [];
+    const sourceToCopiedPoint = new Map();
+    const ensureCopiedPoint = (srcPoint) => {
+      if (!srcPoint?.userData?.steelFramePoint) { return null; }
+      const existing = sourceToCopiedPoint.get(srcPoint);
+      if (existing?.parent) { return existing; }
+      const lineIndex = Number.isInteger(srcPoint?.userData?.steelFrameLine) ? srcPoint.userData.steelFrameLine : 0;
+      const copiedPoint = new THREE.Mesh(cube_geometry, cube_material.clone());
+      copiedPoint.position.copy(srcPoint.position).add(delta);
+      copiedPoint.scale.copy(srcPoint.scale);
+      copiedPoint.userData = {
+        ...(srcPoint.userData || {}),
+        steelFramePoint: true,
+        steelFrameLine: lineIndex,
+        structureLinkedGenerated: true,
+      };
+      delete copiedPoint.userData.structureObjectId;
+      delete copiedPoint.userData.guideCurve;
+      delete copiedPoint.userData.guideControlIndex;
+      steelFrameMode.addExistingPoint(copiedPoint, lineIndex);
+      sourceToCopiedPoint.set(srcPoint, copiedPoint);
+      return copiedPoint;
+    };
+
+    sourceInfos.forEach(({ mesh: src }) => {
+      const sourceObjectId = String(src?.userData?.structureObjectId || '').trim();
+      const structureGroupId = src?.userData?.structureGroupId ?? null;
+      const decorationType = normalizeDecorationType(src?.userData?.decorationType);
+      if (decorationType === 'led_board') {
+        const cloned = cloneLedBoardDecoration(src, delta, { structureGroupId });
+        if (!cloned) { return; }
+        cloned.userData = {
+          ...(cloned.userData || {}),
+          structureLinkedGenerated: true,
+          structureLinkSourceObjectId: sourceObjectId,
+        };
+        delete cloned.userData.structureObjectId;
+        scene.add(cloned);
+        decorationObjects.push(cloned);
+        ensureStructureObjectId(cloned);
+        created.push(cloned);
+        return;
+      }
+      if (decorationType === 'rect_spot_light') {
+        const cloned = cloneRectSpotLightDecoration(src, delta, { structureGroupId });
+        if (!cloned) { return; }
+        cloned.userData = {
+          ...(cloned.userData || {}),
+          structureLinkedGenerated: true,
+          structureLinkSourceObjectId: sourceObjectId,
+        };
+        delete cloned.userData.structureObjectId;
+        scene.add(cloned);
+        decorationObjects.push(cloned);
+        ensureStructureObjectId(cloned);
+        created.push(cloned);
+        return;
+      }
+      if (src?.name === 'SteelFrameSegment') {
+        const srcPointRefs = getCopyStructurePointMeshes(src);
+        const copiedPointRefs = srcPointRefs.map((p) => ensureCopiedPoint(p)).filter(Boolean);
+        let cloned = null;
+        try {
+          cloned = cloneObjectVisualTreeWithoutUserData(src) || src.clone(true);
+        } catch (err) {
+          console.warn('[structure link] segment clone failed', err);
+          cloned = cloneObjectVisualTreeWithoutUserData(src);
+        }
+        if (!cloned) { return; }
+        cloned.name = src?.name || cloned.name || 'SteelFrameSegment';
+        cloned.position.copy(src.position).add(delta);
+        if (src?.quaternion && cloned?.quaternion) {
+          cloned.quaternion.copy(src.quaternion);
+        }
+        cloned.userData = {
+          ...(src.userData || {}),
+          steelFrameSegmentPointRefs: copiedPointRefs,
+          structureLinkedGenerated: true,
+          structureLinkSourceObjectId: sourceObjectId,
+        };
+        delete cloned.userData.structureObjectId;
+        scene.add(cloned);
+        registerCopyObject(cloned);
+        steelFrameMode?.addExistingSegmentMesh?.(cloned);
+        ensureStructureObjectId(cloned);
+        created.push(cloned);
+        return;
+      }
+      if (!src?.clone) { return; }
+      const cloned = src.clone(true);
+      cloned.position.copy(src.position).add(delta);
+      if (src?.quaternion && cloned?.quaternion) {
+        cloned.quaternion.copy(src.quaternion);
+      }
+      cloned.userData = {
+        ...(src.userData || {}),
+        structureLinkedGenerated: true,
+        structureLinkSourceObjectId: sourceObjectId,
+      };
+      delete cloned.userData.structureObjectId;
+      scene.add(cloned);
+      ensureStructureObjectId(cloned);
+      created.push(cloned);
+    });
+    return created;
+  }
+
+  function rebuildStructureLinkedObjectsFromPins() {
+    if (!structureLinkRuntimeReady) {
+      scheduleRebuildStructureLinkedObjects();
+      return false;
+    }
+    const pins = structurePinnedPins
+      .filter((pin) => pin?.parent)
+      .filter((pin) => Array.isArray(pin?.userData?.linkedStructureObjectIds))
+      .filter((pin) => pin.userData.linkedStructureObjectIds.length > 0)
+      .filter((pin) => !pin?.userData?.structureLinkedRestored);
+    if (pins.length < 1) { return true; }
+
+    const templateMap = collectStructureTemplatesByObjectId();
+    let missing = false;
+    let createdCount = 0;
+    pins.forEach((pin) => {
+      const linkIds = Array.from(new Set(
+        (pin.userData.linkedStructureObjectIds || [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => id.length > 0)
+      ));
+      if (linkIds.length < 1) {
+        pin.userData.structureLinkedRestored = true;
+        return;
+      }
+      const sourceMeshes = [];
+      for (let i = 0; i < linkIds.length; i += 1) {
+        const src = templateMap.get(linkIds[i]);
+        if (!src?.parent) {
+          missing = true;
+          return;
+        }
+        sourceMeshes.push(src);
+      }
+      if (sourceMeshes.length !== linkIds.length) {
+        missing = true;
+        return;
+      }
+      const created = cloneLinkedStructureObjectsAtPin(pin, sourceMeshes);
+      if (created.length > 0) {
+        createdCount += created.length;
+      }
+      pin.userData = {
+        ...(pin.userData || {}),
+        structureLinkedRestored: true,
+      };
+    });
+
+    if (createdCount > 0) {
+      refreshCreateTargetsForSearch();
+      showRailGeneratedStructures();
+      if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
+        refreshRailSelectionTargets();
+        setMeshListOpacity(targetObjects, 1);
+      }
+    }
+
+    if (missing && structureLinkRebuildRetryCount < STRUCTURE_LINK_REBUILD_MAX_RETRY) {
+      structureLinkRebuildRetryCount += 1;
+      scheduleRebuildStructureLinkedObjects();
+      return false;
+    }
+    return true;
+  }
+
   function getBridgeSourcePins() {
     if (Array.isArray(constructionSelectedPins) && constructionSelectedPins.length > 0) {
       return constructionSelectedPins;
@@ -964,6 +1330,67 @@ const threeUi = document.getElementById('three-ui');
       rotationY = Math.atan2(dir.x, dir.z) + BRIDGE_YAW_OFFSET;
     }
     // アーチ形状のローカル原点が高めにあるため、線路高さに合わせて下方向へ補正。
+    center.y -= 24.8;
+    return { position: center, rotationY };
+  }
+
+  function getBridgePlacementFromPinsPayload(pinsPayload = []) {
+    const pins = normalizePinsPayload(pinsPayload);
+    if (pins.length < 1) {
+      return null;
+    }
+    const points = pins.map((pin) => new THREE.Vector3(pin.x, pin.y, pin.z));
+    const center = points.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / points.length);
+
+    let dir = null;
+    const trackCurves = getSelectedTrackCurvesForConstructionFromPinsPayload(pins);
+    if (Array.isArray(trackCurves) && trackCurves.length >= 2) {
+      const dirs = [];
+      const sampleT = 0.02;
+      trackCurves.forEach((entry) => {
+        const curve = entry?.curve;
+        if (!curve || typeof curve.getPointAt !== 'function') { return; }
+        const p0 = curve.getPointAt(0).clone();
+        const p1 = curve.getPointAt(sampleT).clone();
+        const d = p1.sub(p0).setY(0);
+        if (d.lengthSq() <= 1e-8) { return; }
+        d.normalize();
+        dirs.push(d);
+      });
+      if (dirs.length >= 2) {
+        const ref = dirs[0].clone();
+        const merged = new THREE.Vector3();
+        dirs.forEach((d) => {
+          merged.add(ref.dot(d) < 0 ? d.clone().multiplyScalar(-1) : d);
+        });
+        if (merged.lengthSq() > 1e-8) {
+          dir = merged.normalize();
+        }
+      }
+    }
+
+    if (!dir) {
+      let start = points[0];
+      let end = points[0];
+      let bestDistSq = -1;
+      for (let i = 0; i < points.length; i += 1) {
+        for (let j = i + 1; j < points.length; j += 1) {
+          const d = points[i].distanceToSquared(points[j]);
+          if (d > bestDistSq) {
+            bestDistSq = d;
+            start = points[i];
+            end = points[j];
+          }
+        }
+      }
+      dir = end.clone().sub(start).setY(0);
+    }
+
+    const BRIDGE_YAW_OFFSET = Math.PI / 2;
+    let rotationY = 1.750662913747207;
+    if (dir.lengthSq() > 1e-8) {
+      rotationY = Math.atan2(dir.x, dir.z) + BRIDGE_YAW_OFFSET;
+    }
     center.y -= 24.8;
     return { position: center, rotationY };
   }
@@ -1450,7 +1877,7 @@ const threeUi = document.getElementById('three-ui');
     return createYellowMirrorForConstructionSegments(segments, mirrorContext);
   }
 
-  function runRailConstructionGroupByPins(groupId, pinsPayload) {
+  function runRailConstructionGroupByPins(groupId, pinsPayload, options = {}) {
     lastRailConstructionCreatedObjects = [];
     const id = String(groupId || '').trim();
     if (!id) {
@@ -1480,10 +1907,18 @@ const threeUi = document.getElementById('three-ui');
     const sourceCenter = sourceAnchors
       .reduce((acc, entry) => acc.add(entry.anchor), new THREE.Vector3())
       .multiplyScalar(1 / sourceAnchors.length);
-    const lateralOffset = Number(railConstructionLateralOffsetInput?.value);
-    const verticalOffset = Number(railConstructionVerticalOffsetInput?.value);
-    const yawOffsetDeg = Number(railConstructionYawOffsetInput?.value);
-    const spacingRaw = Number(railConstructionSpacingInput?.value);
+    const lateralOffset = Number.isFinite(Number(options?.lateralOffset))
+      ? Number(options.lateralOffset)
+      : Number(railConstructionLateralOffsetInput?.value);
+    const verticalOffset = Number.isFinite(Number(options?.verticalOffset))
+      ? Number(options.verticalOffset)
+      : Number(railConstructionVerticalOffsetInput?.value);
+    const yawOffsetDeg = Number.isFinite(Number(options?.yawOffsetDeg))
+      ? Number(options.yawOffsetDeg)
+      : Number(railConstructionYawOffsetInput?.value);
+    const spacingRaw = Number.isFinite(Number(options?.spacing))
+      ? Number(options.spacing)
+      : Number(railConstructionSpacingInput?.value);
     const lateralOffsetValue = Number.isFinite(lateralOffset) ? lateralOffset : 0;
     const verticalOffsetValue = Number.isFinite(verticalOffset) ? verticalOffset : 0;
     const yawOffsetRad = Number.isFinite(yawOffsetDeg) ? THREE.MathUtils.degToRad(yawOffsetDeg) : 0;
@@ -1929,18 +2364,22 @@ const threeUi = document.getElementById('three-ui');
     return true;
   }
 
-  function runRailConstructionByCategory(category) {
+  function runRailConstructionByCategory(category, options = {}) {
     lastRailConstructionCreatedObjects = [];
     const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'platform', 'group'].includes(category)
       ? category
       : 'bridge';
-    const bridgeSourcePins = getBridgeSourcePins();
+    const providedPins = normalizePinsPayload(options?.pinsPayload);
+    const pins = providedPins.length > 0 ? providedPins : getConstructionPinsPayload();
+    const bridgeSourcePins = providedPins.length > 0
+      ? pins.map((pin) => ({ position: new THREE.Vector3(pin.x, pin.y, pin.z), userData: { trackName: pin.trackName } }))
+      : getBridgeSourcePins();
     const pinsForLink = kind === 'bridge'
       ? bridgeSourcePins.slice()
-      : constructionSelectedPins.slice();
+      : (providedPins.length > 0 ? pins : constructionSelectedPins.slice());
     const beforeIds = snapshotExistingStructureObjectIds();
     const minPins = kind === 'bridge' ? 1 : (kind === 'pillar' ? 1 : (kind === 'group' ? 1 : (kind === 'platform' ? 1 : 2)));
-    const activePinCount = kind === 'bridge' ? bridgeSourcePins.length : constructionSelectedPins.length;
+    const activePinCount = kind === 'bridge' ? bridgeSourcePins.length : pins.length;
     if (activePinCount < minPins) {
       const msg = kind === 'bridge'
         ? 'bridge は最低1つのピン選択が必要です。'
@@ -1959,18 +2398,43 @@ const threeUi = document.getElementById('three-ui');
       }
       return false;
     }
-    const pins = getConstructionPinsPayload();
     if (kind === 'group') {
-      const ok = runRailConstructionGroupByPins(selectedRailConstructionGroupId, pins);
+      const targetGroupId = String(options?.groupId || selectedRailConstructionGroupId || '').trim();
+      const ok = runRailConstructionGroupByPins(targetGroupId, pins, {
+        lateralOffset: options?.lateralOffset,
+        verticalOffset: options?.verticalOffset,
+        yawOffsetDeg: options?.yawOffsetDeg,
+        spacing: options?.spacing,
+      });
       if (!ok) { return false; }
       const created = lastRailConstructionCreatedObjects.length > 0
         ? lastRailConstructionCreatedObjects.slice()
         : collectNewStructureObjectsSince(beforeIds);
       appendLinkedObjectIdsToPins(pinsForLink, created);
+      const groupSourceInfo = structureGroupSourceById.get(targetGroupId) || null;
+      const range = buildGroupRailRangeSummary(pins);
+      recordStructureGenerationRun({
+        category: kind,
+        pins,
+        params: {
+          groupId: targetGroupId,
+          groupSourceKey: String(groupSourceInfo?.sourceKey || ''),
+          groupSourceLabel: groupSourceInfo
+            ? `${groupSourceInfo.sourceTag}/${groupSourceInfo.sourceGroupId}`
+            : targetGroupId,
+          range,
+          lateralOffset: Number.isFinite(Number(options?.lateralOffset)) ? Number(options.lateralOffset) : Number(railConstructionLateralOffsetInput?.value || 0),
+          verticalOffset: Number.isFinite(Number(options?.verticalOffset)) ? Number(options.verticalOffset) : Number(railConstructionVerticalOffsetInput?.value || 0),
+          yawOffsetDeg: Number.isFinite(Number(options?.yawOffsetDeg)) ? Number(options.yawOffsetDeg) : Number(railConstructionYawOffsetInput?.value || 0),
+          spacing: Number.isFinite(Number(options?.spacing)) ? Number(options.spacing) : Number(railConstructionSpacingInput?.value || 0),
+        },
+      });
       return true;
     }
     if (kind === 'bridge') {
-      const placement = getBridgePlacementFromSelectedPins();
+      const placement = providedPins.length > 0
+        ? getBridgePlacementFromPinsPayload(pins)
+        : getBridgePlacementFromSelectedPins();
       if (!placement) {
         if (railConstructionStatus) {
           railConstructionStatus.textContent = 'bridge 生成に必要なピンがありません。';
@@ -1986,8 +2450,12 @@ const threeUi = document.getElementById('three-ui');
       });
       // 橋モデルのローカル原点が端寄りのため、生成後に実形状中心をピン中心へ合わせる。
       alignObjectXZCenterToWorldTarget(bridgeObj, placement.position);
+      ensureStructureObjectId(bridgeObj);
+      lastRailConstructionCreatedObjects = [bridgeObj];
     } else if (kind === 'pillar') {
-      logPillarSideJudgement();
+      if (providedPins.length < 1) {
+        logPillarSideJudgement();
+      }
       TSys.buildStructureFromPins('pillar', pins, railTrackCurveMap, {
         baseInterval: 8,
         avoidRadius: 0.7,
@@ -2008,7 +2476,9 @@ const threeUi = document.getElementById('three-ui');
         yawOffset: 0,
       });
     } else if (kind === 'rib_bridge') {
-      const edges = getEdgeTrackNamesForConstruction(0.5);
+      const edges = providedPins.length > 0
+        ? getEdgeTrackNamesForConstructionFromPinsPayload(pins, 0.5)
+        : getEdgeTrackNamesForConstruction(0.5);
       TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
         edgeTrackNames: { right: edges.right, left: edges.left },
       });
@@ -2023,7 +2493,9 @@ const threeUi = document.getElementById('three-ui');
       });
     } else if (kind === 'platform') {
       const runRailPlatformConstruction = () => {
-        const selectedTrackCurves = getSelectedTrackCurvesForConstruction();
+        const selectedTrackCurves = providedPins.length > 0
+          ? getSelectedTrackCurvesForConstructionFromPinsPayload(pins)
+          : getSelectedTrackCurvesForConstruction();
         const trackCount = selectedTrackCurves.length;
         if (trackCount === 1) {
           if (railConstructionStatus) {
@@ -2062,6 +2534,10 @@ const threeUi = document.getElementById('three-ui');
           thickness = 0.22,
           topLift = 0.1,
           sampleStepMeters = 2.0,
+          edgeLineColor = 0xB33E08,
+          edgeLineWidth = 0.06,
+          edgeLineInset = 0.015,
+          edgeLineLift = 0.002,
         }) => {
           if (!rightCurve || !leftCurve) { return null; }
           const up = new THREE.Vector3(0, 1, 0);
@@ -2155,13 +2631,87 @@ const threeUi = document.getElementById('three-ui');
           geometry.computeBoundingSphere?.();
 
           const material = new THREE.MeshStandardMaterial({
-            color: 0x8a939e,
-            roughness: 0.86,
-            metalness: 0.08,
+            color: 0x929286,
+            roughness: 0.58,
+            metalness: 0.18,
             side: THREE.DoubleSide,
           });
+          applyConstructionFixedEnvMapToMaterial(material);
           const mesh = new THREE.Mesh(geometry, material);
           mesh.name = 'RailPlatformMesh';
+
+          const buildTopEdgeLineMesh = (edgePoints, oppositePoints, name) => {
+            if (!Array.isArray(edgePoints) || !Array.isArray(oppositePoints) || edgePoints.length < 2 || oppositePoints.length < 2) {
+              return null;
+            }
+            const outer = [];
+            const inner = [];
+            for (let i = 0; i < edgePoints.length; i += 1) {
+              const ep = edgePoints[i];
+              const op = oppositePoints[i];
+              if (!ep || !op) { return null; }
+              const towardInner = op.clone().sub(ep);
+              towardInner.y = 0;
+              const span = towardInner.length();
+              if (span < 1e-6) {
+                const p = ep.clone();
+                p.y += edgeLineLift;
+                outer.push(p.clone());
+                inner.push(p.clone());
+                continue;
+              }
+              towardInner.normalize();
+              const inset = Math.min(Math.max(0, edgeLineInset), span * 0.45);
+              const width = Math.min(Math.max(0.003, edgeLineWidth), Math.max(0.003, span * 0.45 - inset));
+              const outPoint = ep.clone().addScaledVector(towardInner, inset);
+              const inPoint = outPoint.clone().addScaledVector(towardInner, width);
+              outPoint.y += edgeLineLift;
+              inPoint.y += edgeLineLift;
+              outer.push(outPoint);
+              inner.push(inPoint);
+            }
+            if (outer.length < 2 || inner.length < 2) { return null; }
+            const stripPositions = [];
+            const pushTri = (a, b, c) => {
+              stripPositions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+            };
+            for (let i = 0; i < outer.length - 1; i += 1) {
+              const j = i + 1;
+              pushTri(outer[i], outer[j], inner[j]);
+              pushTri(outer[i], inner[j], inner[i]);
+            }
+            const stripGeometry = new THREE.BufferGeometry();
+            stripGeometry.setAttribute('position', new THREE.Float32BufferAttribute(stripPositions, 3));
+            stripGeometry.computeVertexNormals();
+            stripGeometry.computeBoundingBox?.();
+            stripGeometry.computeBoundingSphere?.();
+            const stripMaterial = new THREE.MeshStandardMaterial({
+              color: edgeLineColor,
+              emissive: edgeLineColor,
+              emissiveIntensity: 0.35,
+              roughness: 0.42,
+              metalness: 0.08,
+              side: THREE.DoubleSide,
+            });
+            applyConstructionFixedEnvMapToMaterial(stripMaterial);
+            const stripMesh = new THREE.Mesh(stripGeometry, stripMaterial);
+            stripMesh.name = name;
+            stripMesh.userData = {
+              ...(stripMesh.userData || {}),
+              railPlatformEdgeLine: true,
+            };
+            return stripMesh;
+          };
+
+          const rightEdgeLine = buildTopEdgeLineMesh(rightTop, leftTop, 'RailPlatformEdgeLineRight');
+          const leftEdgeLine = buildTopEdgeLineMesh(leftTop, rightTop, 'RailPlatformEdgeLineLeft');
+          if (rightEdgeLine) {
+            mesh.add(rightEdgeLine);
+          }
+          if (leftEdgeLine) {
+            mesh.add(leftEdgeLine);
+          }
+
           mesh.userData = {
             ...(mesh.userData || {}),
             decorationType: 'rail_platform',
@@ -2171,6 +2721,9 @@ const threeUi = document.getElementById('three-ui');
             leftTrackName: leftTrackName || '',
             innerOffset: safeInnerOffset,
             thickness: safeThickness,
+            edgeLineColor,
+            edgeLineWidth,
+            edgeLineInset,
           };
           return mesh;
         };
@@ -2212,6 +2765,11 @@ const threeUi = document.getElementById('three-ui');
         refreshRailSelectionTargets();
         setMeshListOpacity(targetObjects, 1);
       }
+      recordStructureGenerationRun({
+        category: kind,
+        pins,
+        params: {},
+      });
       return true;
     } else {
       TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
@@ -2219,6 +2777,11 @@ const threeUi = document.getElementById('three-ui');
     const created = collectNewStructureObjectsSince(beforeIds);
     appendLinkedObjectIdsToPins(pinsForLink, created);
     lastRailConstructionCreatedObjects = created;
+    recordStructureGenerationRun({
+      category: kind,
+      pins,
+      params: {},
+    });
     showRailGeneratedStructures();
     if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
       refreshRailSelectionTargets();
@@ -4909,8 +5472,8 @@ const threeUi = document.getElementById('three-ui');
     const lens = new THREE.Mesh(
       new THREE.BoxGeometry(0.58, 0.022, 0.58),
       new THREE.MeshStandardMaterial({
-        color: 0xf5f9ff,
-        emissive: 0xe7f1ff,
+        color: 0xFFFFFD,
+        emissive: 0xFFFFFD,
         emissiveIntensity: 1.45,
         metalness: 0.06,
         roughness: 0.16,
@@ -7279,9 +7842,11 @@ function placeStructurePinnedPinAt(position, trackName = null) {
     constructionSelected: false,
     trackName: resolvedTrackName,
     linkedStructureObjectIds: Array.from(new Set(linkedIds)),
+    structureLinkedRestored: false,
   };
   pin.visible = structureViewActive || structureModeActive || constructionModeActive;
   structurePinnedPins.push(pin);
+  return pin;
 }
 
 function clearStructurePinnedPins() {
@@ -7362,15 +7927,15 @@ function pickStructurePinnedPin() {
   return hits[0].object;
 }
 
-function getSelectedTrackCurvesForConstruction() {
+function getSelectedTrackCurvesForConstructionFromPinsPayload(pinsPayload) {
   const pinGroups = new Map();
-  constructionSelectedPins.forEach((pin) => {
-    const trackName = pin.userData?.trackName;
+  normalizePinsPayload(pinsPayload).forEach((pin) => {
+    const trackName = pin.trackName;
     if (typeof trackName !== 'string' || trackName.length === 0) { return; }
     if (!pinGroups.has(trackName)) {
       pinGroups.set(trackName, []);
     }
-    pinGroups.get(trackName).push(pin.position.clone());
+    pinGroups.get(trackName).push(new THREE.Vector3(pin.x, pin.y, pin.z));
   });
 
   const getNearestTOnCurve = (curve, point, resolution = 500) => {
@@ -7407,6 +7972,10 @@ function getSelectedTrackCurvesForConstruction() {
   });
 
   return result;
+}
+
+function getSelectedTrackCurvesForConstruction() {
+  return getSelectedTrackCurvesForConstructionFromPinsPayload(getConstructionPinsPayload());
 }
 
 function getOrderedTracksByLateralPosition(trackCurves, sampleDistance = 0.5) {
@@ -7482,6 +8051,19 @@ function getEdgeTrackNamesForConstruction(sampleDistance = 0.5) {
   };
 }
 
+function getEdgeTrackNamesForConstructionFromPinsPayload(pinsPayload, sampleDistance = 0.5) {
+  const trackCurves = getSelectedTrackCurvesForConstructionFromPinsPayload(pinsPayload);
+  const ordered = getOrderedTracksByLateralPosition(trackCurves, sampleDistance);
+  if (ordered.length === 0) {
+    return { right: null, left: null, ordered: [] };
+  }
+  return {
+    right: ordered[0].trackName,
+    left: ordered[ordered.length - 1].trackName,
+    ordered,
+  };
+}
+
 function logPillarSideJudgement() {
   const trackCurves = getSelectedTrackCurvesForConstruction();
   if (trackCurves.length < 2) {
@@ -7533,6 +8115,14 @@ async function loadStructureData(url) {
       return;
     }
     clearStructurePinnedPins();
+    structureGenerationRuns = Array.isArray(data.generationRuns)
+      ? data.generationRuns.map((run) => ({
+        category: String(run?.category || '').trim(),
+        pins: normalizePinsPayload(run?.pins),
+        params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
+        replayDone: false,
+      })).filter((run) => run.category && run.pins.length > 0)
+      : [];
     data.pins.forEach((pin) => {
       if (!pin || !Number.isFinite(pin.x) || !Number.isFinite(pin.y) || !Number.isFinite(pin.z)) {
         return;
@@ -7540,14 +8130,83 @@ async function loadStructureData(url) {
       placeStructurePinnedPinAt(pin, pin.trackName ?? null);
     });
     updateStructurePinnedVisibility();
+    structureGenerationReplayPending = structureGenerationRuns.length > 0;
+    if (structureGenerationReplayPending) {
+      scheduleReplayStructureGenerationRuns({ resetRetry: true });
+    } else {
+      scheduleRebuildStructureLinkedObjects({ resetRetry: true });
+    }
   } catch (err) {
     console.warn('structure.json load failed', err);
   }
 }
+
+function replayStructureGenerationRunsFromStructureData() {
+  if (!structureGenerationReplayPending) { return true; }
+  if (!structureLinkRuntimeReady) {
+    if (structureGenerationReplayRetryCount < STRUCTURE_GENERATION_REPLAY_MAX_RETRY) {
+      structureGenerationReplayRetryCount += 1;
+      scheduleReplayStructureGenerationRuns();
+    }
+    return false;
+  }
+  if (structureGenerationReplayActive) { return; }
+  structureGenerationReplayActive = true;
+  try {
+    let unresolvedGroupReference = false;
+    let pendingRunCount = 0;
+    structureGenerationRuns.forEach((run) => {
+      if (run?.replayDone) { return; }
+      const kind = String(run?.category || '').trim();
+      if (!kind) { return; }
+      const pins = normalizePinsPayload(run?.pins);
+      if (pins.length < 1) { return; }
+      pendingRunCount += 1;
+      const params = (run?.params && typeof run.params === 'object') ? run.params : {};
+      const resolvedGroupId = kind === 'group' ? resolveStructureGroupIdForReplay(params) : '';
+      if (kind === 'group' && !resolvedGroupId) {
+        unresolvedGroupReference = true;
+        console.warn('[group_rail replay] group resolve failed', {
+          savedGroupId: params?.groupId,
+          groupSourceKey: params?.groupSourceKey,
+          groupSourceLabel: params?.groupSourceLabel,
+          range: params?.range,
+        });
+        return;
+      }
+      runRailConstructionByCategory(kind, {
+        pinsPayload: pins,
+        groupId: kind === 'group' ? resolvedGroupId : params.groupId,
+        lateralOffset: params.lateralOffset,
+        verticalOffset: params.verticalOffset,
+        yawOffsetDeg: params.yawOffsetDeg,
+        spacing: params.spacing,
+      });
+      run.replayDone = true;
+    });
+    const hasRemainingRuns = structureGenerationRuns.some((run) => !run?.replayDone);
+    if (hasRemainingRuns && unresolvedGroupReference && structureGenerationReplayRetryCount < STRUCTURE_GENERATION_REPLAY_MAX_RETRY) {
+      structureGenerationReplayRetryCount += 1;
+      scheduleReplayStructureGenerationRuns();
+      return false;
+    }
+    if (hasRemainingRuns && unresolvedGroupReference) {
+      console.warn('[group_rail replay] unresolved runs remain after max retry');
+    }
+    if (pendingRunCount < 1 || !hasRemainingRuns) {
+      structureGenerationReplayPending = false;
+      return true;
+    }
+    structureGenerationReplayPending = false;
+  } finally {
+    structureGenerationReplayActive = false;
+  }
+}
+
 function buildStructurePayload() {
   return {
     meta: {
-      version: 2,
+      version: 3,
       savedAt: new Date().toISOString(),
     },
     pins: structurePinnedPins.map((pin) => ({
@@ -7561,6 +8220,11 @@ function buildStructurePayload() {
           .filter((v) => v.length > 0)
         : [],
     })),
+    generationRuns: structureGenerationRuns.map((run) => ({
+      category: String(run?.category || '').trim(),
+      pins: normalizePinsPayload(run?.pins),
+      params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
+    })).filter((run) => run.category && run.pins.length > 0),
   };
 }
 
@@ -8048,6 +8712,8 @@ const redoActionButton = document.getElementById('redo-action');
 const loadMapDataButton = document.getElementById('load-map-data');
 const loadMapDataAppendGroupButton = document.getElementById('load-map-data-append-group');
 const loadMapDataInput = document.getElementById('load-map-data-input');
+const STRUCTURE_GROUP_FOLDER_URL = 'map_data/structure_group/';
+let structureGroupFolderAutoLoaded = false;
 if (undoActionButton) {
   undoActionButton.addEventListener('click', undoHistoryByContext);
 }
@@ -8129,6 +8795,8 @@ function applyCreateModePayload(payload) {
   }
   clearCreateHistory();
   clearDifferenceHistory();
+  structureGroupSourceIndex.clear();
+  structureGroupSourceById.clear();
   const baseGuideGrid = (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
     ? payload.baseGuideGrid
     : null;
@@ -8349,13 +9017,18 @@ function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
     steelFrameState: mappedSteelFrameState,
     decorationStates: mappedDecorationStates,
     remappedCount: idMap.size,
+    remappedEntries: Array.from(idMap.entries()).map(([sourceGroupId, remappedGroupId]) => ({
+      sourceGroupId,
+      remappedGroupId,
+    })),
   };
 }
 
-function appendCreateModeGroupsPayload(payload) {
+function appendCreateModeGroupsPayload(payload, options = {}) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('map_data の形式が不正です。');
   }
+  const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
   syncStructureGroupSequenceFromExisting();
   const keyToGrid = buildExistingGuideGridKeyMap();
   const groupedSteelFrameState = filterGroupedSteelFrameState(payload?.steelFrame);
@@ -8374,6 +9047,7 @@ function appendCreateModeGroupsPayload(payload) {
   if (appendDecorationCount > 0) {
     restoreDecorationsState(decorationStates, keyToGrid);
   }
+  registerStructureGroupSourceMappings(mapped.remappedEntries, sourceTag);
   syncStructureGroupSequenceFromExisting();
   setRailConstructionGroupOptions();
   updateGroupModePanelUI();
@@ -8396,39 +9070,11 @@ function readMapDataFile(file) {
           return;
         }
         const bytes = new Uint8Array(data);
-        const name = String(file?.name || '').toLowerCase();
-        const explicitJson = name.endsWith('.json');
-        const explicitMsgPack = name.endsWith('.msgpack') || name.endsWith('.mpk');
-
-        const tryMsgPack = () => unpackState(bytes);
-        const tryJson = () => {
-          const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
-          return JSON.parse(text);
-        };
-
-        // 拡張子は優先順のヒントとしてだけ使い、必ず両形式を試す。
-        const firstTry = explicitJson ? tryJson : tryMsgPack;
-        const secondTry = explicitJson ? tryMsgPack : tryJson;
-        try {
-          resolve(firstTry());
-          return;
-        } catch (firstErr) {
-          try {
-            resolve(secondTry());
-            return;
-          } catch (secondErr) {
-            const msgpackErr = explicitJson ? secondErr : firstErr;
-            const jsonErr = explicitJson ? firstErr : secondErr;
-            const detail = [
-              `msgpack: ${msgpackErr?.message || msgpackErr}`,
-              `json: ${jsonErr?.message || jsonErr}`,
-              `name: ${file?.name || 'unknown'}`,
-              `size: ${Number(file?.size) || 0} bytes`,
-            ].join(' | ');
-            reject(new Error(`MessagePack / JSON の解析に失敗しました。${detail}`));
-            return;
-          }
-        }
+        resolve(parseMapDataBytes(bytes, {
+          name: file?.name || 'unknown',
+          size: Number(file?.size) || 0,
+        }));
+        return;
       } catch (err) {
         reject(new Error(`MessagePack / JSON の解析に失敗しました。${err?.message || err}`));
       }
@@ -8436,6 +9082,145 @@ function readMapDataFile(file) {
     reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました。'));
     reader.readAsArrayBuffer(file);
   });
+}
+
+function parseMapDataBytes(bytes, { name = 'unknown', size = 0 } = {}) {
+  const lowerName = String(name || '').toLowerCase();
+  const explicitJson = lowerName.endsWith('.json');
+  const tryMsgPack = () => unpackState(bytes);
+  const tryJson = () => {
+    const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+    return JSON.parse(text);
+  };
+  const firstTry = explicitJson ? tryJson : tryMsgPack;
+  const secondTry = explicitJson ? tryMsgPack : tryJson;
+  try {
+    return firstTry();
+  } catch (firstErr) {
+    try {
+      return secondTry();
+    } catch (secondErr) {
+      const msgpackErr = explicitJson ? secondErr : firstErr;
+      const jsonErr = explicitJson ? firstErr : secondErr;
+      const detail = [
+        `msgpack: ${msgpackErr?.message || msgpackErr}`,
+        `json: ${jsonErr?.message || jsonErr}`,
+        `name: ${name}`,
+        `size: ${Number(size) || 0} bytes`,
+      ].join(' | ');
+      throw new Error(`MessagePack / JSON の解析に失敗しました。${detail}`);
+    }
+  }
+}
+
+async function readMapDataPayloadFromUrl(url) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`fetch failed: ${response.status} ${response.statusText} (${url})`);
+  }
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const pathname = String(url || '').split('?')[0];
+  const name = pathname.split('/').pop() || pathname || 'unknown';
+  return parseMapDataBytes(bytes, { name, size: bytes.byteLength });
+}
+
+async function fetchStructureGroupFileListFromFolder(folderUrl = STRUCTURE_GROUP_FOLDER_URL) {
+  const toAbsolute = (entry) => {
+    try {
+      return new URL(entry, location.href).href;
+    } catch (_err) {
+      return '';
+    }
+  };
+  const normalizeFileList = (rawFiles) => {
+    const valid = Array.isArray(rawFiles) ? rawFiles : [];
+    const out = [];
+    const seen = new Set();
+    valid.forEach((file) => {
+      const raw = String(file || '').trim();
+      if (!raw) { return; }
+      const abs = toAbsolute(raw.includes('/') ? raw : `${folderUrl}${raw}`);
+      if (!abs) { return; }
+      const pathNoQuery = abs.split('?')[0];
+      if (!/\.(json|msgpack|mpk)$/i.test(pathNoQuery)) { return; }
+      if (seen.has(abs)) { return; }
+      seen.add(abs);
+      out.push(abs);
+    });
+    return out;
+  };
+
+  try {
+    const indexUrl = `${folderUrl}index.json`;
+    const response = await fetch(indexUrl, { cache: 'no-store' });
+    if (response.ok) {
+      const payload = await response.json();
+      const files = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.files)
+          ? payload.files
+          : [];
+      const list = normalizeFileList(files);
+      if (list.length > 0) {
+        return list;
+      }
+    }
+  } catch (_err) {
+    // フォールバックへ。
+  }
+
+  try {
+    const response = await fetch(folderUrl, { cache: 'no-store' });
+    if (!response.ok) { return []; }
+    const html = await response.text();
+    const links = [];
+    const re = /href=["']([^"']+)["']/gi;
+    let match = re.exec(html);
+    while (match) {
+      links.push(match[1]);
+      match = re.exec(html);
+    }
+    return normalizeFileList(links);
+  } catch (_err) {
+    return [];
+  }
+}
+
+async function autoLoadStructureGroupsFromFolder() {
+  if (structureGroupFolderAutoLoaded) { return; }
+  structureGroupFolderAutoLoaded = true;
+  const files = await fetchStructureGroupFileListFromFolder(STRUCTURE_GROUP_FOLDER_URL);
+  if (!Array.isArray(files) || files.length < 1) {
+    return;
+  }
+  let loadedFiles = 0;
+  let totalSegments = 0;
+  let totalDecorations = 0;
+  let remappedGroups = 0;
+  for (let i = 0; i < files.length; i += 1) {
+    const url = files[i];
+    try {
+      const payload = await readMapDataPayloadFromUrl(url);
+      const pathNoQuery = String(url || '').split('?')[0];
+      const fileName = decodeURIComponent(pathNoQuery.split('/').pop() || '').trim();
+      const sourceTag = fileName
+        ? fileName.replace(/\.(json|msgpack|mpk)$/i, '')
+        : `structure_group_${i + 1}`;
+      const result = appendCreateModeGroupsPayload(payload, { sourceTag });
+      loadedFiles += 1;
+      totalSegments += Number(result?.segmentCount) || 0;
+      totalDecorations += Number(result?.decorationCount) || 0;
+      remappedGroups += Number(result?.remappedGroupCount) || 0;
+    } catch (err) {
+      console.warn('[structure_group] load failed', { url, err });
+    }
+  }
+  if (loadedFiles > 0) {
+    const statusText = `structure_group 自動読込: ${loadedFiles} files / segment ${totalSegments} / decoration ${totalDecorations} / group再採番 ${remappedGroups}`;
+    if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
+    if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
+  }
 }
 
 if (loadMapDataButton && loadMapDataInput) {
@@ -8509,7 +9294,8 @@ if (loadMapDataButton && loadMapDataInput) {
       notifyMapLoadStatus(`map_data 読み込み中(${modeLabel}): ${file.name || 'selected file'}`);
       const payload = await readMapDataFile(file);
       if (mapLoadMode === 'append_groups') {
-        const result = appendCreateModeGroupsPayload(payload);
+        const sourceTag = String(file?.name || '').replace(/\.(json|msgpack|mpk)$/i, '') || 'runtime';
+        const result = appendCreateModeGroupsPayload(payload, { sourceTag });
         notifyMapLoadStatus(`group追加完了: segment ${result.segmentCount} / decoration ${result.decorationCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
       } else {
         applyCreateModePayload(payload);
@@ -8649,6 +9435,11 @@ function findCurveRange(curve, targetA, targetB, { axis = 'z', resolution = 1000
 const cube_geometry = new THREE.BoxGeometry();
 const cube_material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const steelFrameMode = createSteelFrameMode(scene, cube_geometry, cube_material);
+structureLinkRuntimeReady = true;
+if (!structureGenerationReplayPending && structureGenerationRuns.length < 1) {
+  scheduleRebuildStructureLinkedObjects({ resetRetry: false });
+}
+scheduleReplayStructureGenerationRuns({ resetRetry: false });
 constructionCategoryCards.forEach((card) => {
   card.addEventListener('click', () => {
     setConstructionCategory(card.dataset.constructionProfile);
@@ -8753,6 +9544,9 @@ setRailConstructionCategory(null);
 setRailConstructionGroupOptions();
 setGroupModePanelVisible(false);
 updateGroupModePanelUI();
+autoLoadStructureGroupsFromFolder().catch((err) => {
+  console.warn('[structure_group] auto load error', err);
+});
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
