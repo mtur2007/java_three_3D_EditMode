@@ -76,6 +76,12 @@ function toggleProcessing(uiIDs,next_nest,selectedId = null){
         }
     })
 
+    // 第一層はモード遷移に関わらず常時表示
+    UiGroup.querySelectorAll('button[data-ui-root-level="1"]').forEach((b) => {
+        b.hidden = false;
+        b.style.display = '';
+    });
+
     compactVisibleButtons();
     paintUiSelection(uiIDs, selectedId);
 }
@@ -241,6 +247,7 @@ const uiTree = {
               'copy': '',
               'group': '',
               'style': '',
+              'delete': '',
               'construction': {
                   'pillar': { 'Round_bar': '', 'H_beam': '', 'T_beam': '', 'L_beam': '' },
                   'rite': { 'tubular': '' },
@@ -354,8 +361,10 @@ console.log(rename_uiTree)
 
 const rootKeys = Object.keys(rename_uiTree)
 UiGroup.querySelectorAll('button').forEach(b => {
+    b.dataset.uiRootLevel = rootKeys.includes(b.id) ? '1' : '0';
     if (rootKeys.includes(b.id)) {
       b.hidden = false; // ルートは表示
+      b.style.display = '';
     } else {
       b.hidden = true;
     }
@@ -366,6 +375,7 @@ function showRootButtons(rootKeys) {
   UiGroup.querySelectorAll('button').forEach((b) => {
     if (rootKeys.includes(b.id)) {
       b.hidden = false;
+      b.style.display = '';
     }
   });
 }

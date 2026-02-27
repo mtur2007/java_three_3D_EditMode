@@ -279,6 +279,17 @@
     body.only-canvas #three-ui { display: block !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; pointer-events: auto !important; }
     body.only-canvas .canvas-ui { pointer-events: auto !important; }
     body.only-canvas #loading-overlay { display: flex !important; }
+    /* 拡大表示中はドラッグ時のテキスト選択(青ハイライト)を無効化 */
+    body.only-canvas {
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    /* ただし UI 入力欄は選択可能 */
+    body.only-canvas input,
+    body.only-canvas textarea {
+      -webkit-user-select: text;
+      user-select: text;
+    }
   </style>
 
   <!-- Google Analytics 設定 閲覧数の測定用です。-->
@@ -732,6 +743,18 @@
     font-size: 13px;
     font-weight: 700;
     line-height: 1;
+  }
+  #rotation-panel .panel-axis-tool.panel-axis-lock {
+    border-color: #c9d3c4;
+    background: #f4f9f1;
+    color: #2f4c2c;
+    font-size: 13px;
+    line-height: 1;
+  }
+  #rotation-panel .panel-axis-tool.panel-axis-lock.is-locked {
+    border-color: #57905a;
+    background: #dff1df;
+    color: #1f5d28;
   }
   #rotation-panel .panel-input-mask {
     position: absolute;
@@ -1383,6 +1406,7 @@
                 <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
                 <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
                 <button id="load-map-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ読込</button>
+                <button id="load-map-data-append" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ追加読込</button>
                 <button id="load-map-data-append-group" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">グループ追加読込</button>
                 <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json,application/octet-stream,*/*" style="display: none;" />
               </div>
@@ -1431,6 +1455,7 @@
                         <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
                       </svg>
                     </button>
+                    <button id="move-point-axis-lock-x" class="panel-axis-tool panel-axis-lock" type="button" title="X固定切替">🔓</button>
                     <button id="move-point-axis-unlink-x" class="panel-axis-tool panel-axis-unlink" type="button" title="X参照解除">x</button>
                     </div>
                   </label>
@@ -1447,6 +1472,7 @@
                         <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
                       </svg>
                     </button>
+                    <button id="move-point-axis-lock-y" class="panel-axis-tool panel-axis-lock" type="button" title="Y固定切替">🔓</button>
                     <button id="move-point-axis-unlink-y" class="panel-axis-tool panel-axis-unlink" type="button" title="Y参照解除">x</button>
                     </div>
                   </label>
@@ -1463,6 +1489,7 @@
                         <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
                       </svg>
                     </button>
+                    <button id="move-point-axis-lock-z" class="panel-axis-tool panel-axis-lock" type="button" title="Z固定切替">🔓</button>
                     <button id="move-point-axis-unlink-z" class="panel-axis-tool panel-axis-unlink" type="button" title="Z参照解除">x</button>
                     </div>
                   </label>

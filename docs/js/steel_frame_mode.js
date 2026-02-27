@@ -308,16 +308,26 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       steps: 1,
     });
     geometry.translate(0, 0, -len * 0.5);
-    const material = createCreatStandardMaterial(0xF7F4EF);
+    const material = createCreatStandardMaterial(0xEDE7DD);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = segmentName;
 
     const mid = start.clone().add(end).multiplyScalar(0.5);
     mesh.position.copy(mid);
-    mesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      dir.clone().normalize(),
-    );
+    // 波板は断面向きが見た目に直結するため、
+    // 軸合わせを setFromUnitVectors ではなく安定基準で構成してねじれを防ぐ。
+    const forward = dir.clone().normalize();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    let right = new THREE.Vector3().crossVectors(worldUp, forward);
+    if (right.lengthSq() <= 1e-8) {
+      // 軸がほぼY方向の場合のフォールバック
+      right = new THREE.Vector3(1, 0, 0);
+    } else {
+      right.normalize();
+    }
+    const up = new THREE.Vector3().crossVectors(forward, right).normalize();
+    const basis = new THREE.Matrix4().makeBasis(right, up, forward);
+    mesh.quaternion.setFromRotationMatrix(basis);
     if (Math.abs(rollDeg) > 1e-6) {
       const rollQuat = new THREE.Quaternion().setFromAxisAngle(
         new THREE.Vector3(0, 0, 1),
