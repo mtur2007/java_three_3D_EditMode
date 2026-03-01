@@ -363,6 +363,8 @@ const threeUi = document.getElementById('three-ui');
   const groupModeStatus = document.getElementById('group-mode-status');
   let groupModeScaleInput = null;
   let groupModeScaleButton = null;
+  let groupModeRenameInput = null;
+  let groupModeRenameButton = null;
   const ghostMeasureCanvas = document.createElement('canvas');
   const ghostMeasureCtx = ghostMeasureCanvas.getContext('2d');
 
@@ -622,6 +624,7 @@ const threeUi = document.getElementById('three-ui');
   let selectedGroupTrackName = '';
   let selectedAppendGroupId = '';
   let movePointCoordinateMode = 'world';
+  let copyOffsetCoordinateMode = 'world';
   const movePointAxisReferences = new Map();
   let movePointAxisReferencePickAxis = null;
   const movePointAxisLocks = { x: false, y: false, z: false };
@@ -725,7 +728,8 @@ const threeUi = document.getElementById('three-ui');
       || profile === 'h_beam'
       || profile === 't_beam'
       || profile === 'l_beam'
-      || profile === 'tubular') ? profile : null;
+      || profile === 'tubular'
+      || profile === 'tube') ? profile : null;
     selectedConstructionProfile = next;
     constructionCategoryCards.forEach((card) => {
       const isSelected = card.dataset.constructionProfile === next;
@@ -745,7 +749,9 @@ const threeUi = document.getElementById('three-ui');
             ? '波板柱'
           : (next === 'rect_bar'
             ? '角柱'
-            : (next === 'tubular' ? 'ライト管' : (next === 'round' ? '丸鋼' : ''))))));
+            : (next === 'tubular'
+              ? 'ライト管'
+              : (next === 'tube' ? '補間チューブ' : (next === 'round' ? '丸鋼' : '')))))));
     if (constructionCategoryStatus) {
       constructionCategoryStatus.textContent = next
         ? `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`
@@ -834,6 +840,40 @@ const threeUi = document.getElementById('three-ui');
     }
     groupModeScaleInput = input;
     groupModeScaleButton = button;
+  }
+
+  function ensureGroupModeRenameControls() {
+    if (!groupModePanel) { return; }
+    if (groupModeRenameInput && groupModeRenameButton) { return; }
+    let row = document.getElementById('group-mode-rename-row');
+    if (!row) {
+      row = document.createElement('div');
+      row.id = 'group-mode-rename-row';
+      row.style.display = 'flex';
+      row.style.gap = '8px';
+      row.style.alignItems = 'center';
+      row.style.marginTop = '8px';
+      groupModePanel.appendChild(row);
+    }
+    let input = document.getElementById('group-mode-rename-input');
+    if (!input) {
+      input = document.createElement('input');
+      input.id = 'group-mode-rename-input';
+      input.type = 'text';
+      input.placeholder = 'new_group_name';
+      input.style.width = '140px';
+      row.appendChild(input);
+    }
+    let button = document.getElementById('group-mode-rename-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'group-mode-rename-button';
+      button.type = 'button';
+      button.textContent = '名前変更';
+      row.appendChild(button);
+    }
+    groupModeRenameInput = input;
+    groupModeRenameButton = button;
   }
 
   function setGroupModeStatus(text) {
@@ -2135,6 +2175,7 @@ const threeUi = document.getElementById('three-ui');
       return 1;
     })();
     const yAxis = new THREE.Vector3(0, 1, 0);
+    const activeTwoTrackYawExtraRad = Math.PI;
     const sourceTrackHit = getNearestRailTrackHitFromPoint(sourceCenter, 900);
     const getTrackPoseAtPoint = (worldPoint, trackName = '') => {
       const preferredTrack = typeof trackName === 'string' && trackName
@@ -2620,6 +2661,16 @@ const threeUi = document.getElementById('three-ui');
           : 0;
         // 通常配置と同様に「線路yaw差分 + yawOffset」で姿勢を合わせる。
         const rotationQuat = new THREE.Quaternion().setFromAxisAngle(yAxis, yawDelta + yawOffsetRad);
+        const resolveRotationQuatAtWorld = (worldPos) => {
+          if (!worldPos?.isVector3) { return rotationQuat; }
+          const poseAtPos = getTrackPoseAtPoint(worldPos, '');
+          const yawAtPos = Number.isFinite(poseAtPos?.yaw) ? poseAtPos.yaw : null;
+          if (!Number.isFinite(sourceYaw) || !Number.isFinite(yawAtPos)) {
+            return rotationQuat;
+          }
+          const delta = yawAtPos - sourceYaw;
+          return new THREE.Quaternion().setFromAxisAngle(yAxis, delta + yawOffsetRad + activeTwoTrackYawExtraRad);
+        };
         const sourceToCopiedPoint = new Map();
         const ensureCopiedPoint = (src) => {
           if (!src?.userData?.steelFramePoint) { return null; }
@@ -2658,9 +2709,11 @@ const threeUi = document.getElementById('three-ui');
               structureGroupScale: sourceGroupScale,
             });
             if (!cloned) { return; }
-            cloned.position.copy(mapSourcePointToQuad(src.position, quad));
+            const targetPos = mapSourcePointToQuad(src.position, quad);
+            const objRotationQuat = resolveRotationQuatAtWorld(targetPos);
+            cloned.position.copy(targetPos);
             cloned.quaternion.copy(src.quaternion);
-            cloned.quaternion.premultiply(rotationQuat);
+            cloned.quaternion.premultiply(objRotationQuat);
             cloned.userData = {
               ...(cloned.userData || {}),
               structureGroupScale: sourceGroupScale,
@@ -2682,9 +2735,11 @@ const threeUi = document.getElementById('three-ui');
               structureGroupScale: sourceGroupScale,
             });
             if (!cloned) { return; }
-            cloned.position.copy(mapSourcePointToQuad(src.position, quad));
+            const targetPos = mapSourcePointToQuad(src.position, quad);
+            const objRotationQuat = resolveRotationQuatAtWorld(targetPos);
+            cloned.position.copy(targetPos);
             cloned.quaternion.copy(src.quaternion);
-            cloned.quaternion.premultiply(rotationQuat);
+            cloned.quaternion.premultiply(objRotationQuat);
             cloned.userData = {
               ...(cloned.userData || {}),
               structureGroupScale: sourceGroupScale,
@@ -2726,6 +2781,13 @@ const threeUi = document.getElementById('three-ui');
               }
             );
             if (!createdSeg) { return; }
+            if (String(segProfile || '').toLowerCase() === 'tube' && copiedPointRefs.length >= 2) {
+              createdSeg.userData = {
+                ...(createdSeg.userData || {}),
+                steelFrameSegmentPointRefs: copiedPointRefs,
+              };
+              steelFrameMode?.rebuildSegmentsForMeshes?.([createdSeg]);
+            }
             registerCopyObject(createdSeg);
             objectItems.push(createdSeg);
             createdObjects.push(createdSeg);
@@ -2733,10 +2795,12 @@ const threeUi = document.getElementById('three-ui');
           }
           if (!src?.clone) { return; }
           const cloned = src.clone(true);
-          cloned.position.copy(mapSourcePointToQuad(src.position, quad));
+          const targetPos = mapSourcePointToQuad(src.position, quad);
+          const objRotationQuat = resolveRotationQuatAtWorld(targetPos);
+          cloned.position.copy(targetPos);
           if (src?.quaternion) {
             cloned.quaternion.copy(src.quaternion);
-            cloned.quaternion.premultiply(rotationQuat);
+            cloned.quaternion.premultiply(objRotationQuat);
           }
           cloned.userData = {
             ...(src.userData || {}),
@@ -2756,7 +2820,8 @@ const threeUi = document.getElementById('three-ui');
       return true;
     };
 
-    if (!runTwoTrackAdaptivePlacement()) {
+    const usedAdaptivePlacement = runTwoTrackAdaptivePlacement();
+    if (!usedAdaptivePlacement) {
       effectivePins.forEach((pin) => {
       const railPlacementGroupId = allocateRailPlacementGroupId();
       const targetPos = new THREE.Vector3(
@@ -2935,7 +3000,8 @@ const threeUi = document.getElementById('three-ui');
       setMeshListOpacity(targetObjects, 1);
     }
     if (railConstructionStatus) {
-      railConstructionStatus.textContent = `生成完了: group(${id}) / pins=${effectivePins.length} / objects=${createdObjects.length} / spacing=${spacingValue.toFixed(2)} / lateral=${lateralOffsetValue.toFixed(2)} / vertical=${verticalOffsetValue.toFixed(2)} / yaw=${(Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0).toFixed(1)}deg`;
+      const placementMode = usedAdaptivePlacement ? 'active(2track)' : 'fallback(normal)';
+      railConstructionStatus.textContent = `生成完了: group(${id}) / mode=${placementMode} / pins=${effectivePins.length} / objects=${createdObjects.length} / spacing=${spacingValue.toFixed(2)} / lateral=${lateralOffsetValue.toFixed(2)} / vertical=${verticalOffsetValue.toFixed(2)} / yaw=${(Number.isFinite(yawOffsetDeg) ? yawOffsetDeg : 0).toFixed(1)}deg`;
     }
     createdObjects.forEach((mesh) => { ensureStructureObjectId(mesh); });
     lastRailConstructionCreatedObjects = createdObjects.slice();
@@ -3634,8 +3700,9 @@ const threeUi = document.getElementById('three-ui');
       }
     }
     if (movePointCoordinateModeRow) {
-      movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
+      movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint || isCopyMode) ? 'block' : 'none';
     }
+    updateMovePointCoordinateButtons();
     if (movePointAxisLegend) {
       movePointAxisLegend.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
     }
@@ -3831,6 +3898,228 @@ const threeUi = document.getElementById('three-ui');
     copyTargets.forEach(push);
     decoTargets.forEach(push);
     return out;
+  }
+
+  function getSteelFrameTubeSegmentTargets() {
+    const out = [];
+    const seen = new Set();
+    const pushIfTube = (mesh) => {
+      if (!mesh?.parent) { return; }
+      if (mesh.name !== 'SteelFrameSegment') { return; }
+      const profile = String(mesh?.userData?.steelFrameSegmentProfile || '').toLowerCase();
+      if (!(profile === 'tube' || profile === 'tubular')) { return; }
+      const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        && mesh.userData.steelFrameSegmentPointRefs.some((p) => p?.userData?.steelFramePoint);
+      if (!hasPointRefs) { return; }
+      if (seen.has(mesh.id)) { return; }
+      seen.add(mesh.id);
+      out.push(mesh);
+    };
+    const segments = steelFrameMode?.getSegmentMeshes?.() || [];
+    segments.forEach((mesh) => {
+      pushIfTube(mesh);
+    });
+    // steelFrameMode 管理外（複製等）の tube も拾う
+    scene.traverse((obj) => {
+      pushIfTube(obj);
+    });
+    return out;
+  }
+
+  let movePointDepthBiasTubeSegId = null;
+
+  function applyMaterialDepthState(material, {
+    depthTest = true,
+    depthWrite = true,
+    transparent = null,
+    polygonOffset = null,
+    polygonOffsetFactor = null,
+    polygonOffsetUnits = null,
+  } = {}) {
+    if (!material) { return; }
+    material.depthTest = Boolean(depthTest);
+    material.depthWrite = Boolean(depthWrite);
+    if (transparent !== null && 'transparent' in material) {
+      material.transparent = Boolean(transparent);
+    }
+    if (polygonOffset !== null && 'polygonOffset' in material) {
+      material.polygonOffset = Boolean(polygonOffset);
+    }
+    if (polygonOffsetFactor !== null && 'polygonOffsetFactor' in material) {
+      material.polygonOffsetFactor = Number(polygonOffsetFactor) || 0;
+    }
+    if (polygonOffsetUnits !== null && 'polygonOffsetUnits' in material) {
+      material.polygonOffsetUnits = Number(polygonOffsetUnits) || 0;
+    }
+    material.needsUpdate = true;
+  }
+
+  function applySteelFramePointDepthPolicy() {
+    const biasActive = (
+      editObject === 'STEEL_FRAME'
+      && objectEditMode === 'MOVE_EXISTING'
+      && movePointPanelActive
+    );
+    const targetTubeSegmentIds = new Set();
+    if (biasActive) {
+      if (Number.isInteger(movePointDepthBiasTubeSegId)) {
+        targetTubeSegmentIds.add(movePointDepthBiasTubeSegId);
+      } else {
+        // move_point 中はカーソル位置に依存せず、tube 全体を補正対象にする。
+        getSteelFrameTubeSegmentTargets().forEach((seg) => targetTubeSegmentIds.add(seg.id));
+      }
+    }
+    const tubeOnlyBias = biasActive && targetTubeSegmentIds.size > 0;
+    const tubePointSet = new Set();
+    getSteelFrameTubeSegmentTargets().forEach((seg) => {
+      if (!targetTubeSegmentIds.has(seg.id)) { return; }
+      const refs = Array.isArray(seg?.userData?.steelFrameSegmentPointRefs)
+        ? seg.userData.steelFrameSegmentPointRefs
+        : [];
+      refs.forEach((p) => {
+        if (p?.userData?.steelFramePoint && p?.parent) {
+          tubePointSet.add(p);
+        }
+      });
+    });
+
+    const allPoints = steelFrameMode?.getAllPointMeshes?.() || [];
+    allPoints.forEach((pointMesh) => {
+      if (!pointMesh?.userData?.steelFramePoint || !pointMesh?.parent) { return; }
+      const isTubeControlPoint = tubePointSet.has(pointMesh);
+      const materials = Array.isArray(pointMesh.material)
+        ? pointMesh.material
+        : [pointMesh.material];
+      if (isTubeControlPoint) {
+        materials.forEach((mat) => applyMaterialDepthState(mat, {
+          // move_point 中は補正を確実に効かせる。
+          // depthTest: tubeOnlyBias ? false : true,
+          // depthWrite: false,
+          // transparent: tubeOnlyBias ? false : null,
+          // polygonOffset: !tubeOnlyBias,
+          // polygonOffsetFactor: tubeOnlyBias ? 0 : -5,
+          // polygonOffsetUnits: tubeOnlyBias ? 0 : -5,
+          
+          // tubeOnlyBias=true の時だけ補正を有効化する。
+          depthTest: true,
+          depthWrite: tubeOnlyBias ? false : true,
+          transparent: null,
+          polygonOffset: tubeOnlyBias,
+          polygonOffsetFactor: tubeOnlyBias ? -10 : 0,
+          polygonOffsetUnits: tubeOnlyBias ? -8 : 0,
+
+        }));
+        pointMesh.renderOrder = 3200;
+      } else {
+        materials.forEach((mat) => applyMaterialDepthState(mat, {
+          depthTest: true,
+          depthWrite: true,
+          transparent: null,
+          polygonOffset: false,
+          polygonOffsetFactor: 0,
+          polygonOffsetUnits: 0,
+        }));
+        pointMesh.renderOrder = 0;
+      }
+    });
+
+    // tube本体の表示は変更しない（ユーザー要望）。
+    // 制御点側だけ補正する。
+  }
+
+  function enableMovePointToggleEffects() {
+    movePointPanelActive = true;
+    movePointDepthBiasTubeSegId = null;
+    applySteelFramePointDepthPolicy();
+  }
+
+  function disableMovePointToggleEffects() {
+    movePointPanelActive = false;
+    movePointDepthBiasTubeSegId = null;
+    applySteelFramePointDepthPolicy();
+  }
+
+  function getSteelFrameAddPointTargets() {
+    const out = [];
+    const seen = new Set();
+    const push = (mesh) => {
+      if (!mesh?.parent) { return; }
+      if (seen.has(mesh.id)) { return; }
+      seen.add(mesh.id);
+      out.push(mesh);
+    };
+    (steelFrameMode?.getCurrentPointMeshes?.() || []).forEach(push);
+    guideRailPickMeshes.forEach(push);
+    decorationObjects.filter((mesh) => mesh?.parent).forEach(push);
+    getSteelFrameTubeSegmentTargets().forEach(push);
+    return out;
+  }
+
+  function resolveTubeSegmentFromHitObject(mesh) {
+    let cur = mesh || null;
+    while (cur) {
+      if (cur?.name === 'SteelFrameSegment'
+        && cur?.userData?.steelFrameSegmentProfile === 'tube') {
+        return cur;
+      }
+      cur = cur.parent || null;
+    }
+    return null;
+  }
+
+  function insertPointOnTubeFromHit(hit) {
+    if (!hit?.point) { return null; }
+    const seg = resolveTubeSegmentFromHitObject(hit.object);
+    if (!seg?.parent) { return null; }
+    const refs = Array.isArray(seg?.userData?.steelFrameSegmentPointRefs)
+      ? seg.userData.steelFrameSegmentPointRefs.filter((item) => item?.userData?.steelFramePoint)
+      : [];
+    if (refs.length < 2) { return null; }
+    const hitPoint = hit.point.clone();
+    let bestDistSq = Infinity;
+    let bestInsertIndex = -1;
+    let bestPoint = null;
+    for (let i = 0; i < refs.length - 1; i += 1) {
+      const a = refs[i]?.position;
+      const b = refs[i + 1]?.position;
+      if (!a || !b) { continue; }
+      const ab = b.clone().sub(a);
+      const lenSq = ab.lengthSq();
+      if (lenSq <= 1e-10) { continue; }
+      const t = THREE.MathUtils.clamp(hitPoint.clone().sub(a).dot(ab) / lenSq, 0, 1);
+      const cp = a.clone().add(ab.multiplyScalar(t));
+      const distSq = cp.distanceToSquared(hitPoint);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestInsertIndex = i + 1;
+        bestPoint = cp;
+      }
+    }
+    if (!bestPoint || bestInsertIndex < 1) { return null; }
+    const prevRef = refs[bestInsertIndex - 1] || null;
+    const nextRef = refs[bestInsertIndex] || null;
+    if ((prevRef?.position && prevRef.position.distanceToSquared(bestPoint) <= 1e-8)
+      || (nextRef?.position && nextRef.position.distanceToSquared(bestPoint) <= 1e-8)) {
+      return null;
+    }
+    const lineIndex = Number.isInteger(prevRef?.userData?.steelFrameLine)
+      ? prevRef.userData.steelFrameLine
+      : 0;
+    const newPoint = new THREE.Mesh(cube_geometry, cube_material.clone());
+    newPoint.position.copy(bestPoint);
+    const planeRef = prevRef?.userData?.planeRef || nextRef?.userData?.planeRef || null;
+    if (planeRef) {
+      newPoint.userData = { ...(newPoint.userData || {}), planeRef };
+    }
+    steelFrameMode?.addExistingPoint?.(newPoint, lineIndex);
+    const nextRefs = refs.slice();
+    nextRefs.splice(bestInsertIndex, 0, newPoint);
+    seg.userData = {
+      ...(seg.userData || {}),
+      steelFrameSegmentPointRefs: nextRefs,
+    };
+    steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
+    return newPoint;
   }
 
   function syncSteelFrameTargetObjectsAfterRebuild() {
@@ -4046,6 +4335,37 @@ const threeUi = document.getElementById('three-ui');
     return selectable;
   }
 
+  function isTubeControlPointMesh(mesh) {
+    if (!mesh?.userData?.steelFramePoint) { return false; }
+    const segments = steelFrameMode?.getSegmentMeshes?.() || [];
+    for (let i = 0; i < segments.length; i += 1) {
+      const seg = segments[i];
+      if (!seg?.parent || seg?.userData?.steelFrameSegmentProfile !== 'tube') { continue; }
+      const refs = Array.isArray(seg?.userData?.steelFrameSegmentPointRefs)
+        ? seg.userData.steelFrameSegmentPointRefs
+        : [];
+      if (refs.includes(mesh)) { return true; }
+    }
+    return false;
+  }
+
+  function resolveMovePointPreferredHitObject(intersects) {
+    if (!movePointPanelActive) { return null; }
+    if (editObject !== 'STEEL_FRAME' || objectEditMode !== 'MOVE_EXISTING') { return null; }
+    if (!Array.isArray(intersects) || intersects.length < 1) { return null; }
+
+    const firstHit = intersects[0];
+    const firstTubeSeg = resolveTubeSegmentFromHitObject(firstHit?.object || null);
+    if (!firstTubeSeg) { return null; }
+
+    const pointHit = intersects.find((h) => {
+      const obj = resolveSelectableHitObject(h?.object) || h?.object;
+      return Boolean(obj?.userData?.steelFramePoint) && isTubeControlPointMesh(obj);
+    });
+    if (!pointHit) { return null; }
+    return resolveSelectableHitObject(pointHit.object) || pointHit.object;
+  }
+
   function resolveRailStructureHandleFromHit(mesh) {
     if (!mesh?.parent) { return null; }
     if (mesh?.userData?.railStructureHandle && mesh?.userData?.railStructurePickHandle) {
@@ -4168,27 +4488,29 @@ const threeUi = document.getElementById('three-ui');
     const firstProfile = String(first?.userData?.steelFrameSegmentProfile || '').toLowerCase();
     if (rotationInputX) {
       if (clearInputs) { rotationInputX.value = ''; }
-      rotationInputX.placeholder = style ? String(Number(style.beamWidthHorizontal).toFixed(3)) : '0.280';
+      rotationInputX.placeholder = style
+        ? String(Number(style.beamWidthHorizontal).toFixed(3))
+        : (firstProfile === 'tubular' ? '0.140' : '0.280');
     }
     if (rotationInputY) {
       if (clearInputs) { rotationInputY.value = ''; }
       rotationInputY.placeholder = style
         ? String(Number(style.beamHeightVertical).toFixed(3))
-        : (firstProfile === 'corrugated_bar' ? '0.000' : '0.280');
+        : (firstProfile === 'corrugated_bar' ? '0.000' : (firstProfile === 'tubular' ? '0.140' : '0.280'));
     }
     if (rotationInputZ) {
       if (clearInputs) { rotationInputZ.value = ''; }
       rotationInputZ.placeholder = style
         ? String(Number(style.beamThickness).toFixed(3))
-        : (firstProfile === 'corrugated_bar' ? '5.000' : '0.070');
+        : (firstProfile === 'corrugated_bar' ? '5.000' : (firstProfile === 'tubular' ? '0.140' : '0.070'));
     }
     if (rotationSelectionInfo) {
       rotationSelectionInfo.textContent = [
         `選択構造物: ${selected.length}`,
-        '対象: Round/Rect/Corrugated/H/T/L beam',
-        'X: 幅（Round は直径）',
+        '対象: Round/Rect/Corrugated/H/T/L beam, Light tube',
+        'X: 幅（Round / Light tube は直径）',
         'Y: 高さ（Corrugated は角度°）',
-        'Z: 厚み（Rect は角丸R / Corrugated は波密度）',
+        'Z: 厚み（Rect は角丸R / Corrugated は波密度 / Light tube は直径代替）',
         '※ コピー物は適用前に確認ダイアログを表示',
       ].join('\n');
     }
@@ -4233,7 +4555,7 @@ const threeUi = document.getElementById('three-ui');
     const result = steelFrameMode?.applySegmentStyle?.(targets, stylePatch);
     if (!result || result.rebuilt < 1) {
       if (rotationSelectionInfo) {
-        rotationSelectionInfo.textContent = '適用対象がありません（H/T/L beamを選択してください）。';
+        rotationSelectionInfo.textContent = '適用対象がありません（beam / Light tube を選択してください）。';
       }
       return;
     }
@@ -4254,6 +4576,7 @@ const threeUi = document.getElementById('three-ui');
 
   function updateGroupModePanelUI() {
     ensureGroupModeScaleControls();
+    ensureGroupModeRenameControls();
     const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
     const count = selected.length;
     setGroupModeIdOptions();
@@ -4267,6 +4590,7 @@ const threeUi = document.getElementById('three-ui');
       groupModeArrangeButton.disabled = count < 1 || !selectedGroupTrackName;
     }
     const selectedGroupId = getSelectedSingleStructureGroupId();
+    const targetGroupIdForRename = selectedGroupId || String(selectedAppendGroupId || '').trim();
     if (groupModeScaleButton) {
       groupModeScaleButton.disabled = !selectedGroupId;
     }
@@ -4275,6 +4599,12 @@ const threeUi = document.getElementById('three-ui');
       if (Number.isFinite(currentScale) && currentScale > 0) {
         groupModeScaleInput.placeholder = currentScale.toFixed(3);
       }
+    }
+    if (groupModeRenameButton) {
+      groupModeRenameButton.disabled = !targetGroupIdForRename;
+    }
+    if (groupModeRenameInput && targetGroupIdForRename) {
+      groupModeRenameInput.placeholder = targetGroupIdForRename;
     }
     if (!groupModeActive) { return; }
     const ids = selected
@@ -4328,6 +4658,80 @@ const threeUi = document.getElementById('three-ui');
     if (ids.length < 1) { return ''; }
     const first = ids[0];
     return ids.every((id) => id === first) ? first : '';
+  }
+
+  function renameStructureGroupId(sourceGroupId, targetGroupId) {
+    const fromId = String(sourceGroupId || '').trim();
+    const toId = String(targetGroupId || '').trim();
+    if (!fromId) {
+      setGroupModeStatus('変更元グループIDが未選択です。');
+      return false;
+    }
+    if (!toId) {
+      setGroupModeStatus('変更後グループ名を入力してください。');
+      return false;
+    }
+    if (fromId === toId) {
+      setGroupModeStatus(`同じ名前です: ${fromId}`);
+      return true;
+    }
+    if (/[\\/]/.test(toId)) {
+      setGroupModeStatus('グループ名に / と \\ は使えません。');
+      return false;
+    }
+    const existingIds = collectStructureGroupIds();
+    if (existingIds.includes(toId)) {
+      setGroupModeStatus(`同名のグループIDが既に存在します: ${toId}`);
+      return false;
+    }
+    const targets = getConstructionCopyTargets()
+      .filter((obj) => obj?.parent)
+      .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === fromId);
+    if (targets.length < 1) {
+      setGroupModeStatus(`変更元グループが見つかりません: ${fromId}`);
+      return false;
+    }
+
+    targets.forEach((obj) => {
+      obj.userData = {
+        ...(obj.userData || {}),
+        structureGroupId: toId,
+      };
+    });
+
+    if (selectedAppendGroupId === fromId) {
+      selectedAppendGroupId = toId;
+    }
+    if (selectedRailConstructionGroupId === fromId) {
+      selectedRailConstructionGroupId = toId;
+    }
+
+    if (structureGroupSourceById.has(fromId)) {
+      const source = structureGroupSourceById.get(fromId);
+      structureGroupSourceById.delete(fromId);
+      structureGroupSourceById.set(toId, source);
+    }
+    structureGroupSourceIndex.forEach((mappedId, sourceKey) => {
+      if (String(mappedId || '').trim() === fromId) {
+        structureGroupSourceIndex.set(sourceKey, toId);
+      }
+    });
+
+    structureGenerationRuns.forEach((run) => {
+      if (String(run?.category || '').trim() !== 'group') { return; }
+      if (!run?.params || typeof run.params !== 'object') { return; }
+      const runGroupId = String(run.params.groupId || '').trim();
+      if (runGroupId !== fromId) { return; }
+      run.params.groupId = toId;
+    });
+
+    if (groupModeRenameInput) {
+      groupModeRenameInput.value = '';
+    }
+    setGroupModeStatus(`グループ名を変更しました: ${fromId} → ${toId}`);
+    updateGroupModePanelUI();
+    setRailConstructionGroupOptions();
+    return true;
   }
 
   function getCurrentStructureGroupScale(groupId) {
@@ -4731,12 +5135,14 @@ const threeUi = document.getElementById('three-ui');
     if (rotationSelectionInfo) {
       const pointCount = steelFrameMode?.getSelectedPointMeshes?.()?.length || 0;
       const objectCount = copySelectedObjects.size;
+      const modeLabel = copyOffsetCoordinateMode === 'grid' ? 'Grid' : 'World';
       rotationSelectionInfo.textContent = [
         `選択点: ${pointCount}`,
         `選択オブジェクト: ${objectCount}`,
         '点 または construction物体 をクリックして選択',
         '適用でまとめてコピー',
         'Offset X/Y/Z は複製位置のずらし量',
+        `座標系: ${modeLabel}`,
       ].join('\n');
     }
     syncRotationInputGhostHints();
@@ -4916,7 +5322,7 @@ const threeUi = document.getElementById('three-ui');
       }
       return;
     }
-    const offset = new THREE.Vector3(dx, dy, dz);
+    const baseOffset = new THREE.Vector3(dx, dy, dz);
     const srcPoints = steelFrameMode?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
     const srcObjects = Array.from(copySelectedObjects)
       .map((mesh) => resolveCopySourceObject(mesh))
@@ -4932,6 +5338,23 @@ const threeUi = document.getElementById('three-ui');
     const pointItems = [];
     const sourceToCopiedPoint = new Map();
 
+    const resolveCopyOffsetForSource = (src) => {
+      if (copyOffsetCoordinateMode !== 'grid') {
+        return baseOffset;
+      }
+      const pointRefs = Array.isArray(src?.userData?.steelFrameSegmentPointRefs)
+        ? src.userData.steelFrameSegmentPointRefs
+        : [];
+      const refFromPoint = pointRefs.find((p) => p?.userData?.planeRef?.quaternion?.isQuaternion)?.userData?.planeRef || null;
+      const fallbackGridRef = changeAngleGridTarget || AddPointGuideGrid || null;
+      const ref = src?.userData?.planeRef || refFromPoint || fallbackGridRef;
+      const quat = ref?.quaternion;
+      if (!quat?.isQuaternion) {
+        return baseOffset;
+      }
+      return baseOffset.clone().applyQuaternion(quat);
+    };
+
     const paintPointColor = (mesh, colorHex) => {
       if (!mesh?.material) { return; }
       if (Array.isArray(mesh.material)) {
@@ -4943,7 +5366,7 @@ const threeUi = document.getElementById('three-ui');
       }
     };
 
-    const ensureCopiedPoint = (src, { forceYellow = false, copyGroupId = null } = {}) => {
+    const ensureCopiedPoint = (src, { forceYellow = false, copyGroupId = null, offsetVec = null } = {}) => {
       if (!src?.userData?.steelFramePoint) { return null; }
       const existing = sourceToCopiedPoint.get(src);
       if (existing) {
@@ -4958,7 +5381,7 @@ const threeUi = document.getElementById('three-ui');
       }
       const lineIndex = Number.isInteger(src?.userData?.steelFrameLine) ? src.userData.steelFrameLine : 0;
       const mesh = new THREE.Mesh(cube_geometry, cube_material.clone());
-      mesh.position.copy(src.position).add(offset);
+      mesh.position.copy(src.position).add(offsetVec || resolveCopyOffsetForSource(src));
       mesh.scale.copy(src.scale);
         mesh.userData = {
           ...(src.userData || {}),
@@ -4979,15 +5402,19 @@ const threeUi = document.getElementById('three-ui');
     };
 
     srcPoints.forEach((src) => {
-      ensureCopiedPoint(src, { forceYellow: false });
+      ensureCopiedPoint(src, {
+        forceYellow: false,
+        offsetVec: resolveCopyOffsetForSource(src),
+      });
     });
 
     const objectItems = [];
     srcObjects.forEach((src) => {
+      const srcOffset = resolveCopyOffsetForSource(src);
       let cloned = null;
       const decorationType = normalizeDecorationType(src?.userData?.decorationType);
       if (decorationType === 'led_board') {
-        cloned = cloneLedBoardDecoration(src, offset);
+        cloned = cloneLedBoardDecoration(src, srcOffset);
         if (cloned) {
           scene.add(cloned);
           decorationObjects.push(cloned);
@@ -4996,7 +5423,7 @@ const threeUi = document.getElementById('three-ui');
         return;
       }
       if (decorationType === 'rect_spot_light') {
-        cloned = cloneRectSpotLightDecoration(src, offset);
+        cloned = cloneRectSpotLightDecoration(src, srcOffset);
         if (cloned) {
           scene.add(cloned);
           decorationObjects.push(cloned);
@@ -5009,7 +5436,11 @@ const threeUi = document.getElementById('three-ui');
           ? src.userData.steelFrameSegmentPointRefs
           : [];
         const copiedPointRefs = srcPointRefs
-          .map((pointMesh) => ensureCopiedPoint(pointMesh, { forceYellow: true, copyGroupId: copiedObjectGroupId }))
+          .map((pointMesh) => ensureCopiedPoint(pointMesh, {
+            forceYellow: true,
+            copyGroupId: copiedObjectGroupId,
+            offsetVec: srcOffset,
+          }))
           .filter((pointMesh) => Boolean(pointMesh?.userData?.steelFramePoint));
         try {
           // userData にオブジェクト参照が入るセグメントでも安全に複製する。
@@ -5031,7 +5462,7 @@ const threeUi = document.getElementById('three-ui');
           return;
         }
         cloned.name = src?.name || cloned.name || 'SteelFrameSegment';
-        cloned.position.copy(src.position).add(offset);
+        cloned.position.copy(src.position).add(srcOffset);
         cloned.traverse?.((node) => {
           if (node?.material?.clone) {
             node.material = node.material.clone();
@@ -5063,6 +5494,18 @@ const threeUi = document.getElementById('three-ui');
       if (cloned?.name === 'SteelFrameSegment') {
         registerCopyObject(cloned);
         steelFrameMode?.addExistingSegmentMesh?.(cloned);
+        const copiedProfile = String(cloned?.userData?.steelFrameSegmentProfile || '').toLowerCase();
+        const copiedRefs = Array.isArray(cloned?.userData?.steelFrameSegmentPointRefs)
+          ? cloned.userData.steelFrameSegmentPointRefs.filter((p) => p?.userData?.steelFramePoint)
+          : [];
+        // copyモードで tube の形状が直線化しないよう、pointRefs基準で再ビルドする。
+        if (copiedProfile === 'tube' && copiedRefs.length >= 2) {
+          cloned.userData = {
+            ...(cloned.userData || {}),
+            steelFrameSegmentPointRefs: copiedRefs,
+          };
+          steelFrameMode?.rebuildSegmentsForMeshes?.([cloned]);
+        }
       }
       objectItems.push(cloned);
     });
@@ -5081,11 +5524,26 @@ const threeUi = document.getElementById('three-ui');
 
   function updateMovePointCoordinateButtons() {
     if (!movePointCoordinateWorldBtn || !movePointCoordinateGridBtn) { return; }
-    const isWorld = movePointCoordinateMode === 'world';
+    const activeMode = (copyModeActive && objectEditMode === 'COPY')
+      ? copyOffsetCoordinateMode
+      : movePointCoordinateMode;
+    const isWorld = activeMode === 'world';
     movePointCoordinateWorldBtn.style.background = isWorld ? '#b9d5ff' : '#eaf2ff';
     movePointCoordinateWorldBtn.style.borderColor = isWorld ? '#6f95cf' : '#9eb7db';
     movePointCoordinateGridBtn.style.background = isWorld ? '#eefcf3' : '#bfe9ca';
     movePointCoordinateGridBtn.style.borderColor = isWorld ? '#b8d7c0' : '#6ea984';
+  }
+
+  function setCopyOffsetCoordinateMode(mode = 'world', { refresh = true } = {}) {
+    const next = mode === 'grid' ? 'grid' : 'world';
+    copyOffsetCoordinateMode = next;
+    updateMovePointCoordinateButtons();
+    if (copyModeActive && objectEditMode === 'COPY') {
+      setRotationPanelMode('copy_mode');
+      if (refresh) {
+        updateCopyPanelUI({ clearInputs: false });
+      }
+    }
   }
 
   function setMovePointCoordinateMode(mode = 'world', { refresh = true } = {}) {
@@ -5798,12 +6256,20 @@ const threeUi = document.getElementById('three-ui');
   }
   if (movePointCoordinateWorldBtn) {
     movePointCoordinateWorldBtn.addEventListener('click', () => {
-      setMovePointCoordinateMode('world');
+      if (copyModeActive && objectEditMode === 'COPY') {
+        setCopyOffsetCoordinateMode('world');
+      } else {
+        setMovePointCoordinateMode('world');
+      }
     });
   }
   if (movePointCoordinateGridBtn) {
     movePointCoordinateGridBtn.addEventListener('click', () => {
-      setMovePointCoordinateMode('grid');
+      if (copyModeActive && objectEditMode === 'COPY') {
+        setCopyOffsetCoordinateMode('grid');
+      } else {
+        setMovePointCoordinateMode('grid');
+      }
     });
   }
   if (movePointAxisRefBtnX) {
@@ -8896,6 +9362,139 @@ function buildStructurePayload() {
   };
 }
 
+function buildStructurePayloadForGroup(groupId) {
+  const id = String(groupId || '').trim();
+  if (!id) { return null; }
+
+  const guideGridStatesAll = guideAddGrids
+    .filter((grid) => grid?.parent)
+    .map((grid) => serializeGuideGridState(grid))
+    .filter(Boolean);
+  const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStatesAll);
+  const steelFrameAll = serializeSteelFrameState(gridToKey);
+  const decorationsAll = serializeDecorationsState(gridToKey);
+
+  const pointByKey = new Map(
+    (Array.isArray(steelFrameAll?.points) ? steelFrameAll.points : [])
+      .map((point) => [String(point?.key || '').trim(), point])
+      .filter(([key]) => key.length > 0)
+  );
+  const groupedSegments = (Array.isArray(steelFrameAll?.segments) ? steelFrameAll.segments : [])
+    .filter((seg) => String(seg?.structureGroupId || '').trim() === id);
+  const usedPointKeys = new Set();
+  groupedSegments.forEach((seg) => {
+    const keys = Array.isArray(seg?.pointKeys) ? seg.pointKeys : [];
+    keys.forEach((key) => {
+      const k = String(key || '').trim();
+      if (k) { usedPointKeys.add(k); }
+    });
+  });
+  const groupedPoints = Array.from(usedPointKeys)
+    .map((key) => pointByKey.get(key) || null)
+    .filter(Boolean);
+  const groupedDecorations = decorationsAll
+    .filter((state) => String(state?.structureGroupId || '').trim() === id);
+  if (groupedSegments.length < 1 && groupedDecorations.length < 1) { return null; }
+
+  const groupMembers = getConstructionCopyTargets()
+    .filter((mesh) => mesh?.parent)
+    .filter((mesh) => !mesh?.userData?.steelFramePoint)
+    .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === id);
+
+  const groupObjectIds = new Set(
+    groupMembers
+      .map((mesh) => ensureStructureObjectId(mesh))
+      .filter((objId) => String(objId || '').trim().length > 0)
+  );
+
+  const groupRuns = structureGenerationRuns
+    .map((run) => {
+      const category = String(run?.category || '').trim();
+      if (category !== 'group') { return null; }
+      const params = (run?.params && typeof run.params === 'object') ? run.params : {};
+      const runGroupId = String(params?.groupId || '').trim();
+      if (runGroupId !== id) { return null; }
+      const pins = normalizePinsPayload(run?.pins);
+      if (pins.length < 1) { return null; }
+      return {
+        category,
+        pins,
+        params: { ...params },
+      };
+    })
+    .filter(Boolean);
+
+  const pins = structurePinnedPins
+    .filter((pin) => pin?.parent)
+    .map((pin) => {
+      const linkedIds = Array.isArray(pin?.userData?.linkedStructureObjectIds)
+        ? pin.userData.linkedStructureObjectIds.map((v) => String(v || '').trim()).filter(Boolean)
+        : [];
+      const isLinkedToGroup = linkedIds.some((objId) => groupObjectIds.has(objId));
+      if (!isLinkedToGroup) { return null; }
+      return {
+        x: pin.position.x,
+        y: pin.position.y,
+        z: pin.position.z,
+        trackName: pin.userData?.trackName ?? null,
+        linkedStructureObjectIds: linkedIds.filter((objId) => groupObjectIds.has(objId)),
+      };
+    })
+    .filter(Boolean);
+
+  const dedupedRuns = dedupeGenerationRuns(groupRuns);
+
+  const requiredGuideKeys = new Set();
+  groupedPoints.forEach((point) => {
+    const key = String(point?.planeRefKey || '').trim();
+    if (key && key !== 'base') { requiredGuideKeys.add(key); }
+  });
+  groupedDecorations.forEach((state) => {
+    const key = String(state?.planeRefKey || '').trim();
+    if (key && key !== 'base') { requiredGuideKeys.add(key); }
+  });
+  const guideStateByKey = new Map(
+    guideGridStatesAll
+      .map((state) => [String(state?.saveKey || '').trim(), state])
+      .filter(([key]) => key.length > 0)
+  );
+  const queue = Array.from(requiredGuideKeys);
+  for (let i = 0; i < queue.length; i += 1) {
+    const currentKey = queue[i];
+    const state = guideStateByKey.get(currentKey);
+    if (!state) { continue; }
+    const sourceKey = String(state?.mirroredFromSourceGridKey || '').trim();
+    if (sourceKey && sourceKey !== 'base' && !requiredGuideKeys.has(sourceKey)) {
+      requiredGuideKeys.add(sourceKey);
+      queue.push(sourceKey);
+    }
+  }
+  const groupedGuideGridStates = guideGridStatesAll
+    .filter((state) => {
+      const key = String(state?.saveKey || '').trim();
+      return Boolean(key && requiredGuideKeys.has(key));
+    })
+    .map((state) => ({ ...state }));
+
+  return {
+    meta: {
+      version: 3,
+      savedAt: new Date().toISOString(),
+      groupId: id,
+      mode: 'group_only_with_guides',
+      memberCount: groupMembers.length,
+    },
+    guideAddGrids: groupedGuideGridStates,
+    steelFrame: {
+      points: groupedPoints,
+      segments: groupedSegments,
+    },
+    decorations: groupedDecorations,
+    pins,
+    generationRuns: dedupedRuns,
+  };
+}
+
 function downloadStructureData() {
   const payload = buildStructurePayload();
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -8913,6 +9512,46 @@ function downloadStructureData() {
 const saveStructureButton = document.getElementById('save-structure-data');
 if (saveStructureButton) {
   saveStructureButton.addEventListener('click', downloadStructureData);
+}
+const saveStructureGroupButton = document.getElementById('save-structure-group-data');
+
+function resolveGroupIdForStructureSave() {
+  const selectedId = getSelectedSingleStructureGroupId();
+  if (selectedId) { return selectedId; }
+  const appendId = String(selectedAppendGroupId || '').trim();
+  if (appendId) { return appendId; }
+  const panelId = String(groupModeIdSelect?.value || '').trim();
+  if (panelId) { return panelId; }
+  const railId = String(selectedRailConstructionGroupId || '').trim();
+  if (railId) { return railId; }
+  return '';
+}
+
+function downloadStructureGroupData() {
+  const groupId = resolveGroupIdForStructureSave();
+  if (!groupId) {
+    alert('保存対象のグループIDが選択されていません。GROUPモードで同一グループを選択するか、既存グループIDを選んでください。');
+    return;
+  }
+  const payload = buildStructurePayloadForGroup(groupId);
+  if (!payload) {
+    alert(`グループ保存対象がありません: ${groupId}`);
+    return;
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${groupId}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  alert(`グループ保存しました: ${groupId}`);
+}
+
+if (saveStructureGroupButton) {
+  saveStructureGroupButton.addEventListener('click', downloadStructureGroupData);
 }
 
 function serializeDifferenceSpaceMesh(mesh) {
@@ -8972,7 +9611,7 @@ function buildGuideGridSaveKeyMapsForPayload(guideGridStates) {
 
 function normalizeSteelFrameSegmentProfile(rawProfile) {
   const p = String(rawProfile || 'round').toLowerCase();
-  if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular') {
+  if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube') {
     return p;
   }
   if (p === 'corrugated' || p === 'corrugation' || p === 'wave' || p === 'wave_plate') {
@@ -9113,8 +9752,11 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
   segmentStates.forEach((s) => {
     const keys = Array.isArray(s?.pointKeys) ? s.pointKeys : [];
     if (keys.length < 2) { return; }
-    const p0 = pointMap.get(keys[0]) || null;
-    const p1 = pointMap.get(keys[1]) || null;
+    const pointRefs = keys
+      .map((k) => pointMap.get(k) || null)
+      .filter((mesh) => mesh?.userData?.steelFramePoint);
+    const p0 = pointRefs[0] || null;
+    const p1 = pointRefs[1] || null;
     if (!p0 || !p1) { return; }
     const profile = normalizeSteelFrameSegmentProfile(s?.profile || 'round');
     const style = normalizeSerializedSegmentStyle(profile, s?.style);
@@ -9136,6 +9778,13 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
     }
     if (Boolean(s?.steelFrameCopiedObject)) {
       setCopyObjectVisual(seg, false);
+    }
+    if (profile === 'tube' && pointRefs.length >= 2) {
+      seg.userData = {
+        ...(seg.userData || {}),
+        steelFrameSegmentPointRefs: pointRefs,
+      };
+      steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
     }
     registerCopyObject(seg);
   });
@@ -9529,18 +10178,54 @@ function buildExistingGuideGridKeyMap() {
   return keyToGrid;
 }
 
-function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
+function createStructureGroupIdRemapper() {
+  const existingIds = new Set(collectStructureGroupIds());
   const idMap = new Map();
-  const getRemappedId = (rawId) => {
+  let remappedCount = 0;
+
+  const reserve = (rawId) => {
     const src = String(rawId || '').trim();
     if (!src) { return ''; }
-    if (!idMap.has(src)) {
-      const nextId = `structure_group_${structureGroupSeq}`;
-      structureGroupSeq += 1;
-      idMap.set(src, nextId);
+    if (idMap.has(src)) {
+      return idMap.get(src);
     }
-    return idMap.get(src);
+
+    let candidate = src;
+    if (existingIds.has(candidate)) {
+      // 既存IDと衝突する場合のみ改名。
+      const fallbackBase = /^structure_group_\d+$/.test(src) ? 'structure_group' : src;
+      let n = 2;
+      while (existingIds.has(candidate)) {
+        if (fallbackBase === 'structure_group') {
+          candidate = `structure_group_${structureGroupSeq}`;
+          structureGroupSeq += 1;
+        } else {
+          candidate = `${fallbackBase}__${n}`;
+          n += 1;
+        }
+      }
+    }
+
+    existingIds.add(candidate);
+    idMap.set(src, candidate);
+    if (candidate !== src) {
+      remappedCount += 1;
+    }
+    return candidate;
   };
+
+  return {
+    reserve,
+    getEntries: () => Array.from(idMap.entries()).map(([sourceGroupId, remappedGroupId]) => ({
+      sourceGroupId,
+      remappedGroupId,
+    })),
+    getRemappedCount: () => remappedCount,
+  };
+}
+
+function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
+  const remapper = createStructureGroupIdRemapper();
 
   const mappedSteelFrameState = steelFrameState && typeof steelFrameState === 'object'
     ? {
@@ -9550,7 +10235,7 @@ function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
           const next = { ...seg };
           const gid = String(seg?.structureGroupId || '').trim();
           if (gid) {
-            next.structureGroupId = getRemappedId(gid);
+            next.structureGroupId = remapper.reserve(gid);
           }
           return next;
         })
@@ -9563,7 +10248,7 @@ function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
       const next = { ...state };
       const gid = String(state?.structureGroupId || '').trim();
       if (gid) {
-        next.structureGroupId = getRemappedId(gid);
+        next.structureGroupId = remapper.reserve(gid);
       }
       return next;
     })
@@ -9572,11 +10257,8 @@ function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
   return {
     steelFrameState: mappedSteelFrameState,
     decorationStates: mappedDecorationStates,
-    remappedCount: idMap.size,
-    remappedEntries: Array.from(idMap.entries()).map(([sourceGroupId, remappedGroupId]) => ({
-      sourceGroupId,
-      remappedGroupId,
-    })),
+    remappedCount: remapper.getRemappedCount(),
+    remappedEntries: remapper.getEntries(),
   };
 }
 
@@ -9716,17 +10398,7 @@ function filterGroupedDecorationStates(payloadDecorations) {
 }
 
 function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
-  const idMap = new Map();
-  const getRemappedId = (rawId) => {
-    const src = String(rawId || '').trim();
-    if (!src) { return ''; }
-    if (!idMap.has(src)) {
-      const nextId = `structure_group_${structureGroupSeq}`;
-      structureGroupSeq += 1;
-      idMap.set(src, nextId);
-    }
-    return idMap.get(src);
-  };
+  const remapper = createStructureGroupIdRemapper();
 
   const mappedSteelFrameState = steelFrameState && typeof steelFrameState === 'object'
     ? {
@@ -9736,7 +10408,7 @@ function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
           const next = { ...seg };
           const gid = String(seg?.structureGroupId || '').trim();
           if (gid) {
-            next.structureGroupId = getRemappedId(gid);
+            next.structureGroupId = remapper.reserve(gid);
           }
           return next;
         })
@@ -9749,7 +10421,7 @@ function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
       const next = { ...state };
       const gid = String(state?.structureGroupId || '').trim();
       if (gid) {
-        next.structureGroupId = getRemappedId(gid);
+        next.structureGroupId = remapper.reserve(gid);
       }
       return next;
     })
@@ -9758,11 +10430,8 @@ function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
   return {
     steelFrameState: mappedSteelFrameState,
     decorationStates: mappedDecorationStates,
-    remappedCount: idMap.size,
-    remappedEntries: Array.from(idMap.entries()).map(([sourceGroupId, remappedGroupId]) => ({
-      sourceGroupId,
-      remappedGroupId,
-    })),
+    remappedCount: remapper.getRemappedCount(),
+    remappedEntries: remapper.getEntries(),
   };
 }
 
@@ -9772,7 +10441,43 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
   syncStructureGroupSequenceFromExisting();
+  const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  const mirrorGuideStates = [];
+  const nonMirrorGuideStates = [];
+  guideGridStates.forEach((state) => {
+    const isMirrorGrid = Boolean(state?.guideMirrorLocked) && !Boolean(state?.guideMillerInfluencePlane);
+    if (isMirrorGrid) {
+      mirrorGuideStates.push(state);
+    } else {
+      nonMirrorGuideStates.push(state);
+    }
+  });
+  const loadedGuideGrids = [];
+  nonMirrorGuideStates.forEach((state) => {
+    const grid = addGuideGridFromState(state);
+    loadedGuideGrids.push(grid || null);
+  });
   const keyToGrid = buildExistingGuideGridKeyMap();
+  nonMirrorGuideStates.forEach((state, idx) => {
+    const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
+    const grid = loadedGuideGrids[idx] || null;
+    if (key && grid) {
+      keyToGrid.set(key, grid);
+    }
+  });
+  guideAddGrids.forEach((grid) => {
+    const key = typeof grid?.userData?.saveKey === 'string' ? grid.userData.saveKey : null;
+    if (key && !keyToGrid.has(key)) {
+      keyToGrid.set(key, grid);
+    }
+  });
+  rebuildMirrorFromStatesRuntime({
+    mirrorStates: mirrorGuideStates,
+    maxPasses: 6,
+    tryCreateMirrorFromState: (state) => createGuideMirrorGridFromStateLink(state, keyToGrid),
+  });
+  rebuildMirrorStateOnLoad(keyToGrid, 4);
+
   const groupedSteelFrameState = filterGroupedSteelFrameState(payload?.steelFrame);
   const groupedDecorationStates = filterGroupedDecorationStates(payload?.decorations);
   const mapped = remapStructureGroupIdsForAppend(groupedSteelFrameState, groupedDecorationStates);
@@ -9795,6 +10500,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   updateGroupModePanelUI();
   refreshSteelFrameMirrorPreviews();
   return {
+    guideCount: loadedGuideGrids.filter(Boolean).length,
     segmentCount: appendSegmentCount,
     decorationCount: appendDecorationCount,
     remappedGroupCount: mapped.remappedCount || 0,
@@ -9977,7 +10683,7 @@ if (loadMapDataButton && loadMapDataInput) {
       if (mapLoadMode === 'append_groups') {
         const sourceTag = String(file?.name || '').replace(/\.(json|msgpack|mpk)$/i, '') || 'runtime';
         const result = appendCreateModeGroupsPayload(payload, { sourceTag });
-        notifyMapLoadStatus(`group追加完了: segment ${result.segmentCount} / decoration ${result.decorationCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
+        notifyMapLoadStatus(`group追加完了: guide ${result.guideCount} / segment ${result.segmentCount} / decoration ${result.decorationCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
       } else if (mapLoadMode === 'append_map') {
         const sourceTag = String(file?.name || '').replace(/\.(json|msgpack|mpk)$/i, '') || 'runtime';
         const result = appendCreateModePayload(payload, { sourceTag });
@@ -10173,6 +10879,15 @@ if (groupModeScaleButton) {
     const groupId = getSelectedSingleStructureGroupId();
     const scale = Number(String(groupModeScaleInput?.value || '').trim());
     applyStructureGroupScale(groupId, scale);
+  });
+}
+ensureGroupModeRenameControls();
+if (groupModeRenameButton) {
+  groupModeRenameButton.addEventListener('click', () => {
+    const sourceGroupId = getSelectedSingleStructureGroupId() || String(selectedAppendGroupId || '').trim();
+    const nextNameRaw = String(groupModeRenameInput?.value || '').trim();
+    const nextName = nextNameRaw || String(groupModeRenameInput?.placeholder || '').trim();
+    renameStructureGroupId(sourceGroupId, nextName);
   });
 }
 if (constructionGenerateButton) {
@@ -11536,9 +12251,7 @@ function vecMoved(a, b, eps = HISTORY_EPS) {
     const activeDecorations = decorationObjects.filter((mesh) => mesh?.parent);
     const constructionObjects = getConstructionCopyTargets();
     if (objectEditMode === 'CREATE_NEW') {
-      targetObjects = steelFrameMode.getCurrentPointMeshes()
-        .concat(guideRailPickMeshes)
-        .concat(activeDecorations);
+      targetObjects = getSteelFrameAddPointTargets();
     } else if (objectEditMode === 'MOVE_EXISTING') {
       targetObjects = steelFrameMode.getAllPointMeshes().concat(activeDecorations);
     } else if (objectEditMode === 'COPY') {
@@ -14468,6 +15181,19 @@ function performSteelFrameAddFromPointer() {
 
   let guideSnapPoint = null;
   const intersects = getIntersectObjects();
+  const tubeHit = intersects.find((hit) => resolveTubeSegmentFromHitObject(hit?.object));
+  if (tubeHit) {
+    const insertedPoint = insertPointOnTubeFromHit(tubeHit);
+    if (insertedPoint) {
+      pushCreateHistory({
+        type: 'add_points',
+        items: [{ mesh: insertedPoint, lineIndex: insertedPoint?.userData?.steelFrameLine ?? 0 }],
+      });
+      targetObjects = getSteelFrameAddPointTargets();
+      drawingObject();
+      return true;
+    }
+  }
   const guideHit = intersects.find((hit) => hit?.object?.userData?.isGuideRail);
   if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
     const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
@@ -14495,9 +15221,7 @@ function performSteelFrameAddFromPointer() {
     });
   }
 
-  targetObjects = steelFrameMode.getCurrentPointMeshes()
-    .concat(guideRailPickMeshes)
-    .concat(decorationObjects.filter((m) => m?.parent));
+  targetObjects = getSteelFrameAddPointTargets();
   drawingObject();
   return Boolean(mesh);
 }
@@ -18539,7 +19263,8 @@ async function search_point() {
     // console.log(intersects.length)
     const firstHit = intersects[0];
     const hitObjectRaw = firstHit.object;
-    const movePointHitObject = resolveMovePointTargetFromIntersect(firstHit);
+    const movePointHitObject = resolveMovePointPreferredHitObject(intersects)
+      || resolveMovePointTargetFromIntersect(firstHit);
     const hitObject = movePointHitObject || resolveSelectableHitObject(hitObjectRaw);
     if (choice_object != hitObject){
       if (choice_object !== false){ 
@@ -18655,7 +19380,8 @@ async function onerun_search_point() {
     console.log(intersects.length)
     const firstHit = intersects[0];
     const hitObjectRaw = firstHit.object;
-    const movePointHitObject = resolveMovePointTargetFromIntersect(firstHit);
+    const movePointHitObject = resolveMovePointPreferredHitObject(intersects)
+      || resolveMovePointTargetFromIntersect(firstHit);
     const hitObject = movePointHitObject || resolveSelectableHitObject(hitObjectRaw);
     if (choice_object != hitObject){
       if (choice_object !== false){ 
@@ -20702,9 +21428,7 @@ async function handleMouseDown() {
         pushCreateHistory({ type: 'add_points', items: addedPointItems });
       }
       if (editObject === 'STEEL_FRAME') {
-        targetObjects = steelFrameMode.getCurrentPointMeshes()
-          .concat(guideRailPickMeshes)
-          .concat(decorationObjects.filter((mesh) => mesh?.parent));
+        targetObjects = getSteelFrameAddPointTargets();
         setMeshListOpacity(targetObjects, 1);
       }
       return;
@@ -20781,6 +21505,19 @@ async function handleMouseDown() {
     let guideSnapPoint = null;
     if (editObject === 'STEEL_FRAME') {
       const intersects = getIntersectObjects();
+      const tubeHit = intersects.find((hit) => resolveTubeSegmentFromHitObject(hit?.object));
+      if (tubeHit) {
+        const insertedPoint = insertPointOnTubeFromHit(tubeHit);
+        if (insertedPoint) {
+          pushCreateHistory({
+            type: 'add_points',
+            items: [{ mesh: insertedPoint, lineIndex: insertedPoint?.userData?.steelFrameLine ?? 0 }],
+          });
+          targetObjects = getSteelFrameAddPointTargets();
+          drawingObject();
+          return;
+        }
+      }
       const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
       if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
         const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
@@ -20817,9 +21554,7 @@ async function handleMouseDown() {
           items: [{ mesh, lineIndex: mesh?.userData?.steelFrameLine ?? 0 }],
         });
       }
-      targetObjects = steelFrameMode.getCurrentPointMeshes()
-        .concat(guideRailPickMeshes)
-        .concat(decorationObjects.filter((mesh) => mesh?.parent));
+      targetObjects = getSteelFrameAddPointTargets();
     } else if (editObject === 'DIFFERENCE_SPACE') {
       beginDifferenceHistorySession();
       const plane = createDifferenceSpacePlane(point);
@@ -23545,9 +24280,7 @@ export function UIevent (uiID, toggle){
     steelFrameMode.setAllowPointAppend(true)
     objectEditMode = 'CREATE_NEW'
     search_object = true
-    targetObjects = steelFrameMode.getCurrentPointMeshes()
-      .concat(guideRailPickMeshes)
-      .concat(decorationObjects.filter((mesh) => mesh?.parent))
+    targetObjects = getSteelFrameAddPointTargets()
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     addPointGridActive = true
@@ -23706,7 +24439,7 @@ export function UIevent (uiID, toggle){
       steelFrameMode.setAllowPointAppend(true)
       objectEditMode = 'CREATE_NEW'
       search_object = false
-      targetObjects = steelFrameMode.getCurrentPointMeshes()
+      targetObjects = getSteelFrameAddPointTargets()
       setMeshListOpacity(targetObjects, 1)
       steelFrameMode.setActive(true)
       addPointGridActive = true
@@ -23744,7 +24477,7 @@ export function UIevent (uiID, toggle){
       steelFrameMode.setAllowPointAppend(true)
       objectEditMode = 'CREATE_NEW'
       search_object = false
-      targetObjects = steelFrameMode.getCurrentPointMeshes()
+      targetObjects = getSteelFrameAddPointTargets()
       setMeshListOpacity(targetObjects, 1)
       steelFrameMode.setActive(true)
       addPointGridActive = true
@@ -23825,7 +24558,6 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'move_point' ){ if ( toggle === 'active' ){
   console.log( 'move_point _active' )
-    movePointPanelActive = true
     scalePointPanelActive = false
     move_direction_y = false
     // search_object = false
@@ -23837,13 +24569,14 @@ export function UIevent (uiID, toggle){
     console.log(targetObjects)
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
+    enableMovePointToggleEffects()
 
     search_object = true
     updateMovePointPanelUI({ clearInputs: true });
 
   } else {
   console.log( 'move_point _inactive' )
-    movePointPanelActive = false
+    disableMovePointToggleEffects()
     scalePointPanelActive = false
     setRotationPanelMode('rotation');
     setRotationPanelVisible(false);
@@ -24204,6 +24937,11 @@ export function UIevent (uiID, toggle){
     setConstructionCategory('tubular')
   } else {
   console.log( 'tubular _inactive' )
+  }} else if ( uiID === 'normal' || uiID === 'normal/2' ){ if ( toggle === 'active' ){
+  console.log( uiID + ' _active' )
+    setConstructionCategory('tube')
+  } else {
+  console.log( uiID + ' _inactive' )
   }} else if ( uiID === 'Difference' ){ if ( toggle === 'active' ){
   console.log( 'Difference _active' )
     if (blockManualDioramaSpaceMode()) { return; }
@@ -24473,7 +25211,7 @@ export function UIevent (uiID, toggle){
       objectEditMode = 'Standby';
     }
     refreshDifferenceSelectedEdgeHighlights();
-  }} else if ( uiID === 'tube' || uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
+  }} else if ( uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
     if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true

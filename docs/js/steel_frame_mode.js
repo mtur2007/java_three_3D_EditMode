@@ -55,6 +55,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
   function getDefaultBeamStyle(profile) {
     const p = String(profile || '').toLowerCase();
+    if (p === 'tubular' || p === 'tube') {
+      return {
+        // tubular / tube は X を直径として扱う。
+        beamWidthHorizontal: 0.14,
+        beamHeightVertical: 0.14,
+        beamThickness: 0.14,
+      };
+    }
     if (p === 'round') {
       return {
         // round は X を直径として扱う。初期半径0.08に合わせて直径0.16。
@@ -98,6 +106,21 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       beamHeightVertical: Number(rawStyle?.beamHeightVertical),
       beamThickness: Number(rawStyle?.beamThickness),
     };
+    if (p === 'tubular' || p === 'tube') {
+      const diameterRaw = Number.isFinite(merged.beamWidthHorizontal)
+        ? merged.beamWidthHorizontal
+        : (Number.isFinite(merged.beamThickness)
+          ? merged.beamThickness
+          : (Number.isFinite(merged.beamHeightVertical)
+            ? merged.beamHeightVertical
+            : base.beamWidthHorizontal));
+      const diameter = Math.max(0.01, diameterRaw);
+      return {
+        beamWidthHorizontal: diameter,
+        beamHeightVertical: diameter,
+        beamThickness: diameter,
+      };
+    }
     const width = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.01, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
     if (p === 'corrugated_bar') {
       const angleRaw = Number.isFinite(merged.beamHeightVertical) ? merged.beamHeightVertical : base.beamHeightVertical;
@@ -340,12 +363,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return mesh;
   }
 
-  function createTubularLightSegmentMesh(start, end) {
+  function createTubularLightSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
-    const geometry = new THREE.CylinderGeometry(0.07, 0.07, len, 14);
+    const dims = normalizeBeamStyle('tubular', style);
+    const radius = Math.max(0.005, Number(dims?.beamWidthHorizontal || 0.14) * 0.5);
+    const geometry = new THREE.CylinderGeometry(radius, radius, len, 14);
     // Unlit bright white so it looks emissive without adding lights.
     const material = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -360,6 +385,37 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       new THREE.Vector3(0, 1, 0),
       dir.clone().normalize(),
     );
+    mesh.visible = active;
+    return mesh;
+  }
+
+  function createInterpolatedTubeSegmentMesh(pointMeshes, style = null) {
+    const refs = Array.isArray(pointMeshes) ? pointMeshes : [];
+    const rawPoints = refs
+      .map((mesh) => mesh?.position?.clone?.() || null)
+      .filter(Boolean);
+    if (rawPoints.length < 2) { return null; }
+
+    const points = [];
+    rawPoints.forEach((p, idx) => {
+      if (idx < 1 || p.distanceToSquared(rawPoints[idx - 1]) > 1e-10) {
+        points.push(p);
+      }
+    });
+    if (points.length < 2) { return null; }
+
+    const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.5);
+    let approxLen = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      approxLen += points[i].distanceTo(points[i + 1]);
+    }
+    const tubularSegments = THREE.MathUtils.clamp(Math.round(Math.max(approxLen * 20, points.length * 12)), 24, 960);
+    const dims = normalizeBeamStyle('tube', style);
+    const radius = Math.max(0.005, Number(dims?.beamWidthHorizontal || 0.14) * 0.5);
+    const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, 14, false);
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = segmentName;
     mesh.visible = active;
     return mesh;
   }
@@ -498,8 +554,12 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   }
 
   function createSegmentMesh(start, end, { profile = segmentProfile, style = null } = {}) {
+    if (profile === 'tube') {
+      // 2点指定時は直線バーとして扱う（多点時の補間は createSegmentsFromPoints 側で生成）。
+      return createRoundBarSegmentMesh(start, end, style);
+    }
     if (profile === 'tubular') {
-      return createTubularLightSegmentMesh(start, end);
+      return createTubularLightSegmentMesh(start, end, style);
     }
     if (profile === 'rect_bar') {
       return createRectBarSegmentMesh(start, end, style);
@@ -546,6 +606,23 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   function createSegmentsFromPoints(points) {
     const created = [];
     if (!Array.isArray(points) || points.length < 2) { return created; }
+    if (segmentProfile === 'tube') {
+      const pointRefs = points.filter((item) => item?.userData?.steelFramePoint);
+      if (pointRefs.length < 2) { return created; }
+      const segmentStyle = normalizeBeamStyle(segmentProfile, null);
+      const mesh = createInterpolatedTubeSegmentMesh(pointRefs, segmentStyle);
+      if (!mesh) { return created; }
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        steelFrameSegmentPointRefs: pointRefs,
+        steelFrameSegmentProfile: segmentProfile,
+        steelFrameSegmentStyle: segmentStyle ? { ...segmentStyle } : null,
+      };
+      scene.add(mesh);
+      segmentMeshes.push(mesh);
+      created.push(mesh);
+      return created;
+    }
     for (let i = 0; i < points.length - 1; i++) {
       const startMesh = points[i];
       const endMesh = points[i + 1];
@@ -577,20 +654,34 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       const refs = Array.isArray(srcMesh?.userData?.steelFrameSegmentPointRefs)
         ? srcMesh.userData.steelFrameSegmentPointRefs
         : [];
-      const startMesh = refs[0];
-      const endMesh = refs[1];
-      const start = startMesh?.position;
-      const end = endMesh?.position;
-      if (!start || !end) {
-        if (srcMesh?.parent) {
-          srcMesh.parent.remove(srcMesh);
-        }
-        disposeObject3D(srcMesh);
-        return;
-      }
       const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
       const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
-      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      let rebuiltMesh = null;
+      let nextRefs = refs.filter((item) => item?.userData?.steelFramePoint);
+      if (profile === 'tube') {
+        if (nextRefs.length < 2) {
+          if (srcMesh?.parent) {
+            srcMesh.parent.remove(srcMesh);
+          }
+          disposeObject3D(srcMesh);
+          return;
+        }
+        rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else {
+        const startMesh = refs[0];
+        const endMesh = refs[1];
+        const start = startMesh?.position;
+        const end = endMesh?.position;
+        if (!start || !end) {
+          if (srcMesh?.parent) {
+            srcMesh.parent.remove(srcMesh);
+          }
+          disposeObject3D(srcMesh);
+          return;
+        }
+        nextRefs = [startMesh, endMesh];
+        rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      }
       if (!rebuiltMesh) {
         if (srcMesh?.parent) {
           srcMesh.parent.remove(srcMesh);
@@ -600,7 +691,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       }
       rebuiltMesh.userData = {
         ...(srcMesh.userData || {}),
-        steelFrameSegmentPointRefs: [startMesh, endMesh],
+        steelFrameSegmentPointRefs: nextRefs,
         steelFrameSegmentProfile: profile,
         steelFrameSegmentStyle: style ? { ...style } : null,
       };
@@ -631,20 +722,29 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       const refs = Array.isArray(srcMesh?.userData?.steelFrameSegmentPointRefs)
         ? srcMesh.userData.steelFrameSegmentPointRefs
         : [];
-      const startMesh = refs[0];
-      const endMesh = refs[1];
-      if (!startMesh || !endMesh) { continue; }
-      if (!movedSet.has(startMesh) && !movedSet.has(endMesh)) { continue; }
-      const start = startMesh.position;
-      const end = endMesh.position;
-      if (!start || !end) { continue; }
       const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
       const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
-      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      let rebuiltMesh = null;
+      let nextRefs = refs.filter((item) => item?.userData?.steelFramePoint);
+      if (profile === 'tube') {
+        const hasMoved = nextRefs.some((pointMesh) => movedSet.has(pointMesh));
+        if (!hasMoved || nextRefs.length < 2) { continue; }
+        rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else {
+        const startMesh = refs[0];
+        const endMesh = refs[1];
+        if (!startMesh || !endMesh) { continue; }
+        if (!movedSet.has(startMesh) && !movedSet.has(endMesh)) { continue; }
+        const start = startMesh.position;
+        const end = endMesh.position;
+        if (!start || !end) { continue; }
+        nextRefs = [startMesh, endMesh];
+        rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      }
       if (!rebuiltMesh) { continue; }
       rebuiltMesh.userData = {
         ...(srcMesh.userData || {}),
-        steelFrameSegmentPointRefs: [startMesh, endMesh],
+        steelFrameSegmentPointRefs: nextRefs,
         steelFrameSegmentProfile: profile,
         steelFrameSegmentStyle: style ? { ...style } : null,
       };
@@ -874,18 +974,26 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       const refs = Array.isArray(srcMesh?.userData?.steelFrameSegmentPointRefs)
         ? srcMesh.userData.steelFrameSegmentPointRefs
         : [];
-      const startMesh = refs[0];
-      const endMesh = refs[1];
-      const start = startMesh?.position;
-      const end = endMesh?.position;
-      if (!start || !end) { return; }
       const profile = srcMesh?.userData?.steelFrameSegmentProfile || segmentProfile;
       const style = normalizeBeamStyle(profile, srcMesh?.userData?.steelFrameSegmentStyle || null);
-      const rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      let rebuiltMesh = null;
+      let nextRefs = refs.filter((item) => item?.userData?.steelFramePoint);
+      if (profile === 'tube') {
+        if (nextRefs.length < 2) { return; }
+        rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else {
+        const startMesh = refs[0];
+        const endMesh = refs[1];
+        const start = startMesh?.position;
+        const end = endMesh?.position;
+        if (!start || !end) { return; }
+        nextRefs = [startMesh, endMesh];
+        rebuiltMesh = createSegmentMeshWithProfile(start, end, profile, style);
+      }
       if (!rebuiltMesh) { return; }
       rebuiltMesh.userData = {
         ...(srcMesh.userData || {}),
-        steelFrameSegmentPointRefs: [startMesh, endMesh],
+        steelFrameSegmentPointRefs: nextRefs,
         steelFrameSegmentProfile: profile,
         steelFrameSegmentStyle: style ? { ...style } : null,
       };
@@ -1053,6 +1161,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       segmentProfile = 'corrugated_bar';
     } else if (profile === 'tubular') {
       segmentProfile = 'tubular';
+    } else if (profile === 'tube') {
+      segmentProfile = 'tube';
     } else {
       segmentProfile = 'round';
     }

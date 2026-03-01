@@ -251,6 +251,7 @@ const uiTree = {
               'construction': {
                   'pillar': { 'Round_bar': '', 'H_beam': '', 'T_beam': '', 'L_beam': '' },
                   'rite': { 'tubular': '' },
+                  'tube': { 'normal': '' },
               },
             },
             'Difference': {
