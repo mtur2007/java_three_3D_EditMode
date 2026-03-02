@@ -1,0 +1,409 @@
+{
+  "meta": {
+    "version": 3,
+    "savedAt": "2026-03-02T06:03:32.256Z",
+    "groupId": "st_w_1",
+    "mode": "group_only_with_guides",
+    "memberCount": 6
+  },
+  "guideAddGrids": [
+    {
+      "name": "AddPointGuideGridClone",
+      "saveKey": "g10",
+      "position": [
+        -23.25098506359476,
+        8.948635429757285,
+        41.27585351064036
+      ],
+      "quaternion": [
+        0,
+        0.27054373354239003,
+        0,
+        0.9627076857701637
+      ],
+      "guideGridColor": 8956552,
+      "guideGridDisplay": "grid",
+      "guideGridOpacity": 1,
+      "guideMirrorLocked": false,
+      "mirroredFromEdge": null,
+      "mirroredFromSourceGridId": null,
+      "mirroredFromSourceGridKey": null,
+      "mirroredFromInfluencePlaneId": null,
+      "mirroredFromInfluencePlaneKey": null,
+      "guideMillerInfluencePlane": false,
+      "guideMirrorCoordFrame": null,
+      "guideRectSize": {
+        "width": 20,
+        "height": 20
+      },
+      "changeAnglePanelAngles": {
+        "x": 0,
+        "y": 31.39324943587564,
+        "z": 0
+      }
+    }
+  ],
+  "steelFrame": {
+    "points": [
+      {
+        "key": "p1282",
+        "lineIndex": 0,
+        "position": [
+          -15.368956154189354,
+          9.017389026398689,
+          31.433690432460114
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1284",
+        "lineIndex": 0,
+        "position": [
+          -14.853736947870514,
+          9.017389026398689,
+          30.973414631537846
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1285",
+        "lineIndex": 0,
+        "position": [
+          -14.853736947870514,
+          10.017389026398689,
+          30.973414631537846
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1283",
+        "lineIndex": 0,
+        "position": [
+          -15.368956154189354,
+          10.017389026398689,
+          31.433690432460114
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1276",
+        "lineIndex": 0,
+        "position": [
+          -15.569747320432024,
+          9.017389026398689,
+          29.787366694777912
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1277",
+        "lineIndex": 0,
+        "position": [
+          -15.569747320432024,
+          10.017389026398689,
+          29.787366694777912
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1274",
+        "lineIndex": 0,
+        "position": [
+          -14.916399498261026,
+          9.017389026398689,
+          32.13149688967689
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1275",
+        "lineIndex": 0,
+        "position": [
+          -14.916399498261026,
+          10.017389026398689,
+          32.13149688967689
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1281",
+        "lineIndex": 0,
+        "position": [
+          -17.43705038610634,
+          10.017389026398689,
+          33.97416796136173
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1280",
+        "lineIndex": 0,
+        "position": [
+          -17.43705038610634,
+          9.017389026398689,
+          33.97416796136173
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1279",
+        "lineIndex": 0,
+        "position": [
+          -18.80605499134481,
+          9.017389026398689,
+          31.99487038762761
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      },
+      {
+        "key": "p1278",
+        "lineIndex": 0,
+        "position": [
+          -18.80605499134481,
+          10.017389026398689,
+          31.99487038762761
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "steelFrameCopied": false,
+        "steelFrameCopyGroupId": null,
+        "planeRefKey": "g10"
+      }
+    ],
+    "segments": [
+      {
+        "pointKeys": [
+          "p1282",
+          "p1284",
+          "p1285",
+          "p1283"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_1"
+      },
+      {
+        "pointKeys": [
+          "p1276",
+          "p1284",
+          "p1285",
+          "p1277"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_2"
+      },
+      {
+        "pointKeys": [
+          "p1282",
+          "p1274",
+          "p1275",
+          "p1283"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_3"
+      },
+      {
+        "pointKeys": [
+          "p1274",
+          "p1275",
+          "p1281",
+          "p1280"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_4"
+      },
+      {
+        "pointKeys": [
+          "p1280",
+          "p1279",
+          "p1278",
+          "p1281"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_5"
+      },
+      {
+        "pointKeys": [
+          "p1279",
+          "p1276",
+          "p1277",
+          "p1278"
+        ],
+        "profile": "panel_wall",
+        "style": {
+          "beamWidthHorizontal": 1.2,
+          "beamHeightVertical": 2.2,
+          "beamThickness": 0.004
+        },
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "steelFrameCopiedObject": false,
+        "steelFrameCopyGroupId": null,
+        "structureGroupId": "st_w_1",
+        "structureGroupScale": 1,
+        "copyObjectSourceRefId": null,
+        "copyObjectRefId": "copy_obj_6"
+      }
+    ]
+  },
+  "decorations": [],
+  "pins": [],
+  "generationRuns": []
+}

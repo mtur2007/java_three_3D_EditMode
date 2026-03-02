@@ -9711,7 +9711,7 @@ function buildGuideGridSaveKeyMapsForPayload(guideGridStates) {
 
 function normalizeSteelFrameSegmentProfile(rawProfile) {
   const p = String(rawProfile || 'round').toLowerCase();
-  if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube') {
+  if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube' || p === 'panel_wall') {
     return p;
   }
   if (p === 'corrugated' || p === 'corrugation' || p === 'wave' || p === 'wave_plate') {
@@ -9858,7 +9858,13 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
     const p0 = pointRefs[0] || null;
     const p1 = pointRefs[1] || null;
     if (!p0 || !p1) { return; }
-    const profile = normalizeSteelFrameSegmentProfile(s?.profile || 'round');
+    const normalizedProfile = normalizeSteelFrameSegmentProfile(s?.profile || 'round');
+    // 互換救済:
+    // 旧保存で panel_wall が round に落ちていたデータは pointKeys が4点で残っているため、
+    // ロード時に panel_wall として扱って復元する。
+    const profile = (normalizedProfile === 'round' && keys.length >= 4)
+      ? 'panel_wall'
+      : normalizedProfile;
     const style = normalizeSerializedSegmentStyle(profile, s?.style);
     const seg = steelFrameMode?.createSegmentBetweenPoints?.(p0, p1, {
       profile,
@@ -9879,7 +9885,7 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
     if (Boolean(s?.steelFrameCopiedObject)) {
       setCopyObjectVisual(seg, false);
     }
-    if (profile === 'tube' && pointRefs.length >= 2) {
+    if ((profile === 'tube' && pointRefs.length >= 2) || (profile === 'panel_wall' && pointRefs.length >= 4)) {
       seg.userData = {
         ...(seg.userData || {}),
         steelFrameSegmentPointRefs: pointRefs,
