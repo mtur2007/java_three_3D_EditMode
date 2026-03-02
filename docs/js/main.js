@@ -590,6 +590,11 @@ const threeUi = document.getElementById('three-ui');
   let differenceLineTrackNames = [];
   let differenceLineBandHeight = Math.max(0.2, Number(differenceLineHeightInput?.value) || 2.8);
   let differenceLinePickModeActive = false;
+  const AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD = ['Points_0', 'Points_1', 'Points_2', 'Points_3'];
+  const AUTO_DIFFERENCE_LINE_ON_LOAD = true;
+  const AUTO_DIFFERENCE_LINE_MAX_RETRY = 120;
+  let autoDifferenceLineTriedOnLoad = false;
+  let autoDifferenceLineRetryCount = 0;
   let differenceSpaceTransformMode = 'none';
   let differenceBodySelectModeActive = false;
   let movePointPanelActive = false;
@@ -18389,6 +18394,49 @@ function runDifferenceOnSinjyukuFromRailTracks() {
   return true;
 }
 
+function tryAutoRunDifferenceFromLineTracksOnLoad() {
+  if (!AUTO_DIFFERENCE_LINE_ON_LOAD || autoDifferenceLineTriedOnLoad) { return; }
+  if (!loadingReady) { return; }
+  if (!Array.isArray(railTrackDefs) || railTrackDefs.length < 1) { return; }
+  if (!sinjyukuCity) {
+    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+  }
+  if (!sinjyukuCity) {
+    autoDifferenceLineRetryCount += 1;
+    if (autoDifferenceLineRetryCount >= AUTO_DIFFERENCE_LINE_MAX_RETRY) {
+      autoDifferenceLineTriedOnLoad = true;
+      console.warn('[Difference][line][autoload] canceled: sinjyuku_city was not ready.');
+    }
+    return;
+  }
+
+  const normalizedTracks = normalizeDifferenceLineTrackNames(AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD);
+  differenceLineTrackNames = normalizedTracks;
+  differenceSpaceModeActive = true;
+  differenceLinePickModeActive = true;
+  differenceSpaceTransformMode = 'line';
+  editObject = 'DIFFERENCE_SPACE';
+  objectEditMode = 'Standby';
+  if (differencePanel) {
+    differencePanel.style.display = 'block';
+  }
+  toggleRailTube(true);
+  setDifferenceLineOptions();
+  refreshDifferenceLineOnlyPreview(true);
+  updateDifferenceLineSelectionStatus();
+
+  const done = runDifferenceOnSinjyukuFromRailTracks();
+  autoDifferenceLineTriedOnLoad = true;
+  if (!done) {
+    console.warn('[Difference][line][autoload] run failed.');
+    return;
+  }
+  console.log('[Difference][line][autoload] completed', {
+    tracks: normalizedTracks,
+    height: differenceLineBandHeight,
+  });
+}
+
 function getIntersectObjects(){
 
   // レイキャスト = マウス位置からまっすぐに伸びる光線ベクトルを生成
@@ -26669,6 +26717,7 @@ function animate() {
   camera.lookAt(new THREE.Vector3().addVectors(camera.position, direction));
   persistCameraViewStateToLocalStorage();
   updateStructureHover();
+  tryAutoRunDifferenceFromLineTracksOnLoad();
   if (addPointGridActive) {
     // visibility controlled by UIevent
   }
