@@ -265,9 +265,12 @@ const threeUi = document.getElementById('three-ui');
   const rotationApplyBtn = document.getElementById('rotation-apply');
   const rotationSelectionInfo = document.getElementById('rotation-selection-info');
   const movePointCoordinateModeRow = document.getElementById('move-point-coordinate-mode');
+  const copyTargetModeRow = document.getElementById('copy-target-mode');
   const movePointAxisLegend = document.getElementById('move-point-axis-legend');
   const movePointCoordinateWorldBtn = document.getElementById('move-point-coordinate-world');
   const movePointCoordinateGridBtn = document.getElementById('move-point-coordinate-grid');
+  const copyTargetIndividualBtn = document.getElementById('copy-target-individual');
+  const copyTargetGroupBtn = document.getElementById('copy-target-group');
   const movePointAxisRefBtnX = document.getElementById('move-point-axis-ref-x');
   const movePointAxisRefBtnY = document.getElementById('move-point-axis-ref-y');
   const movePointAxisRefBtnZ = document.getElementById('move-point-axis-ref-z');
@@ -635,6 +638,7 @@ const threeUi = document.getElementById('three-ui');
   let selectedAppendGroupId = '';
   let movePointCoordinateMode = 'world';
   let copyOffsetCoordinateMode = 'world';
+  let copyTargetMode = 'individual';
   const movePointAxisReferences = new Map();
   let movePointAxisReferencePickAxis = null;
   const movePointAxisLocks = { x: false, y: false, z: false };
@@ -3715,7 +3719,11 @@ const threeUi = document.getElementById('three-ui');
     if (movePointCoordinateModeRow) {
       movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint || isCopyMode) ? 'block' : 'none';
     }
+    if (copyTargetModeRow) {
+      copyTargetModeRow.style.display = isCopyMode ? 'block' : 'none';
+    }
     updateMovePointCoordinateButtons();
+    updateCopyTargetModeButtons();
     if (movePointAxisLegend) {
       movePointAxisLegend.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
     }
@@ -3728,9 +3736,20 @@ const threeUi = document.getElementById('three-ui');
 
   function getSteelSegmentDefaultColor(mesh) {
     const profile = String(mesh?.userData?.steelFrameSegmentProfile || '').toLowerCase();
-    if (profile === 'corrugated_bar') { return 0xf2f6ff; }
-    if (profile === 'tubular') { return 0xffffff; }
-    return 0x8a8f98;
+    if (profile === 'corrugated_bar') { return 0xEDE7DD; }
+    if (profile === 'panel_wall') { return 0xF4F6F8; }
+    if (profile === 'tubular') { return 0xFFFFFF; }
+    if (
+      profile === 'round'
+      || profile === 'rect_bar'
+      || profile === 'h_beam'
+      || profile === 't_beam'
+      || profile === 'l_beam'
+      || profile === 'tube'
+    ) {
+      return 0x9DA2A1;
+    }
+    return 0x9DA2A1;
   }
 
   function paintObjectColorRecursive(obj, colorHex) {
@@ -5149,6 +5168,7 @@ const threeUi = document.getElementById('three-ui');
       const pointCount = steelFrameMode?.getSelectedPointMeshes?.()?.length || 0;
       const objectCount = copySelectedObjects.size;
       const modeLabel = copyOffsetCoordinateMode === 'grid' ? 'Grid' : 'World';
+      const targetLabel = copyTargetMode === 'group' ? 'Group' : 'Individual';
       rotationSelectionInfo.textContent = [
         `選択点: ${pointCount}`,
         `選択オブジェクト: ${objectCount}`,
@@ -5156,6 +5176,7 @@ const threeUi = document.getElementById('three-ui');
         '適用でまとめてコピー',
         'Offset X/Y/Z は複製位置のずらし量',
         `座標系: ${modeLabel}`,
+        `対象: ${targetLabel}`,
       ].join('\n');
     }
     syncRotationInputGhostHints();
@@ -5337,9 +5358,22 @@ const threeUi = document.getElementById('three-ui');
     }
     const baseOffset = new THREE.Vector3(dx, dy, dz);
     const srcPoints = steelFrameMode?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
-    const srcObjects = Array.from(copySelectedObjects)
+    const selectedObjects = Array.from(copySelectedObjects)
       .map((mesh) => resolveCopySourceObject(mesh))
       .filter((mesh) => mesh?.parent);
+    const selectedGroupIds = copyTargetMode === 'group'
+      ? new Set(
+        selectedObjects
+          .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
+          .filter(Boolean)
+      )
+      : new Set();
+    const expandedGroupMembers = selectedGroupIds.size > 0
+      ? getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .filter((mesh) => selectedGroupIds.has(String(mesh?.userData?.structureGroupId || '').trim()))
+      : [];
+    const srcObjects = Array.from(new Set([...selectedObjects, ...expandedGroupMembers]));
     const copiedObjectGroupId = srcObjects.length > 0 ? allocateSteelFrameCopyGroupId() : null;
     if (srcPoints.length < 1 && srcObjects.length < 1) {
       if (rotationSelectionInfo) {
@@ -5556,6 +5590,23 @@ const threeUi = document.getElementById('three-ui');
       if (refresh) {
         updateCopyPanelUI({ clearInputs: false });
       }
+    }
+  }
+
+  function updateCopyTargetModeButtons() {
+    if (!copyTargetIndividualBtn || !copyTargetGroupBtn) { return; }
+    const isIndividual = copyTargetMode === 'individual';
+    copyTargetIndividualBtn.style.background = isIndividual ? '#dbe8fb' : '#f4f7fb';
+    copyTargetIndividualBtn.style.borderColor = isIndividual ? '#7ea2d9' : '#c8cfd9';
+    copyTargetGroupBtn.style.background = isIndividual ? '#eaf2ff' : '#cfe4ff';
+    copyTargetGroupBtn.style.borderColor = isIndividual ? '#b9d5ff' : '#6f95cf';
+  }
+
+  function setCopyTargetMode(mode = 'individual', { refresh = true } = {}) {
+    copyTargetMode = mode === 'group' ? 'group' : 'individual';
+    updateCopyTargetModeButtons();
+    if (copyModeActive && objectEditMode === 'COPY' && refresh) {
+      updateCopyPanelUI({ clearInputs: false });
     }
   }
 
@@ -6285,6 +6336,16 @@ const threeUi = document.getElementById('three-ui');
       }
     });
   }
+  if (copyTargetIndividualBtn) {
+    copyTargetIndividualBtn.addEventListener('click', () => {
+      setCopyTargetMode('individual');
+    });
+  }
+  if (copyTargetGroupBtn) {
+    copyTargetGroupBtn.addEventListener('click', () => {
+      setCopyTargetMode('group');
+    });
+  }
   if (movePointAxisRefBtnX) {
     movePointAxisRefBtnX.addEventListener('click', () => beginMovePointAxisReferencePick('x'));
   }
@@ -6892,6 +6953,49 @@ function createCommuterTrainWithModel(modelName, cars = 10, color = 0xaaaaaa) {
     commuterModelName: customGeo ? modelName : 'default',
   };
   return train;
+}
+
+function attachCommuterPantographs(car, carIndex = 0) {
+  if (!car || (carIndex % 3 !== 1)) { return; }
+  const pantograph = createPantograph(Math.PI / 2.7);
+  pantograph.position.set(0, 0.9, 5);
+  car.add(pantograph);
+
+  const pantograph2 = createPantograph(Math.PI / -2.1);
+  pantograph2.position.set(0, 0.9, -5);
+  car.add(pantograph2);
+}
+
+function rerollCommuterTrainGroupModel(trainGroup, modelName, color = 0xaaaaaa, transparency = 1) {
+  const cars = Array.isArray(trainGroup?.userData?.cars) ? trainGroup.userData.cars : null;
+  if (!cars || cars.length < 1) { return false; }
+  const modelRoot = cloneCommuterTrainModelByName(modelName);
+  if (!modelRoot && SHOW_TRAINS) { return false; }
+
+  for (let i = 0; i < cars.length; i += 1) {
+    const oldCar = cars[i];
+    if (!oldCar) { continue; }
+    const nextCar = modelRoot
+      ? modelRoot.clone(true)
+      : createFallbackTrainCar(train_width, color, transparency);
+    disableShadowRecursive(nextCar);
+    attachCommuterPantographs(nextCar, i);
+    nextCar.position.copy(oldCar.position);
+    nextCar.quaternion.copy(oldCar.quaternion);
+    nextCar.scale.copy(oldCar.scale);
+    nextCar.visible = oldCar.visible;
+    trainGroup.add(nextCar);
+    if (oldCar.parent === trainGroup) {
+      trainGroup.remove(oldCar);
+    }
+    cars[i] = nextCar;
+  }
+
+  trainGroup.userData = {
+    ...(trainGroup.userData || {}),
+    commuterModelName: modelRoot ? modelName : 'default',
+  };
+  return true;
 }
 
 console.log('cars : ',LoadModels)
@@ -7986,6 +8090,32 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
         return
       };
 
+      if (trainCars?.userData?.randomizeModelEachLoop) {
+        const pickModelName = trainCars?.userData?.pickCommuterModelName;
+        const currentName = String(trainCars?.userData?.commuterModelName || '').trim();
+        let nextName = null;
+        if (typeof pickModelName === 'function') {
+          nextName = pickModelName();
+          if (nextName && currentName && nextName === currentName) {
+            for (let retry = 0; retry < 3; retry += 1) {
+              const candidate = pickModelName();
+              if (candidate && candidate !== currentName) {
+                nextName = candidate;
+                break;
+              }
+            }
+          }
+        }
+        if (nextName) {
+          const changed = rerollCommuterTrainGroupModel(trainCars, nextName);
+          if (changed) {
+            console.log('[train_models] reroll', {
+              model: nextName,
+            });
+          }
+        }
+      }
+
       speed = max_speed
       train_stoped = rapid
       t = 0
@@ -8247,6 +8377,64 @@ function toggleRailTube(visible) {
 
 function getRailTrackByName(trackName) {
   return railTrackDefs.find((track) => track.name === trackName) || null;
+}
+
+function buildDifferenceLineTrackAliasMap() {
+  const aliasMap = new Map();
+  railTrackDefs.forEach((track) => {
+    const canonical = String(track?.name || '').trim();
+    if (!canonical) { return; }
+    const lower = canonical.toLowerCase();
+    aliasMap.set(lower, canonical);
+    const pointsMatch = canonical.match(/^points_(\d+)$/i);
+    if (!pointsMatch) { return; }
+    const num = pointsMatch[1];
+    aliasMap.set(num, canonical);
+    aliasMap.set(`point${num}`, canonical);
+    aliasMap.set(`points${num}`, canonical);
+    aliasMap.set(`point_${num}`, canonical);
+    aliasMap.set(`points_${num}`, canonical);
+    aliasMap.set(`line_${Number(num) + 1}`, canonical);
+    aliasMap.set(`line${Number(num) + 1}`, canonical);
+  });
+  return aliasMap;
+}
+
+function normalizeDifferenceLineTrackNames(rawNames) {
+  const aliasMap = buildDifferenceLineTrackAliasMap();
+  const normalized = [];
+  const append = (raw) => {
+    const text = String(raw ?? '').trim();
+    if (!text) { return; }
+    const tokens = text
+      .split(/[\s,、/]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+    tokens.forEach((token) => {
+      const lower = token.toLowerCase();
+      if (lower === 'all') { return; }
+      const exact = aliasMap.get(lower);
+      if (exact) {
+        normalized.push(exact);
+        return;
+      }
+      // 例: "23" -> Points_2, Points_3
+      if (/^\d{2,}$/.test(lower)) {
+        lower.split('').forEach((digit) => {
+          const mapped = aliasMap.get(digit);
+          if (mapped) {
+            normalized.push(mapped);
+          }
+        });
+      }
+    });
+  };
+  if (Array.isArray(rawNames)) {
+    rawNames.forEach((name) => append(name));
+  } else {
+    append(rawNames);
+  }
+  return Array.from(new Set(normalized));
 }
 
 function setDifferenceLineOptions() {
@@ -9544,6 +9732,77 @@ function buildStructurePayloadForGroup(groupId) {
 
   const dedupedRuns = dedupeGenerationRuns(groupRuns);
 
+  const compactGroupedSteelFrameForSave = (points, segments, members) => {
+    const segmentStates = Array.isArray(segments) ? segments : [];
+    const pointStates = Array.isArray(points) ? points : [];
+    const memberByRefId = new Map();
+    (Array.isArray(members) ? members : []).forEach((mesh) => {
+      const refId = String(mesh?.userData?.copyObjectRefId || '').trim();
+      if (refId) { memberByRefId.set(refId, mesh); }
+    });
+    const sourceRefSet = new Set(
+      segmentStates
+        .map((seg) => String(seg?.copyObjectRefId || '').trim())
+        .filter(Boolean)
+    );
+    const keptSegments = [];
+    const copiedInstances = [];
+    const usedPointKeysLocal = new Set();
+
+    segmentStates.forEach((seg) => {
+      const isCopied = Boolean(seg?.steelFrameCopiedObject);
+      const sourceRefId = String(seg?.copyObjectSourceRefId || '').trim();
+      const copyRefId = String(seg?.copyObjectRefId || '').trim();
+      const liveMesh = copyRefId ? (memberByRefId.get(copyRefId) || null) : null;
+      const canCompact = isCopied
+        && sourceRefId
+        && sourceRefSet.has(sourceRefId)
+        && liveMesh?.position
+        && liveMesh?.quaternion
+        && liveMesh?.scale;
+
+      if (canCompact) {
+        copiedInstances.push({
+          sourceRefId,
+          copyObjectRefId: copyRefId || null,
+          profile: seg?.profile || null,
+          style: seg?.style ? { ...seg.style } : null,
+          structureGroupId: seg?.structureGroupId ?? null,
+          structureGroupScale: Number(seg?.structureGroupScale) || null,
+          steelFrameCopyGroupId: seg?.steelFrameCopyGroupId ?? null,
+          position: [liveMesh.position.x, liveMesh.position.y, liveMesh.position.z],
+          quaternion: [liveMesh.quaternion.x, liveMesh.quaternion.y, liveMesh.quaternion.z, liveMesh.quaternion.w],
+          scale: [liveMesh.scale.x, liveMesh.scale.y, liveMesh.scale.z],
+        });
+        return;
+      }
+
+      keptSegments.push(seg);
+      const keys = Array.isArray(seg?.pointKeys) ? seg.pointKeys : [];
+      keys.forEach((k) => {
+        const key = String(k || '').trim();
+        if (key) { usedPointKeysLocal.add(key); }
+      });
+    });
+
+    const pointByKeyLocal = new Map(
+      pointStates
+        .map((point) => [String(point?.key || '').trim(), point])
+        .filter(([key]) => key.length > 0)
+    );
+    const keptPoints = Array.from(usedPointKeysLocal)
+      .map((key) => pointByKeyLocal.get(key) || null)
+      .filter(Boolean);
+
+    return {
+      points: keptPoints,
+      segments: keptSegments,
+      copiedInstances,
+    };
+  };
+
+  const compactSteelFrame = compactGroupedSteelFrameForSave(groupedPoints, groupedSegments, groupMembers);
+
   const requiredGuideKeys = new Set();
   groupedPoints.forEach((point) => {
     const key = String(point?.planeRefKey || '').trim();
@@ -9586,8 +9845,9 @@ function buildStructurePayloadForGroup(groupId) {
     },
     guideAddGrids: groupedGuideGridStates,
     steelFrame: {
-      points: groupedPoints,
-      segments: groupedSegments,
+      points: compactSteelFrame.points,
+      segments: compactSteelFrame.segments,
+      copiedInstances: compactSteelFrame.copiedInstances,
     },
     decorations: groupedDecorations,
     pins,
@@ -9822,6 +10082,7 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
   if (!payloadSteelFrame || typeof payloadSteelFrame !== 'object') { return; }
   const pointStates = Array.isArray(payloadSteelFrame.points) ? payloadSteelFrame.points : [];
   const segmentStates = Array.isArray(payloadSteelFrame.segments) ? payloadSteelFrame.segments : [];
+  const copiedInstances = Array.isArray(payloadSteelFrame.copiedInstances) ? payloadSteelFrame.copiedInstances : [];
   const pointMap = new Map();
 
   pointStates.forEach((p) => {
@@ -9894,6 +10155,118 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
     }
     registerCopyObject(seg);
   });
+
+  const restoreCopiedInstances = (instances) => {
+    const list = Array.isArray(instances) ? instances : [];
+    list.forEach((inst) => {
+      const sourceRefId = String(inst?.sourceRefId || '').trim();
+      if (!sourceRefId) { return; }
+      const sourceMesh = copyObjectRegistry.get(sourceRefId);
+      if (!sourceMesh?.parent || sourceMesh?.name !== 'SteelFrameSegment') { return; }
+
+      const pos = Array.isArray(inst?.position) ? inst.position : [sourceMesh.position.x, sourceMesh.position.y, sourceMesh.position.z];
+      const quat = Array.isArray(inst?.quaternion) ? inst.quaternion : [sourceMesh.quaternion.x, sourceMesh.quaternion.y, sourceMesh.quaternion.z, sourceMesh.quaternion.w];
+      const scl = Array.isArray(inst?.scale) ? inst.scale : [sourceMesh.scale.x, sourceMesh.scale.y, sourceMesh.scale.z];
+      const targetPos = new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+      const targetQuat = new THREE.Quaternion(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1).normalize();
+      const targetScale = new THREE.Vector3(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
+
+      const sourceRefs = Array.isArray(sourceMesh?.userData?.steelFrameSegmentPointRefs)
+        ? sourceMesh.userData.steelFrameSegmentPointRefs.filter((p) => p?.userData?.steelFramePoint)
+        : [];
+      const sourceProfile = normalizeSteelFrameSegmentProfile(inst?.profile || sourceMesh?.userData?.steelFrameSegmentProfile || 'round');
+      const sourceStyle = normalizeSerializedSegmentStyle(sourceProfile, inst?.style || sourceMesh?.userData?.steelFrameSegmentStyle || null);
+      const sourceGroupId = inst?.structureGroupId ?? sourceMesh?.userData?.structureGroupId ?? null;
+      const sourceGroupScale = Number(inst?.structureGroupScale ?? sourceMesh?.userData?.structureGroupScale ?? 1) || 1;
+      const copyGroupId = inst?.steelFrameCopyGroupId ?? sourceMesh?.userData?.steelFrameCopyGroupId ?? null;
+      const sourceObjPos = sourceMesh.position.clone();
+      const sourceObjQuat = sourceMesh.quaternion.clone();
+      const sourceObjScale = sourceMesh.scale.clone();
+      const sourceMatrix = new THREE.Matrix4().compose(sourceObjPos, sourceObjQuat, sourceObjScale);
+      const targetMatrix = new THREE.Matrix4().compose(targetPos, targetQuat, targetScale);
+      const deltaMatrix = new THREE.Matrix4().multiplyMatrices(targetMatrix, sourceMatrix.clone().invert());
+
+      if (sourceRefs.length >= 2) {
+        const srcToDstPoint = new Map();
+        const ensureCopiedPointFromSource = (srcPoint) => {
+          const existing = srcToDstPoint.get(srcPoint);
+          if (existing?.parent) { return existing; }
+          const lineIndex = Number.isInteger(srcPoint?.userData?.steelFrameLine) ? srcPoint.userData.steelFrameLine : 0;
+          const nextPos = srcPoint.position.clone().applyMatrix4(deltaMatrix);
+          const mesh = new THREE.Mesh(cube_geometry, cube_material.clone());
+          mesh.position.copy(nextPos);
+          mesh.scale.copy(srcPoint.scale);
+          mesh.userData = {
+            ...(srcPoint.userData || {}),
+            steelFramePoint: true,
+            steelFrameLine: lineIndex,
+            steelFrameCopied: true,
+            steelFrameCopyGroupId: copyGroupId || srcPoint?.userData?.steelFrameCopyGroupId || null,
+            structureGroupScale: sourceGroupScale,
+          };
+          delete mesh.userData.guideCurve;
+          delete mesh.userData.guideControlIndex;
+          steelFrameMode?.addExistingPoint?.(mesh, lineIndex);
+          srcToDstPoint.set(srcPoint, mesh);
+          return mesh;
+        };
+
+        const copiedRefs = sourceRefs.map((srcPoint) => ensureCopiedPointFromSource(srcPoint)).filter(Boolean);
+        const p0 = copiedRefs[0] || null;
+        const p1 = copiedRefs[1] || null;
+        if (!p0 || !p1) { return; }
+        const seg = steelFrameMode?.createSegmentBetweenPoints?.(p0, p1, {
+          profile: sourceProfile,
+          style: sourceStyle,
+          userData: {
+            ...(sourceMesh.userData || {}),
+            steelFrameSegmentPointRefs: copiedRefs,
+            steelFrameCopiedObject: true,
+            copyObjectSourceRefId: sourceRefId,
+            copyObjectRefId: inst?.copyObjectRefId ?? null,
+            steelFrameCopyGroupId: copyGroupId || null,
+            structureGroupId: sourceGroupId,
+            structureGroupScale: sourceGroupScale,
+          },
+        });
+        if (!seg) { return; }
+        if ((sourceProfile === 'tube' && copiedRefs.length >= 2) || (sourceProfile === 'panel_wall' && copiedRefs.length >= 4)) {
+          seg.userData = {
+            ...(seg.userData || {}),
+            steelFrameSegmentPointRefs: copiedRefs,
+          };
+          steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
+        }
+        setCopyObjectVisual(seg, false);
+        registerCopyObject(seg);
+        return;
+      }
+
+      const cloned = cloneObjectVisualTreeWithoutUserData(sourceMesh) || sourceMesh.clone?.(true);
+      if (!cloned) { return; }
+      cloned.position.copy(targetPos);
+      cloned.quaternion.copy(targetQuat);
+      cloned.scale.copy(targetScale);
+      cloned.userData = {
+        ...(sourceMesh.userData || {}),
+        steelFrameSegmentPointRefs: [],
+        steelFrameCopiedObject: true,
+        copyObjectSourceRefId: sourceRefId,
+        copyObjectRefId: inst?.copyObjectRefId ?? null,
+        steelFrameCopyGroupId: copyGroupId || null,
+        structureGroupId: sourceGroupId,
+        structureGroupScale: sourceGroupScale,
+      };
+      scene.add(cloned);
+      steelFrameMode?.addExistingSegmentMesh?.(cloned);
+      setCopyObjectVisual(cloned, false);
+      registerCopyObject(cloned);
+    });
+  };
+
+  if (copiedInstances.length > 0) {
+    restoreCopiedInstances(copiedInstances);
+  }
 }
 
 function normalizeDecorationType(rawType) {
@@ -10233,12 +10606,12 @@ function applyCreateModePayload(payload) {
   differenceShapeType = typeof mode.differenceShapeType === 'string' ? mode.differenceShapeType : differenceShapeType;
   differencePathType = typeof mode.differencePathType === 'string' ? mode.differencePathType : differencePathType;
   if (Array.isArray(mode.differenceLineTrackNames)) {
-    differenceLineTrackNames = mode.differenceLineTrackNames
-      .map((name) => String(name || '').trim())
-      .filter((name) => name.length > 0);
+    differenceLineTrackNames = normalizeDifferenceLineTrackNames(mode.differenceLineTrackNames);
   } else if (typeof mode.differenceLineTrackName === 'string') {
     const legacy = String(mode.differenceLineTrackName).trim();
-    differenceLineTrackNames = (legacy && legacy !== 'all') ? [legacy] : [];
+    differenceLineTrackNames = (legacy && legacy.toLowerCase() !== 'all')
+      ? normalizeDifferenceLineTrackNames([legacy])
+      : [];
   }
   if (Number.isFinite(Number(mode.differenceLineBandHeight))) {
     differenceLineBandHeight = Math.max(0.2, Number(mode.differenceLineBandHeight));
@@ -11188,6 +11561,9 @@ const Train_1 = createCommuterTrainWithModel(point0ModelName, 12, 0xaaaaaa);
 
 const Train_4 = createCommuterTrainWithModel(point3ModelName, 12, 0xaaaaaa);
 
+const reversedCurve_1 = new THREE.CatmullRomCurve3(
+  line_1.getPoints(100).reverse()
+);
 const reversedCurve_4 = new THREE.CatmullRomCurve3(
   line_4.getPoints(100).reverse()
 );
@@ -11196,6 +11572,16 @@ const reversedCurve_2 = new THREE.CatmullRomCurve3(
 );
 
 const Train_2 = createCommuterTrainWithModel(point1ModelName, 10, 0xaaaaaa);
+Train_1.userData = {
+  ...(Train_1.userData || {}),
+  randomizeModelEachLoop: true,
+  pickCommuterModelName: pickRandomNonYamanoteTrainModelName,
+};
+Train_2.userData = {
+  ...(Train_2.userData || {}),
+  randomizeModelEachLoop: true,
+  pickCommuterModelName: pickRandomNonYamanoteTrainModelName,
+};
 
 const Train_3 = createCommuterTrainWithModel(point2ModelName, 10, 0xaaaaaa);
 
@@ -11335,10 +11721,10 @@ async function startQuadrupleCrossDemo() {
   run_STOP = false
 
   // 4本の列車を同時にスタート
-  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, 0.501, 0.5)
-  runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, 0.5439, 0.5)
-  runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, 0.7695, -0.4)
-  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, 0.777 -0.4)
+  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501, 0.5)
+  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, 0.5439, 0.5)
+  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, 0.7695, -0.4)
+  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777 -0.4)
 
   while (quattro > 0){
     if (run_quattro > run_number){
@@ -11350,10 +11736,10 @@ async function startQuadrupleCrossDemo() {
 
   button.innerText = `ランダム立体交差（クアトロ交差）切替`
 
-  runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, 0.7695)
-  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
-  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
-  runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, 0.5439)
+  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, 0.7695)
+  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
+  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
+  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, 0.5439)
 
   run_quattro = 0
   crossoverRequested = false;
@@ -11370,23 +11756,23 @@ async function startQuadrupleCrossDemo() {
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 if (SHOW_TRAINS) {
-  runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
-  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
-  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
-  runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
+  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
+  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
+  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
+  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
 
   if (!RUN_COMMUTER_ON_EXISTING_TRACKS) {
-    runTrain(Train_5, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_6, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_5, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_6, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-    runTrain(Train_7, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_8, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_7, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_8, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-    runTrain(Train_9, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_a, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_9, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_a, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
 
-    runTrain(Train_b, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_c, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_b, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
+    runTrain(Train_c, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
   }
 }
 
@@ -11745,6 +12131,10 @@ function visual_object(targets=[]){
 function drawingObject(changedPoints = null){
 
   if (editObject === 'CUSTOM'){return}
+  if (viewModeActive) {
+    clean_object([railSelectionLineName, 'Rail']);
+    return;
+  }
 
   if (editObject === 'RAIL') {
     if (selectedRailPoint) {
@@ -19229,29 +19619,30 @@ function resetChoiceObjectColor(mesh) {
     });
     return painted;
   };
-  if (copyModeActive && copySelectedObjects.has(mesh)) {
-    setCopyObjectVisual(mesh, true);
+  const resolvedStructureTarget = resolveCopySelectableFromHit(mesh) || mesh;
+  if (copyModeActive && copySelectedObjects.has(resolvedStructureTarget)) {
+    setCopyObjectVisual(resolvedStructureTarget, true);
     return;
   }
-  if (styleModeActive && styleSelectedObjects.has(mesh)) {
-    setCopyObjectVisual(mesh, true);
+  if (styleModeActive && styleSelectedObjects.has(resolvedStructureTarget)) {
+    setCopyObjectVisual(resolvedStructureTarget, true);
     return;
   }
-  if (groupModeActive && groupSelectedObjects.has(mesh)) {
-    setCopyObjectVisual(mesh, true);
+  if (groupModeActive && groupSelectedObjects.has(resolvedStructureTarget)) {
+    setCopyObjectVisual(resolvedStructureTarget, true);
     return;
   }
-  if (deleteModeActive && deleteSelectedObjects.has(mesh)) {
-    setCopyObjectVisual(mesh, true);
+  if (deleteModeActive && deleteSelectedObjects.has(resolvedStructureTarget)) {
+    setCopyObjectVisual(resolvedStructureTarget, true);
     return;
   }
-  if (isMovePointReferenceSource(mesh)) {
-    setMeshColorSafe(mesh, MOVE_POINT_REF_HIGHLIGHT);
+  if (isMovePointReferenceSource(resolvedStructureTarget)) {
+    setMeshColorSafe(resolvedStructureTarget, MOVE_POINT_REF_HIGHLIGHT);
     return;
   }
-  if (mesh?.userData?.decorationType) {
-    if (mesh?.material?.color) {
-      mesh.material.color.set(mesh?.userData?.baseColor || 0x1f2228);
+  if (resolvedStructureTarget?.userData?.decorationType) {
+    if (resolvedStructureTarget?.material?.color) {
+      resolvedStructureTarget.material.color.set(resolvedStructureTarget?.userData?.baseColor || 0x1f2228);
     }
     return;
   }
@@ -19267,8 +19658,18 @@ function resetChoiceObjectColor(mesh) {
     }
     return;
   }
-  if (mesh?.userData?.steelFrameCopiedObject) {
-    setMeshColorSafe(mesh, 0xffd400);
+  if (resolvedStructureTarget?.userData?.steelFrameCopiedObject) {
+    setMeshColorSafe(resolvedStructureTarget, getSteelSegmentDefaultColor(resolvedStructureTarget));
+    return;
+  }
+  const isConstructionObject = Boolean(
+    resolvedStructureTarget?.name === 'SteelFrameSegment'
+    || resolvedStructureTarget?.userData?.decorationType
+    || String(resolvedStructureTarget?.userData?.railPlacementGroupId || '').trim()
+    || String(resolvedStructureTarget?.userData?.structureGroupId || '').trim()
+  );
+  if (isConstructionObject && !resolvedStructureTarget?.userData?.steelFramePoint) {
+    setCopyObjectVisual(resolvedStructureTarget, false);
     return;
   }
   if (editObject === 'STEEL_FRAME' && steelFrameMode?.isSelectedPoint && steelFrameMode.isSelectedPoint(mesh)) {

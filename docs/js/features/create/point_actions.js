@@ -111,6 +111,23 @@ export function createPointActions(deps) {
       });
       return out;
     };
+    const collectGroupCopiedPoints = (groupId) => {
+      const gid = String(groupId || '').trim();
+      if (!gid) { return []; }
+      const out = [];
+      const seenPoints = new Set();
+      copyStructureEntries.forEach((entry) => {
+        const entryGroupId = String(entry?.mesh?.userData?.structureGroupId || '').trim();
+        if (entryGroupId !== gid) { return; }
+        entry?.points?.forEach((pointMesh) => {
+          const key = pointKey(pointMesh);
+          if (seenPoints.has(key)) { return; }
+          seenPoints.add(key);
+          out.push(pointMesh);
+        });
+      });
+      return out;
+    };
     const partialGroups = [];
     const seenConnectedKey = new Set();
 
@@ -177,6 +194,16 @@ export function createPointActions(deps) {
     const expanded = [...preserved];
     partialGroups.forEach(({ all }) => {
       all.forEach((mesh) => {
+        if (!expanded.includes(mesh)) {
+          expanded.push(mesh);
+        }
+      });
+    });
+    partialGroups.forEach(({ structureMesh }) => {
+      const gid = String(structureMesh?.userData?.structureGroupId || '').trim();
+      if (!gid) { return; }
+      const groupPoints = collectGroupCopiedPoints(gid);
+      groupPoints.forEach((mesh) => {
         if (!expanded.includes(mesh)) {
           expanded.push(mesh);
         }
