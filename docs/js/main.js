@@ -67,6 +67,7 @@ log_hidden.addEventListener("touchstart", () => {
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
 import { Brush, Evaluator, HOLLOW_SUBTRACTION, ADDITION } from 'three-bvh-csg';
 import { rebuildMirrorFromStatesRuntime, rebuildMirrorStateOnLoadRuntime } from './mirror_load.js';
 import { UI_STATE_STORAGE_KEY, createCreateModeStateCodec } from './create_mode_state.js';
@@ -595,6 +596,14 @@ const threeUi = document.getElementById('three-ui');
   let styleModeActive = false;
   let groupModeActive = false;
   let deleteModeActive = false;
+  // 参照される関数定義より先に初期化してTDZを防ぐ
+  let OperationMode = 0;
+  let polePlacementMode = false;
+  let editObject = 'Standby';
+  let objectEditMode = 'Standby';
+  const EDIT_RAIL = 'EDIT_RAIL';
+  const ROTATE_MODE = 'ROTATE';
+  const SEARCH_MODE = 'SEARCH';
   const copySelectedObjects = new Set();
   const styleSelectedObjects = new Set();
   const groupSelectedObjects = new Set();
@@ -606,6 +615,7 @@ const threeUi = document.getElementById('three-ui');
   let structureGroupSeq = 1;
   let railPlacementGroupSeq = 1;
   let lastRailConstructionCreatedObjects = [];
+  const decorationObjects = [];
   let structureLinkRuntimeReady = false;
   let structureLinkRebuildTimer = null;
   let structureLinkRebuildRetryCount = 0;
@@ -724,6 +734,7 @@ const threeUi = document.getElementById('three-ui');
   function setConstructionCategory(profile) {
     const next = (profile === 'round'
       || profile === 'rect_bar'
+      || profile === 'panel_wall'
       || profile === 'corrugated_bar'
       || profile === 'h_beam'
       || profile === 't_beam'
@@ -747,11 +758,13 @@ const threeUi = document.getElementById('three-ui');
           ? 'L形鋼'
           : (next === 'corrugated_bar'
             ? '波板柱'
+          : (next === 'panel_wall'
+            ? '仮囲い壁'
           : (next === 'rect_bar'
             ? '角柱'
             : (next === 'tubular'
               ? 'ライト管'
-              : (next === 'tube' ? '補間チューブ' : (next === 'round' ? '丸鋼' : '')))))));
+              : (next === 'tube' ? '補間チューブ' : (next === 'round' ? '丸鋼' : ''))))))));
     if (constructionCategoryStatus) {
       constructionCategoryStatus.textContent = next
         ? `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`
@@ -6794,6 +6807,93 @@ let LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
 });
 let geo = LoadModels[0]
 
+const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
+  yamanote: './train_models/yamanote.glb',
+  saikyou: './train_models/saikyou.glb',
+  syounan: './train_models/syounan.glb',
+  rinkai: './train_models/rinkai.glb',
+  soutetu: './train_models/soutetu.glb',
+};
+const extraCommuterTrainModels = {};
+
+async function loadExtraCommuterTrainModels() {
+  const loader = new GLTFLoader();
+  const entries = Object.entries(EXTRA_COMMUTER_TRAIN_MODEL_PATHS);
+  await Promise.all(entries.map(([name, url]) => new Promise((resolve) => {
+    loader.load(
+      url,
+      (gltf) => {
+        const root = gltf.scene || gltf.scenes?.[0] || null;
+        if (!root) {
+          console.warn('[train_models] load failed: scene missing', { name, url });
+          resolve();
+          return;
+        }
+        root.position.set(0.5, 0, 0);
+        root.scale.setScalar(0.5);
+        root.traverse((node) => {
+          if (!node?.isMesh) { return; }
+          node.castShadow = true;
+          node.receiveShadow = true;
+          if (Array.isArray(node.material)) {
+            node.material.forEach((m) => { if (m) { m.needsUpdate = true; } });
+          } else if (node.material) {
+            node.material.needsUpdate = true;
+          }
+        });
+        extraCommuterTrainModels[name] = root;
+        resolve();
+      },
+      undefined,
+      (err) => {
+        console.warn('[train_models] load failed', { url, err });
+        resolve();
+      }
+    );
+  })));
+}
+
+function cloneCommuterTrainModelByName(name) {
+  const src = extraCommuterTrainModels[String(name || '').trim()];
+  if (!src || typeof src.clone !== 'function') { return null; }
+  return src.clone(true);
+}
+
+function pickRandomNonYamanoteTrainModelName() {
+  const candidates = Object.keys(extraCommuterTrainModels)
+    .filter((name) => name && name !== 'yamanote');
+  if (candidates.length < 1) { return null; }
+  const idx = Math.floor(Math.random() * candidates.length);
+  return candidates[idx];
+}
+
+function pickRandomTrainModelName() {
+  const candidates = Object.keys(extraCommuterTrainModels).filter((name) => Boolean(name));
+  if (candidates.length < 1) { return null; }
+  const idx = Math.floor(Math.random() * candidates.length);
+  return candidates[idx];
+}
+
+function createCommuterTrainWithModel(modelName, cars = 10, color = 0xaaaaaa) {
+  const prevGeo = geo;
+  const customGeo = cloneCommuterTrainModelByName(modelName);
+  if (customGeo) {
+    geo = customGeo;
+  }
+  const train = TrainSettings(
+    train_width,
+    color,
+    cars,
+    1,
+  );
+  geo = prevGeo;
+  train.userData = {
+    ...(train.userData || {}),
+    commuterModelName: customGeo ? modelName : 'default',
+  };
+  return train;
+}
+
 console.log('cars : ',LoadModels)
 console.log('geo : ',geo)
 
@@ -11047,6 +11147,18 @@ if (!USE_SAVED_DATA_ONLY) {
 const max_speed = 0.1 // 制限速度(最高)
 const add_speed = 0.00008 // 追加速度(加速/減速)
 
+await loadExtraCommuterTrainModels();
+const point0ModelName = pickRandomNonYamanoteTrainModelName();
+const point1ModelName = pickRandomNonYamanoteTrainModelName();
+const point2ModelName = 'yamanote';
+const point3ModelName = 'yamanote';
+console.log('[train_models] route assignment', {
+  point_0: point0ModelName || 'default',
+  point_1: point1ModelName || 'default',
+  point_2: point2ModelName || 'default',
+  point_3: point3ModelName || 'default',
+});
+
 const exhibition_tyuou = TrainSettings(
   train_width,
   0xa15110,
@@ -11066,37 +11178,20 @@ exhibition_tyuou.visible = false;   // 再表示する
 exhibition_soubu.position.set(13,0.8,15)
 exhibition_soubu.visible = false;   // 再表示する
 
-const Train_1 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  12,
-  1,
-);
+const Train_1 = createCommuterTrainWithModel(point0ModelName, 12, 0xaaaaaa);
 
-const Train_4 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  12,
-  1,
-);
+const Train_4 = createCommuterTrainWithModel(point3ModelName, 12, 0xaaaaaa);
 
 const reversedCurve_4 = new THREE.CatmullRomCurve3(
   line_4.getPoints(100).reverse()
 );
-
-const Train_2 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
+const reversedCurve_2 = new THREE.CatmullRomCurve3(
+  line_2.getPoints(100).reverse()
 );
 
-const Train_3 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
+const Train_2 = createCommuterTrainWithModel(point1ModelName, 10, 0xaaaaaa);
+
+const Train_3 = createCommuterTrainWithModel(point2ModelName, 10, 0xaaaaaa);
 
 const Train_5 = TrainSettings(
   train_width,
@@ -11234,10 +11329,10 @@ async function startQuadrupleCrossDemo() {
   run_STOP = false
 
   // 4本の列車を同時にスタート
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501, 0.5)
+  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, 0.501, 0.5)
   runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, 0.5439, 0.5)
   runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, 0.7695, -0.4)
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777 -0.4)
+  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, 0.777 -0.4)
 
   while (quattro > 0){
     if (run_quattro > run_number){
@@ -11250,8 +11345,8 @@ async function startQuadrupleCrossDemo() {
   button.innerText = `ランダム立体交差（クアトロ交差）切替`
 
   runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, 0.7695)
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
+  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
+  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
   runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, 0.5439)
 
   run_quattro = 0
@@ -11270,8 +11365,8 @@ async function startQuadrupleCrossDemo() {
 
 if (SHOW_TRAINS) {
   runTrain(Train_1, line_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
+  runTrain(Train_2, reversedCurve_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
+  runTrain(Train_3, line_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
   runTrain(Train_4, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
 
   if (!RUN_COMMUTER_ON_EXISTING_TRACKS) {
@@ -12195,7 +12290,6 @@ let addPointGridActive = false
 let guideAddModeActive = false
 const guideAddGrids = []
 const guideAddGridPicks = []
-const decorationObjects = []
 let changeAngleGridTarget = null
 let addPointGridY = 0
 let addPointGridInitialized = false
@@ -21833,15 +21927,6 @@ async function handleMouseDown() {
 }
 
 // モード状態（例）
-let OperationMode = 0;
-
-let polePlacementMode = false;
-let editObject = 'Standby'
-// let trackEditSubMode = 'CREATE_NEW'; // 'CREATE_NEW' or 'MOVE_EXISTING'
-let objectEditMode = 'Standby'; // 'CREATE_NEW' or 'MOVE_EXISTING'
-const EDIT_RAIL = 'EDIT_RAIL';
-const ROTATE_MODE = 'ROTATE';
-const SEARCH_MODE = 'SEARCH';
 let pointRotateModeActive = false;
 let angleSearchModeActive = false;
 

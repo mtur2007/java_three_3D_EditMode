@@ -94,6 +94,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamThickness: 0.07,
       };
     }
+    if (p === 'panel_wall') {
+      return {
+        // panel_wall: X=分割目標長さ, Y=推奨高さ(互換用), Z=板厚
+        beamWidthHorizontal: 1.2,
+        beamHeightVertical: 2.2,
+        beamThickness: 0.004,
+      };
+    }
     return null;
   }
 
@@ -133,6 +141,16 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamWidthHorizontal: width,
         beamHeightVertical: THREE.MathUtils.clamp(angleRaw, -180, 180),
         beamThickness: THREE.MathUtils.clamp(densityRaw, 0.5, 24),
+      };
+    }
+    if (p === 'panel_wall') {
+      const targetLen = Number.isFinite(merged.beamWidthHorizontal) ? Math.max(0.2, merged.beamWidthHorizontal) : base.beamWidthHorizontal;
+      const wallHeight = Number.isFinite(merged.beamHeightVertical) ? Math.max(0.5, merged.beamHeightVertical) : base.beamHeightVertical;
+      const thickness = Number.isFinite(merged.beamThickness) ? THREE.MathUtils.clamp(merged.beamThickness, 0.001, 0.05) : base.beamThickness;
+      return {
+        beamWidthHorizontal: targetLen,
+        beamHeightVertical: wallHeight,
+        beamThickness: thickness,
       };
     }
     const height = Number.isFinite(merged.beamHeightVertical) ? Math.max(0.02, merged.beamHeightVertical) : base.beamHeightVertical;
@@ -184,7 +202,9 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         if (node.geometry && typeof node.geometry.dispose === 'function') {
           node.geometry.dispose();
         }
-        if (node.material && typeof node.material.dispose === 'function') {
+        if (Array.isArray(node.material)) {
+          node.material.forEach((mat) => mat?.dispose?.());
+        } else if (node.material && typeof node.material.dispose === 'function') {
           node.material.dispose();
         }
       });
@@ -553,6 +573,288 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     return group;
   }
 
+  function estimatePlaneNormalFromPoints(points) {
+    const refs = Array.isArray(points) ? points.filter((p) => p?.isVector3) : [];
+    if (refs.length < 3) { return new THREE.Vector3(0, 1, 0); }
+    const centroid = refs.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / refs.length);
+    let p0 = refs[0];
+    let maxDist = -1;
+    refs.forEach((p) => {
+      const d = p.distanceToSquared(centroid);
+      if (d > maxDist) {
+        maxDist = d;
+        p0 = p;
+      }
+    });
+    let p1 = refs[0];
+    maxDist = -1;
+    refs.forEach((p) => {
+      const d = p.distanceToSquared(p0);
+      if (d > maxDist) {
+        maxDist = d;
+        p1 = p;
+      }
+    });
+    let p2 = null;
+    let maxArea = -1;
+    refs.forEach((p) => {
+      if (p === p0 || p === p1) { return; }
+      const area = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p, p0)).lengthSq();
+      if (area > maxArea) {
+        maxArea = area;
+        p2 = p;
+      }
+    });
+    if (!p2 || maxArea <= 1e-12) { return new THREE.Vector3(0, 1, 0); }
+    const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
+    if (n.lengthSq() <= 1e-12) { return new THREE.Vector3(0, 1, 0); }
+    return n.normalize();
+  }
+
+  function resolvePanelWallCorners(pointRefs) {
+    const points = (Array.isArray(pointRefs) ? pointRefs : [])
+      .map((mesh) => mesh?.position?.clone?.() || null)
+      .filter(Boolean);
+    if (points.length < 4) { return null; }
+
+    const normal = estimatePlaneNormalFromPoints(points);
+    const center = points.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / points.length);
+
+    // 分割方向が世界軸依存で暴れないよう、最遠点ペアを基準軸にする。
+    let maxDist = -1;
+    let pairA = points[0];
+    let pairB = points[1];
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        const d = points[i].distanceToSquared(points[j]);
+        if (d > maxDist) {
+          maxDist = d;
+          pairA = points[i];
+          pairB = points[j];
+        }
+      }
+    }
+
+    let axisH = pairB.clone().sub(pairA);
+    axisH.sub(normal.clone().multiplyScalar(axisH.dot(normal)));
+    if (axisH.lengthSq() <= 1e-8) {
+      axisH = new THREE.Vector3(1, 0, 0).sub(normal.clone().multiplyScalar(normal.x));
+    }
+    if (axisH.lengthSq() <= 1e-8) {
+      axisH = new THREE.Vector3(0, 0, 1).sub(normal.clone().multiplyScalar(normal.z));
+    }
+    axisH.normalize();
+    const axisV = new THREE.Vector3().crossVectors(normal, axisH).normalize();
+
+    const projected = points.map((p) => {
+      const rel = p.clone().sub(center);
+      return {
+        p,
+        h: rel.dot(axisH),
+        v: rel.dot(axisV),
+      };
+    });
+    const hVals = projected.map((s) => s.h);
+    const vVals = projected.map((s) => s.v);
+    const minH = Math.min(...hVals);
+    const maxH = Math.max(...hVals);
+    const minV = Math.min(...vVals);
+    const maxV = Math.max(...vVals);
+    const targets = [
+      { h: minH, v: minV }, // bottom-left
+      { h: maxH, v: minV }, // bottom-right
+      { h: maxH, v: maxV }, // top-right
+      { h: minH, v: maxV }, // top-left
+    ];
+    const used = new Set();
+    const pickNearest = (target) => {
+      let best = null;
+      let bestDist = Infinity;
+      projected.forEach((row, idx) => {
+        if (used.has(idx)) { return; }
+        const dh = row.h - target.h;
+        const dv = row.v - target.v;
+        const d = (dh * dh) + (dv * dv);
+        if (d < bestDist) {
+          bestDist = d;
+          best = { row, idx };
+        }
+      });
+      if (!best) { return null; }
+      used.add(best.idx);
+      return best.row.p.clone();
+    };
+
+    const bl = pickNearest(targets[0]);
+    const br = pickNearest(targets[1]);
+    const tr = pickNearest(targets[2]);
+    const tl = pickNearest(targets[3]);
+    if (!bl || !br || !tr || !tl) { return null; }
+
+    const ordered = [bl, br, tr, tl];
+    const orderedCenter = ordered
+      .reduce((acc, p) => acc.add(p), new THREE.Vector3())
+      .multiplyScalar(1 / ordered.length);
+    const hv = ordered.map((p) => {
+      const rel = p.clone().sub(orderedCenter);
+      return { p, h: rel.dot(axisH), v: rel.dot(axisV), a: Math.atan2(rel.dot(axisV), rel.dot(axisH)) };
+    });
+    hv.sort((a, b) => a.a - b.a);
+    let startIdx = 0;
+    for (let i = 1; i < hv.length; i += 1) {
+      const cur = hv[i];
+      const best = hv[startIdx];
+      if (cur.v < best.v - 1e-8 || (Math.abs(cur.v - best.v) <= 1e-8 && cur.h < best.h)) {
+        startIdx = i;
+      }
+    }
+    const rotated = hv.slice(startIdx).concat(hv.slice(0, startIdx));
+    // 回転方向を固定して bl->br->tr->tl を保証。
+    if (rotated[1].h < rotated[3].h) {
+      const start = rotated[0];
+      const rev = [start, rotated[3], rotated[2], rotated[1]];
+      rotated.splice(0, rotated.length, ...rev);
+    }
+    let stableBl = rotated[0].p.clone();
+    let stableBr = rotated[1].p.clone();
+    let stableTr = rotated[2].p.clone();
+    let stableTl = rotated[3].p.clone();
+
+    // 分割線を縦向きに出すため、bl->br を「水平寄り(=Y変化が小さい)辺」に寄せる。
+    const widthDY = Math.abs(stableBr.y - stableBl.y);
+    const heightDY = Math.abs(stableTl.y - stableBl.y);
+    if (widthDY > heightDY) {
+      const nextBr = stableTl;
+      const nextTr = stableTr;
+      const nextTl = stableBr;
+      stableBr = nextBr;
+      stableTr = nextTr;
+      stableTl = nextTl;
+    }
+
+    const spanBottom = stableBl.distanceTo(stableBr);
+    const spanTop = stableTl.distanceTo(stableTr);
+    if (spanBottom <= 1e-5 || spanTop <= 1e-5) { return null; }
+    return { bl: stableBl, br: stableBr, tr: stableTr, tl: stableTl, normal };
+  }
+
+  function pushQuad(positions, a, b, c, d, flip = false) {
+    if (!flip) {
+      positions.push(
+        a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
+        a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z,
+      );
+      return;
+    }
+    positions.push(
+      a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z,
+      a.x, a.y, a.z, d.x, d.y, d.z, c.x, c.y, c.z,
+    );
+  }
+
+  function createPanelWallMeshFromPoints(pointRefs, style = null) {
+    const refs = Array.isArray(pointRefs) ? pointRefs.filter((item) => item?.userData?.steelFramePoint) : [];
+    if (refs.length < 4) { return null; }
+    const corners = resolvePanelWallCorners(refs);
+    if (!corners) { return null; }
+    const dims = normalizeBeamStyle('panel_wall', style);
+    const ordered = [corners.bl.clone(), corners.br.clone(), corners.tr.clone(), corners.tl.clone()];
+    const color = 0xf4f6f8;
+    const thickness = Math.max(0.005, Number(dims?.beamThickness) || Number(dims?.beamWidthHorizontal) || 0.06);
+    const panelTargetLength = Math.max(0.1, Number(dims?.beamWidthHorizontal) || Number(dims?.beamHeightVertical) || 2.2);
+
+    const normal = ordered[1].clone().sub(ordered[0]).cross(ordered[2].clone().sub(ordered[0]));
+    if (!Number.isFinite(normal.x) || normal.lengthSq() < 1e-10) { return null; }
+    normal.normalize();
+
+    const upProjectedRaw = new THREE.Vector3(0, 1, 0).projectOnPlane(normal);
+    let verticalAxis = upProjectedRaw.lengthSq() > 1e-8 ? upProjectedRaw.normalize() : upProjectedRaw;
+    if (!Number.isFinite(verticalAxis.x) || verticalAxis.lengthSq() < 1e-8) {
+      const edgeA = ordered[1].clone().sub(ordered[0]);
+      const edgeB = ordered[2].clone().sub(ordered[1]);
+      const fallbackEdge = Math.abs(edgeA.y) >= Math.abs(edgeB.y) ? edgeA : edgeB;
+      const projected = fallbackEdge.projectOnPlane(normal);
+      verticalAxis = projected.lengthSq() > 1e-8 ? projected.normalize() : projected;
+    }
+    if (!Number.isFinite(verticalAxis.x) || verticalAxis.lengthSq() < 1e-8) {
+      verticalAxis = ordered[1].clone().sub(ordered[0]).normalize();
+    }
+    if (!Number.isFinite(verticalAxis.x) || verticalAxis.lengthSq() < 1e-8) { return null; }
+    const horizontalAxis = new THREE.Vector3().crossVectors(normal, verticalAxis);
+    if (!Number.isFinite(horizontalAxis.x) || horizontalAxis.lengthSq() < 1e-8) { return null; }
+    horizontalAxis.normalize();
+
+    const scored = ordered.map((p) => ({
+      p,
+      v: p.dot(verticalAxis),
+      h: p.dot(horizontalAxis),
+    }));
+    scored.sort((a, b) => a.v - b.v);
+    const bottomPair = [scored[0], scored[1]].sort((a, b) => a.h - b.h);
+    const topPair = [scored[2], scored[3]].sort((a, b) => a.h - b.h);
+    const bottomLeft = bottomPair[0].p.clone();
+    const bottomRight = bottomPair[1].p.clone();
+    const topLeft = topPair[0].p.clone();
+    const topRight = topPair[1].p.clone();
+
+    const wBottom = bottomRight.clone().sub(bottomLeft).length();
+    const wTop = topRight.clone().sub(topLeft).length();
+    const wallWidth = Math.max(0.001, (wBottom + wTop) * 0.5);
+    const panelCount = Math.max(1, Math.round(wallWidth / panelTargetLength));
+    const tStep = 1 / panelCount;
+    const half = normal.clone().multiplyScalar(thickness * 0.5);
+
+    const positions = [];
+    const indices = [];
+    const appendPanelPrism = (bl, br, tr, tl) => {
+      const front = [bl.clone().add(half), br.clone().add(half), tr.clone().add(half), tl.clone().add(half)];
+      const back = [bl.clone().sub(half), br.clone().sub(half), tr.clone().sub(half), tl.clone().sub(half)];
+      const base = positions.length / 3;
+      [...front, ...back].forEach((p) => positions.push(p.x, p.y, p.z));
+      indices.push(
+        base + 0, base + 1, base + 2, base + 0, base + 2, base + 3,
+        base + 7, base + 6, base + 5, base + 7, base + 5, base + 4,
+        base + 0, base + 4, base + 5, base + 0, base + 5, base + 1,
+        base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
+        base + 2, base + 6, base + 7, base + 2, base + 7, base + 3,
+        base + 3, base + 7, base + 4, base + 3, base + 4, base + 0,
+      );
+    };
+
+    for (let i = 0; i < panelCount; i += 1) {
+      const t0 = tStep * i;
+      const t1 = tStep * (i + 1);
+      const bl = bottomLeft.clone().lerp(bottomRight, t0);
+      const br = bottomLeft.clone().lerp(bottomRight, t1);
+      const tr = topLeft.clone().lerp(topRight, t1);
+      const tl = topLeft.clone().lerp(topRight, t0);
+      appendPanelPrism(bl, br, tr, tl);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.clearGroups();
+    for (let i = 0; i < panelCount; i += 1) {
+      geometry.addGroup(i * 36, 36, i % 2);
+    }
+    geometry.computeVertexNormals();
+
+    const materialA = createCreatStandardMaterial(color);
+    materialA.metalness = 0.22;
+    materialA.roughness = 0.2;
+    materialA.envMapIntensity = 1.35;
+    const materialB = materialA.clone();
+    const mesh = new THREE.Mesh(geometry, [materialA, materialB]);
+    mesh.name = segmentName;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      panelWallPanelCount: panelCount,
+    };
+    mesh.visible = active;
+    return mesh;
+  }
+
   function createSegmentMesh(start, end, { profile = segmentProfile, style = null } = {}) {
     if (profile === 'tube') {
       // 2点指定時は直線バーとして扱う（多点時の補間は createSegmentsFromPoints 側で生成）。
@@ -575,6 +877,14 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     }
     if (profile === 'l_beam') {
       return createLBeamSegmentMesh(start, end, style);
+    }
+    if (profile === 'panel_wall') {
+      // 2点指定のみの場合は最低限の板として扱う（本来は4点面生成）。
+      return createRectBarSegmentMesh(start, end, {
+        beamWidthHorizontal: 0.004,
+        beamHeightVertical: (Number(style?.beamHeightVertical) || 2.2),
+        beamThickness: 0,
+      });
     }
     return createRoundBarSegmentMesh(start, end, style);
   }
@@ -611,6 +921,23 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       if (pointRefs.length < 2) { return created; }
       const segmentStyle = normalizeBeamStyle(segmentProfile, null);
       const mesh = createInterpolatedTubeSegmentMesh(pointRefs, segmentStyle);
+      if (!mesh) { return created; }
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        steelFrameSegmentPointRefs: pointRefs,
+        steelFrameSegmentProfile: segmentProfile,
+        steelFrameSegmentStyle: segmentStyle ? { ...segmentStyle } : null,
+      };
+      scene.add(mesh);
+      segmentMeshes.push(mesh);
+      created.push(mesh);
+      return created;
+    }
+    if (segmentProfile === 'panel_wall') {
+      const pointRefs = points.filter((item) => item?.userData?.steelFramePoint);
+      if (pointRefs.length < 4) { return created; }
+      const segmentStyle = normalizeBeamStyle(segmentProfile, null);
+      const mesh = createPanelWallMeshFromPoints(pointRefs, segmentStyle);
       if (!mesh) { return created; }
       mesh.userData = {
         ...(mesh.userData || {}),
@@ -667,6 +994,15 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
           return;
         }
         rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else if (profile === 'panel_wall') {
+        if (nextRefs.length < 4) {
+          if (srcMesh?.parent) {
+            srcMesh.parent.remove(srcMesh);
+          }
+          disposeObject3D(srcMesh);
+          return;
+        }
+        rebuiltMesh = createPanelWallMeshFromPoints(nextRefs, style);
       } else {
         const startMesh = refs[0];
         const endMesh = refs[1];
@@ -730,6 +1066,10 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         const hasMoved = nextRefs.some((pointMesh) => movedSet.has(pointMesh));
         if (!hasMoved || nextRefs.length < 2) { continue; }
         rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else if (profile === 'panel_wall') {
+        const hasMoved = nextRefs.some((pointMesh) => movedSet.has(pointMesh));
+        if (!hasMoved || nextRefs.length < 4) { continue; }
+        rebuiltMesh = createPanelWallMeshFromPoints(nextRefs, style);
       } else {
         const startMesh = refs[0];
         const endMesh = refs[1];
@@ -981,6 +1321,9 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       if (profile === 'tube') {
         if (nextRefs.length < 2) { return; }
         rebuiltMesh = createInterpolatedTubeSegmentMesh(nextRefs, style);
+      } else if (profile === 'panel_wall') {
+        if (nextRefs.length < 4) { return; }
+        rebuiltMesh = createPanelWallMeshFromPoints(nextRefs, style);
       } else {
         const startMesh = refs[0];
         const endMesh = refs[1];
@@ -1163,6 +1506,8 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       segmentProfile = 'tubular';
     } else if (profile === 'tube') {
       segmentProfile = 'tube';
+    } else if (profile === 'panel_wall') {
+      segmentProfile = 'panel_wall';
     } else {
       segmentProfile = 'round';
     }
