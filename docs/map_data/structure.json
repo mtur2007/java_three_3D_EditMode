@@ -379,9 +379,9 @@
         }
       ],
       "params": {
-        "groupId": "structure_group_1",
-        "groupSourceKey": "sib::structure_group_1",
-        "groupSourceLabel": "sib/structure_group_1",
+        "groupId": "st_old_roof",
+        "groupSourceKey": "st_old_roof::st_old_roof",
+        "groupSourceLabel": "st_old_roof/st_old_roof",
         "range": {
           "pinCount": 4,
           "trackNames": [

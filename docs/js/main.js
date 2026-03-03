@@ -14,9 +14,67 @@ const log_hidden = document.getElementById("log");
 
 let text = ''
 
+let topNoticeEl = null;
+let topNoticeHideTimer = null;
+
+function ensureTopNoticeElement() {
+  if (topNoticeEl) { return topNoticeEl; }
+  const el = document.createElement('div');
+  el.id = 'top-notice-banner';
+  el.setAttribute('aria-live', 'polite');
+  el.style.position = 'fixed';
+  el.style.left = '50%';
+  el.style.top = '14px';
+  el.style.transform = 'translate(-50%, -24px)';
+  el.style.opacity = '0';
+  el.style.pointerEvents = 'none';
+  el.style.zIndex = '2147483647';
+  el.style.minWidth = '220px';
+  el.style.maxWidth = 'min(92vw, 760px)';
+  el.style.padding = '10px 14px';
+  el.style.borderRadius = '10px';
+  el.style.background = 'rgba(17, 28, 45, 0.92)';
+  el.style.border = '1px solid rgba(157, 195, 255, 0.45)';
+  el.style.color = '#eaf3ff';
+  el.style.fontSize = '12px';
+  el.style.lineHeight = '1.45';
+  el.style.whiteSpace = 'pre-wrap';
+  el.style.boxShadow = '0 12px 26px rgba(0, 0, 0, 0.35)';
+  el.style.backdropFilter = 'blur(6px)';
+  el.style.transition = 'opacity 220ms ease, transform 220ms ease';
+  const uiLayer = document.getElementById('three-ui');
+  if (uiLayer) {
+    uiLayer.appendChild(el);
+  } else {
+    document.body.appendChild(el);
+  }
+  topNoticeEl = el;
+  return el;
+}
+
+function showTopNotice(message, durationMs = 2600) {
+  const el = ensureTopNoticeElement();
+  if (!el) { return; }
+  el.textContent = String(message ?? '');
+  if (topNoticeHideTimer) {
+    clearTimeout(topNoticeHideTimer);
+    topNoticeHideTimer = null;
+  }
+  requestAnimationFrame(() => {
+    el.style.opacity = '1';
+    el.style.transform = 'translate(-50%, 0)';
+  });
+  topNoticeHideTimer = setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translate(-50%, -24px)';
+    topNoticeHideTimer = null;
+  }, Math.max(800, Number(durationMs) || 2600));
+}
+
 function alert(txt){
   text += txt+'\n'
   logwindow.innerText = txt//keepLastNLines(text)
+  showTopNotice(txt);
 }
 
 function keepLastNLines(text, maxLines = 20, options = {}) {
@@ -941,6 +999,25 @@ const threeUi = document.getElementById('three-ui');
       }
     });
     return Array.from(ids).sort();
+  }
+
+  function allocateDerivedStructureGroupIdFromSource(sourceGroupId, existingIdsInput = null) {
+    const sourceIdRaw = String(sourceGroupId || '').trim();
+    const sourceId = sourceIdRaw || 'structure_group';
+    const existingIds = existingIdsInput instanceof Set
+      ? existingIdsInput
+      : new Set(collectStructureGroupIds());
+    if (!existingIds.has(sourceId)) {
+      existingIds.add(sourceId);
+    }
+    let suffix = 2;
+    let candidate = `${sourceId}_${suffix}`;
+    while (existingIds.has(candidate)) {
+      suffix += 1;
+      candidate = `${sourceId}_${suffix}`;
+    }
+    existingIds.add(candidate);
+    return candidate;
   }
 
   function setGroupModeIdOptions() {
@@ -4687,6 +4764,401 @@ const threeUi = document.getElementById('three-ui');
     return null;
   }
 
+  function computeStructureGroupPoseFromMembers(members) {
+    const list = Array.isArray(members) ? members.filter((mesh) => mesh?.parent) : [];
+    if (list.length < 1) { return null; }
+    const anchors = list
+      .map((mesh) => getStructureAnchorInfo(mesh))
+      .filter(Boolean);
+    if (anchors.length < 1) { return null; }
+    const center = anchors
+      .reduce((acc, info) => acc.add(info.anchor), new THREE.Vector3())
+      .multiplyScalar(1 / anchors.length);
+    const EPS = 1e-10;
+    const vectors = anchors
+      .map((info) => info.anchor.clone().sub(center))
+      .filter((v) => v.lengthSq() > EPS);
+    if (vectors.length < 1) {
+      return { center, quaternion: new THREE.Quaternion() };
+    }
+    const vectorsSorted = vectors
+      .slice()
+      .sort((a, b) => {
+        const dl = b.lengthSq() - a.lengthSq();
+        if (Math.abs(dl) > 1e-9) { return dl; }
+        if (Math.abs(b.x - a.x) > 1e-9) { return b.x - a.x; }
+        if (Math.abs(b.y - a.y) > 1e-9) { return b.y - a.y; }
+        return b.z - a.z;
+      });
+    const axisX = vectorsSorted[0].clone().normalize();
+    let axisY = null;
+    let axisZ = null;
+    for (let i = 1; i < vectorsSorted.length; i += 1) {
+      const candidate = vectorsSorted[i].clone().normalize();
+      const z = new THREE.Vector3().crossVectors(axisX, candidate);
+      if (z.lengthSq() <= EPS) { continue; }
+      axisZ = z.normalize();
+      axisY = new THREE.Vector3().crossVectors(axisZ, axisX).normalize();
+      break;
+    }
+    if (!axisY || !axisZ) {
+      const up = Math.abs(axisX.y) < 0.95
+        ? new THREE.Vector3(0, 1, 0)
+        : new THREE.Vector3(1, 0, 0);
+      axisZ = new THREE.Vector3().crossVectors(axisX, up).normalize();
+      axisY = new THREE.Vector3().crossVectors(axisZ, axisX).normalize();
+    }
+    const basis = new THREE.Matrix4().makeBasis(axisX, axisY, axisZ);
+    const quaternion = new THREE.Quaternion().setFromRotationMatrix(basis).normalize();
+    return { center, quaternion };
+  }
+
+  function buildGroupQuatFromRotationAngles(rawAngles) {
+    const angles = (rawAngles && typeof rawAngles === 'object') ? rawAngles : {};
+    const xDeg = Number(angles.x) || 0;
+    const yDeg = Number(angles.y) || 0;
+    const y2Deg = Number.isFinite(Number(angles.y2))
+      ? Number(angles.y2)
+      : (Number.isFinite(Number(angles.y_2)) ? Number(angles.y_2) : null);
+    const zDeg = Number(angles.z) || 0;
+    const finalZDeg = Number.isFinite(y2Deg) ? y2Deg : zDeg;
+    const degToRad = Math.PI / 180;
+    const q = new THREE.Quaternion();
+    if (Math.abs(xDeg) > 1e-6) {
+      const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
+      const qx = new THREE.Quaternion().setFromAxisAngle(axisX, xDeg * degToRad);
+      q.copy(qx.multiply(q)).normalize();
+    }
+    if (Math.abs(yDeg) > 1e-6) {
+      const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yDeg * degToRad);
+      q.copy(qy.multiply(q)).normalize();
+    }
+    if (Math.abs(finalZDeg) > 1e-6) {
+      const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+      const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, finalZDeg * degToRad);
+      q.copy(qz.multiply(q)).normalize();
+    }
+    return q.normalize();
+  }
+
+  function getGroupRotationAnglesFromQuat(quat) {
+    const q = quat?.isQuaternion ? quat : new THREE.Quaternion();
+    const euler = getRotationPanelAnglesFromQuaternion(q);
+    const x = Number(euler?.x) || 0;
+    const y = Number(euler?.y) || 0;
+    const z = Number(euler?.z) || 0;
+    return {
+      x,
+      y,
+      y2: z,
+      y_2: z,
+      z,
+    };
+  }
+
+  function parseSavedGroupRotationAngles(entry) {
+    if (!entry || typeof entry !== 'object') { return null; }
+    const compactRotation = (entry.rotation && typeof entry.rotation === 'object' && !Array.isArray(entry.rotation))
+      ? entry.rotation
+      : null;
+    const nested = (entry.rotationAngles && typeof entry.rotationAngles === 'object')
+      ? entry.rotationAngles
+      : null;
+    const raw = {
+      x: compactRotation?.x ?? nested?.x ?? entry.x,
+      y: compactRotation?.y ?? nested?.y ?? entry.y,
+      y2: compactRotation?.y2 ?? compactRotation?.y_2 ?? nested?.y2 ?? nested?.y_2 ?? entry.y2 ?? entry.y_2,
+      z: compactRotation?.z ?? nested?.z ?? entry.z,
+    };
+    const hasAny = ['x', 'y', 'y2', 'z'].some((k) => Number.isFinite(Number(raw[k])));
+    if (!hasAny) { return null; }
+    return {
+      x: Number(raw.x) || 0,
+      y: Number(raw.y) || 0,
+      y2: Number.isFinite(Number(raw.y2)) ? Number(raw.y2) : 0,
+      y_2: Number.isFinite(Number(raw.y2)) ? Number(raw.y2) : 0,
+      z: Number(raw.z) || 0,
+    };
+  }
+
+  function collectCopiedStructureGroupsForSave() {
+    const targets = getConstructionCopyTargets().filter((mesh) => mesh?.parent);
+    const grouped = new Map();
+    targets.forEach((mesh) => {
+      const gid = String(mesh?.userData?.structureGroupId || '').trim();
+      const sourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+      if (!gid || !sourceId) { return; }
+      if (!grouped.has(gid)) {
+        grouped.set(gid, {
+          sourceGroupId: sourceId,
+          members: [],
+        });
+      }
+      grouped.get(gid).members.push(mesh);
+    });
+    const out = [];
+    grouped.forEach((entry, gid) => {
+      const members = Array.isArray(entry?.members) ? entry.members.filter((mesh) => mesh?.parent) : [];
+      if (members.length < 1) { return; }
+      const pose = computeStructureGroupPoseFromMembers(members);
+      if (!pose) { return; }
+      const center = pose.center;
+      const sourceMembers = getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === String(entry?.sourceGroupId || '').trim());
+      const sourcePose = computeStructureGroupPoseFromMembers(sourceMembers);
+      const sourceQuat = sourcePose?.quaternion?.isQuaternion ? sourcePose.quaternion : new THREE.Quaternion();
+      // 複製時を0基準にした相対回転として保存する。
+      const relativeQuat = pose.quaternion.clone().multiply(sourceQuat.clone().invert()).normalize();
+      const angles = getGroupRotationAnglesFromQuat(relativeQuat);
+      out.push({
+        groupId: gid,
+        sourceGroupId: entry.sourceGroupId,
+        center: [center.x, center.y, center.z],
+        rotation: {
+          x: angles.x,
+          y: angles.y,
+          y_2: angles.y_2,
+          z: angles.z,
+        },
+      });
+    });
+    return out;
+  }
+
+  function collectCopiedStructureGroupIdsForSave() {
+    const ids = new Set();
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        const gid = String(mesh?.userData?.structureGroupId || '').trim();
+        const sourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+        if (gid && sourceId) {
+          ids.add(gid);
+        }
+      });
+    return ids;
+  }
+
+  function restoreCopiedStructureGroupsFromSave(savedGroups) {
+    const entries = Array.isArray(savedGroups) ? savedGroups : [];
+    if (entries.length < 1) { return 0; }
+    const existingIds = new Set(collectStructureGroupIds());
+    let createdCount = 0;
+
+    entries.forEach((entry) => {
+      const sourceId = String(entry?.sourceGroupId || '').trim();
+      if (!sourceId) { return; }
+      const sourceMembers = getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === sourceId);
+      if (sourceMembers.length < 1) { return; }
+
+      const centerRaw = Array.isArray(entry?.center) ? entry.center : [0, 0, 0];
+      const targetCenter = new THREE.Vector3(
+        Number(centerRaw[0]) || 0,
+        Number(centerRaw[1]) || 0,
+        Number(centerRaw[2]) || 0,
+      );
+      const savedAngles = parseSavedGroupRotationAngles(entry);
+
+      const sourcePose = computeStructureGroupPoseFromMembers(sourceMembers);
+      if (!sourcePose) { return; }
+      const sourceCenter = sourcePose.center;
+      const sourceQuat = sourcePose.quaternion;
+
+      const copyOffset = targetCenter.clone().sub(sourceCenter);
+      const relativeQuat = (() => {
+        if (savedAngles) {
+          return buildGroupQuatFromRotationAngles(savedAngles);
+        }
+        const qRaw = Array.isArray(entry?.quaternion) ? entry.quaternion : [0, 0, 0, 1];
+        const q = new THREE.Quaternion(
+          Number(qRaw[0]) || 0,
+          Number(qRaw[1]) || 0,
+          Number(qRaw[2]) || 0,
+          Number(qRaw[3]) || 1,
+        ).normalize();
+        const mode = String(entry?.rotationMode || '').trim();
+        if (mode === 'relative_from_copy') {
+          return q;
+        }
+        // mode 未指定で単位クォータニオンの場合は「回転なし」を優先する。
+        // （旧形式の自動相対化で意図せず回転が入るのを防ぐ）
+        const isIdentityQuat = Math.abs(q.x) < 1e-8
+          && Math.abs(q.y) < 1e-8
+          && Math.abs(q.z) < 1e-8
+          && Math.abs(q.w - 1) < 1e-8;
+        if (!mode && isIdentityQuat) {
+          return q;
+        }
+        // 旧形式は絶対姿勢保存だったため相対化する。
+        return q.multiply(sourceQuat.clone().invert()).normalize();
+      })();
+      const requestedGroupId = String(entry?.groupId || '').trim();
+      const newGroupId = (() => {
+        if (!requestedGroupId) {
+          return allocateDerivedStructureGroupIdFromSource(sourceId, existingIds);
+        }
+        if (!existingIds.has(requestedGroupId)) {
+          existingIds.add(requestedGroupId);
+          return requestedGroupId;
+        }
+        let n = 2;
+        let candidate = `${requestedGroupId}__${n}`;
+        while (existingIds.has(candidate)) {
+          n += 1;
+          candidate = `${requestedGroupId}__${n}`;
+        }
+        existingIds.add(candidate);
+        return candidate;
+      })();
+
+      const sourceToCopiedPoint = new Map();
+      const copiedPointsForRotate = [];
+      const copiedObjectsForRotate = [];
+      const ensureCopiedPoint = (srcPoint) => {
+        if (!srcPoint?.userData?.steelFramePoint) { return null; }
+        const existing = sourceToCopiedPoint.get(srcPoint);
+        if (existing?.parent) { return existing; }
+        const lineIndex = Number.isInteger(srcPoint?.userData?.steelFrameLine) ? srcPoint.userData.steelFrameLine : 0;
+        const copied = new THREE.Mesh(cube_geometry, cube_material.clone());
+        copied.position.copy(srcPoint.position).add(copyOffset);
+        copied.scale.copy(srcPoint.scale);
+        copied.userData = {
+          ...(srcPoint.userData || {}),
+          steelFramePoint: true,
+          steelFrameLine: lineIndex,
+          steelFrameCopied: true,
+          structureGroupId: newGroupId,
+          structureGroupCopySourceId: sourceId,
+        };
+        delete copied.userData.guideCurve;
+        delete copied.userData.guideControlIndex;
+        steelFrameMode?.addExistingPoint?.(copied, lineIndex);
+        sourceToCopiedPoint.set(srcPoint, copied);
+        copiedPointsForRotate.push(copied);
+        return copied;
+      };
+
+      sourceMembers.forEach((src) => {
+        const decorationType = normalizeDecorationType(src?.userData?.decorationType);
+        if (decorationType === 'led_board') {
+          const cloned = cloneLedBoardDecoration(src, new THREE.Vector3(), {
+            structureGroupId: newGroupId,
+            structureGroupCopySourceId: sourceId,
+          });
+          if (!cloned) { return; }
+          cloned.position.copy(src.position).add(copyOffset);
+          cloned.quaternion.copy(src.quaternion);
+          cloned.scale.copy(src.scale);
+          scene.add(cloned);
+          decorationObjects.push(cloned);
+          copiedObjectsForRotate.push(cloned);
+          createdCount += 1;
+          return;
+        }
+        if (decorationType === 'rect_spot_light') {
+          const cloned = cloneRectSpotLightDecoration(src, new THREE.Vector3(), {
+            structureGroupId: newGroupId,
+            structureGroupCopySourceId: sourceId,
+          });
+          if (!cloned) { return; }
+          cloned.position.copy(src.position).add(copyOffset);
+          cloned.quaternion.copy(src.quaternion);
+          cloned.scale.copy(src.scale);
+          scene.add(cloned);
+          decorationObjects.push(cloned);
+          copiedObjectsForRotate.push(cloned);
+          createdCount += 1;
+          return;
+        }
+        if (src?.name === 'SteelFrameSegment') {
+          const refs = Array.isArray(src?.userData?.steelFrameSegmentPointRefs)
+            ? src.userData.steelFrameSegmentPointRefs.filter((p) => p?.userData?.steelFramePoint)
+            : [];
+          const profile = normalizeSteelFrameSegmentProfile(src?.userData?.steelFrameSegmentProfile || 'round');
+          const style = normalizeSerializedSegmentStyle(profile, src?.userData?.steelFrameSegmentStyle || null);
+          if (refs.length >= 2) {
+            const copiedRefs = refs.map((pointMesh) => ensureCopiedPoint(pointMesh)).filter(Boolean);
+            const p0 = copiedRefs[0] || null;
+            const p1 = copiedRefs[1] || null;
+            if (!p0 || !p1) { return; }
+            const seg = steelFrameMode?.createSegmentBetweenPoints?.(p0, p1, {
+              profile,
+              style,
+              userData: {
+                ...(src.userData || {}),
+                steelFrameSegmentPointRefs: copiedRefs,
+                steelFrameCopiedObject: true,
+                structureGroupId: newGroupId,
+                structureGroupCopySourceId: sourceId,
+              },
+            });
+            if (!seg) { return; }
+            if ((profile === 'tube' && copiedRefs.length >= 2) || (profile === 'panel_wall' && copiedRefs.length >= 4)) {
+              seg.userData = {
+                ...(seg.userData || {}),
+                steelFrameSegmentPointRefs: copiedRefs,
+              };
+              steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
+            }
+            setCopyObjectVisual(seg, false);
+            registerCopyObject(seg);
+            copiedObjectsForRotate.push(seg);
+            createdCount += 1;
+            return;
+          }
+        }
+        if (src?.clone) {
+          const cloned = cloneObjectVisualTreeWithoutUserData(src) || src.clone(true);
+          if (!cloned) { return; }
+          cloned.position.copy(src.position).add(copyOffset);
+          if (src?.quaternion?.isQuaternion && cloned?.quaternion?.isQuaternion) {
+            cloned.quaternion.copy(src.quaternion);
+          }
+          if (src?.scale && cloned?.scale) {
+            cloned.scale.copy(src.scale);
+          }
+          cloned.userData = {
+            ...(src.userData || {}),
+            structureGroupId: newGroupId,
+            structureGroupCopySourceId: sourceId,
+          };
+          scene.add(cloned);
+          if (cloned?.name === 'SteelFrameSegment') {
+            steelFrameMode?.addExistingSegmentMesh?.(cloned);
+            registerCopyObject(cloned);
+            setCopyObjectVisual(cloned, false);
+          }
+          copiedObjectsForRotate.push(cloned);
+          createdCount += 1;
+        }
+      });
+      const rotateAroundCenter = (mesh) => {
+        if (!mesh?.parent || !mesh?.position) { return; }
+        const nextPos = mesh.position.clone().sub(targetCenter).applyQuaternion(relativeQuat).add(targetCenter);
+        mesh.position.copy(nextPos);
+        if (mesh?.quaternion?.isQuaternion) {
+          mesh.quaternion.premultiply(relativeQuat).normalize();
+        }
+      };
+      copiedPointsForRotate.forEach((mesh) => rotateAroundCenter(mesh));
+      copiedObjectsForRotate.forEach((mesh) => {
+        const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+          && mesh.userData.steelFrameSegmentPointRefs.length >= 2;
+        if (hasPointRefs) { return; }
+        rotateAroundCenter(mesh);
+      });
+    });
+
+    if (createdCount > 0) {
+      drawingObject();
+      refreshCreateTargetsForSearch();
+    }
+    return createdCount;
+  }
+
   function getSelectedSingleStructureGroupId() {
     const selected = Array.from(groupSelectedObjects).filter((mesh) => mesh?.parent);
     const ids = selected
@@ -5305,6 +5777,10 @@ const threeUi = document.getElementById('three-ui');
   function cloneLedBoardDecoration(source, offset, options = {}) {
     const structureGroupId = options?.structureGroupId ?? source?.userData?.structureGroupId ?? null;
     const structureGroupScale = Number(options?.structureGroupScale ?? source?.userData?.structureGroupScale ?? 1) || 1;
+    const hasCopySourceId = Object.prototype.hasOwnProperty.call(options || {}, 'structureGroupCopySourceId');
+    const structureGroupCopySourceId = hasCopySourceId
+      ? (options?.structureGroupCopySourceId ?? null)
+      : (source?.userData?.structureGroupCopySourceId ?? null);
     const scaleMultiplier = Number(options?.scaleMultiplier);
     const cloned = createLedBoardDecoration(source.position.clone().add(offset));
     cloned.quaternion.copy(source.quaternion);
@@ -5325,6 +5801,7 @@ const threeUi = document.getElementById('three-ui');
       },
       structureGroupId,
       structureGroupScale,
+      structureGroupCopySourceId: structureGroupCopySourceId || null,
     };
     renderLedBoardTexture(cloned);
     return cloned;
@@ -5333,6 +5810,10 @@ const threeUi = document.getElementById('three-ui');
   function cloneRectSpotLightDecoration(source, offset, options = {}) {
     const structureGroupId = options?.structureGroupId ?? source?.userData?.structureGroupId ?? null;
     const structureGroupScale = Number(options?.structureGroupScale ?? source?.userData?.structureGroupScale ?? 1) || 1;
+    const hasCopySourceId = Object.prototype.hasOwnProperty.call(options || {}, 'structureGroupCopySourceId');
+    const structureGroupCopySourceId = hasCopySourceId
+      ? (options?.structureGroupCopySourceId ?? null)
+      : (source?.userData?.structureGroupCopySourceId ?? null);
     const scaleMultiplier = Number(options?.scaleMultiplier);
     const cloned = createRectSpotLightDecoration(source.position.clone().add(offset));
     cloned.quaternion.copy(source.quaternion);
@@ -5346,6 +5827,7 @@ const threeUi = document.getElementById('three-ui');
       baseColor: Number(source?.userData?.baseColor) || Number(cloned?.userData?.baseColor) || 0x2b2f36,
       structureGroupId,
       structureGroupScale,
+      structureGroupCopySourceId: structureGroupCopySourceId || null,
     };
     return cloned;
   }
@@ -5366,7 +5848,8 @@ const threeUi = document.getElementById('three-ui');
     const selectedObjects = Array.from(copySelectedObjects)
       .map((mesh) => resolveCopySourceObject(mesh))
       .filter((mesh) => mesh?.parent);
-    const selectedGroupIds = copyTargetMode === 'group'
+    const isGroupCopyMode = copyTargetMode === 'group';
+    const selectedGroupIds = isGroupCopyMode
       ? new Set(
         selectedObjects
           .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
@@ -5379,6 +5862,17 @@ const threeUi = document.getElementById('three-ui');
         .filter((mesh) => selectedGroupIds.has(String(mesh?.userData?.structureGroupId || '').trim()))
       : [];
     const srcObjects = Array.from(new Set([...selectedObjects, ...expandedGroupMembers]));
+    const derivedGroupMap = new Map();
+    if (isGroupCopyMode && selectedGroupIds.size > 0) {
+      const existingIds = new Set(collectStructureGroupIds());
+      selectedGroupIds.forEach((sourceGroupId) => {
+        const nextGroupId = allocateDerivedStructureGroupIdFromSource(sourceGroupId, existingIds);
+        derivedGroupMap.set(sourceGroupId, {
+          sourceGroupId,
+          groupId: nextGroupId,
+        });
+      });
+    }
     const copiedObjectGroupId = srcObjects.length > 0 ? allocateSteelFrameCopyGroupId() : null;
     if (srcPoints.length < 1 && srcObjects.length < 1) {
       if (rotationSelectionInfo) {
@@ -5464,9 +5958,16 @@ const threeUi = document.getElementById('three-ui');
     srcObjects.forEach((src) => {
       const srcOffset = resolveCopyOffsetForSource(src);
       let cloned = null;
+      const sourceStructureGroupId = String(src?.userData?.structureGroupId || '').trim();
+      const derivedGroup = sourceStructureGroupId ? (derivedGroupMap.get(sourceStructureGroupId) || null) : null;
+      const targetStructureGroupId = derivedGroup?.groupId || (sourceStructureGroupId || null);
+      const copySourceGroupId = derivedGroup?.sourceGroupId || null;
       const decorationType = normalizeDecorationType(src?.userData?.decorationType);
       if (decorationType === 'led_board') {
-        cloned = cloneLedBoardDecoration(src, srcOffset);
+        cloned = cloneLedBoardDecoration(src, srcOffset, {
+          structureGroupId: targetStructureGroupId,
+          structureGroupCopySourceId: copySourceGroupId,
+        });
         if (cloned) {
           scene.add(cloned);
           decorationObjects.push(cloned);
@@ -5475,7 +5976,10 @@ const threeUi = document.getElementById('three-ui');
         return;
       }
       if (decorationType === 'rect_spot_light') {
-        cloned = cloneRectSpotLightDecoration(src, srcOffset);
+        cloned = cloneRectSpotLightDecoration(src, srcOffset, {
+          structureGroupId: targetStructureGroupId,
+          structureGroupCopySourceId: copySourceGroupId,
+        });
         if (cloned) {
           scene.add(cloned);
           decorationObjects.push(cloned);
@@ -5533,6 +6037,8 @@ const threeUi = document.getElementById('three-ui');
           steelFrameSegmentPointRefs: copiedPointRefs,
           steelFrameCopyGroupId: copiedObjectGroupId || src?.userData?.steelFrameCopyGroupId || null,
           steelFrameCopiedObject: true,
+          structureGroupId: targetStructureGroupId,
+          structureGroupCopySourceId: copySourceGroupId,
           copyObjectSourceRefId: sourceRefId || null,
           // 複製元の refId を引き継ぐと選択解決が別オブジェクトへ飛ぶため除去する。
           copyObjectRefId: null,
@@ -9717,6 +10223,32 @@ function buildStructurePayloadForGroup(groupId) {
     })
     .filter(Boolean);
 
+  const copiedGroupEntry = (() => {
+    const all = collectCopiedStructureGroupsForSave();
+    return all.find((entry) => String(entry?.groupId || '').trim() === id) || null;
+  })();
+  if (copiedGroupEntry) {
+    return {
+      meta: {
+        version: 4,
+        savedAt: new Date().toISOString(),
+        groupId: id,
+        mode: 'group_copy_reference',
+        memberCount: groupMembers.length,
+      },
+      guideAddGrids: [],
+      steelFrame: {
+        points: [],
+        segments: [],
+        copiedInstances: [],
+      },
+      decorations: [],
+      pins: [],
+      generationRuns: [],
+      copiedStructureGroups: [copiedGroupEntry],
+    };
+  }
+
   const pins = structurePinnedPins
     .filter((pin) => pin?.parent)
     .map((pin) => {
@@ -9767,18 +10299,18 @@ function buildStructurePayloadForGroup(groupId) {
         && liveMesh?.scale;
 
       if (canCompact) {
-        copiedInstances.push({
-          sourceRefId,
-          copyObjectRefId: copyRefId || null,
-          profile: seg?.profile || null,
-          style: seg?.style ? { ...seg.style } : null,
-          structureGroupId: seg?.structureGroupId ?? null,
-          structureGroupScale: Number(seg?.structureGroupScale) || null,
-          steelFrameCopyGroupId: seg?.steelFrameCopyGroupId ?? null,
-          position: [liveMesh.position.x, liveMesh.position.y, liveMesh.position.z],
-          quaternion: [liveMesh.quaternion.x, liveMesh.quaternion.y, liveMesh.quaternion.z, liveMesh.quaternion.w],
-          scale: [liveMesh.scale.x, liveMesh.scale.y, liveMesh.scale.z],
-        });
+          copiedInstances.push({
+            sourceRefId,
+            copyObjectRefId: copyRefId || null,
+            profile: seg?.profile || null,
+            style: seg?.style ? { ...seg.style } : null,
+            structureGroupId: seg?.structureGroupId ?? null,
+            structureGroupScale: Number(seg?.structureGroupScale) || null,
+            steelFrameCopyGroupId: seg?.steelFrameCopyGroupId ?? null,
+            position: [liveMesh.position.x, liveMesh.position.y, liveMesh.position.z],
+            quaternion: [liveMesh.quaternion.x, liveMesh.quaternion.y, liveMesh.quaternion.z, liveMesh.quaternion.w],
+            scale: [liveMesh.scale.x, liveMesh.scale.y, liveMesh.scale.z],
+          });
         return;
       }
 
@@ -9918,6 +10450,16 @@ function downloadStructureGroupData() {
 if (saveStructureGroupButton) {
   saveStructureGroupButton.addEventListener('click', downloadStructureGroupData);
 }
+const saveButtonsContainer = document.getElementById('save-buttons');
+if (saveButtonsContainer) {
+  // グローバルの mousedown / touchstart ハンドラに吸われないようにする
+  const stopPointerPropagation = (event) => {
+    event.stopPropagation();
+  };
+  saveButtonsContainer.addEventListener('mousedown', stopPointerPropagation);
+  saveButtonsContainer.addEventListener('touchstart', stopPointerPropagation, { passive: true });
+  saveButtonsContainer.addEventListener('pointerdown', stopPointerPropagation);
+}
 
 function serializeDifferenceSpaceMesh(mesh) {
   if (!mesh?.geometry?.attributes?.position) { return null; }
@@ -10011,7 +10553,10 @@ function normalizeSerializedSegmentStyle(profile, rawStyle) {
   return out;
 }
 
-function serializeSteelFrameState(gridToKey = new Map()) {
+function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
+  const excludedGroupIds = options?.excludedGroupIds instanceof Set
+    ? options.excludedGroupIds
+    : new Set();
   const points = (steelFrameMode?.getAllPointMeshes?.() || [])
     .filter((mesh) => mesh?.userData?.steelFramePoint && mesh?.parent);
   const pointKeyByMesh = new Map();
@@ -10032,7 +10577,11 @@ function serializeSteelFrameState(gridToKey = new Map()) {
   });
 
   const segments = (steelFrameMode?.getSegmentMeshes?.() || [])
-    .filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment');
+    .filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment')
+    .filter((mesh) => {
+      const gid = String(mesh?.userData?.structureGroupId || '').trim();
+      return !gid || !excludedGroupIds.has(gid);
+    });
   const segmentStates = segments.map((mesh) => {
     const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
       ? mesh.userData.steelFrameSegmentPointRefs
@@ -10231,9 +10780,9 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
             copyObjectRefId: inst?.copyObjectRefId ?? null,
             steelFrameCopyGroupId: copyGroupId || null,
             structureGroupId: sourceGroupId,
-            structureGroupScale: sourceGroupScale,
-          },
-        });
+      structureGroupScale: sourceGroupScale,
+    },
+  });
         if (!seg) { return; }
         if ((sourceProfile === 'tube' && copiedRefs.length >= 2) || (sourceProfile === 'panel_wall' && copiedRefs.length >= 4)) {
           seg.userData = {
@@ -10303,9 +10852,16 @@ function serializeDecorationState(mesh, gridToKey = new Map()) {
   return out;
 }
 
-function serializeDecorationsState(gridToKey = new Map()) {
+function serializeDecorationsState(gridToKey = new Map(), options = {}) {
+  const excludedGroupIds = options?.excludedGroupIds instanceof Set
+    ? options.excludedGroupIds
+    : new Set();
   return decorationObjects
     .filter((mesh) => mesh?.parent)
+    .filter((mesh) => {
+      const gid = String(mesh?.userData?.structureGroupId || '').trim();
+      return !gid || !excludedGroupIds.has(gid);
+    })
     .map((mesh) => serializeDecorationState(mesh, gridToKey))
     .filter(Boolean);
 }
@@ -10380,8 +10936,10 @@ function buildCreateModePayload() {
     .map((grid) => serializeGuideGridState(grid))
     .filter(Boolean);
   const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStates);
-  const steelFrame = serializeSteelFrameState(gridToKey);
-  const decorations = serializeDecorationsState(gridToKey);
+  const copiedStructureGroups = collectCopiedStructureGroupsForSave();
+  const copiedGroupIds = collectCopiedStructureGroupIdsForSave();
+  const steelFrame = serializeSteelFrameState(gridToKey, { excludedGroupIds: copiedGroupIds });
+  const decorations = serializeDecorationsState(gridToKey, { excludedGroupIds: copiedGroupIds });
 
   return {
     meta: {
@@ -10408,6 +10966,7 @@ function buildCreateModePayload() {
     guideAddGrids: guideGridStates,
     steelFrame,
     decorations,
+    copiedStructureGroups,
     differenceSpaces: spaces,
   };
 }
@@ -10568,6 +11127,7 @@ function applyCreateModePayload(payload) {
   restoreSteelFrameState(steelFrameState, keyToGrid);
   clearDecorationsForImport();
   restoreDecorationsState(decorationStates, keyToGrid);
+  restoreCopiedStructureGroupsFromSave(payload?.copiedStructureGroups);
   syncStructureGroupSequenceFromExisting();
   rebuildMirrorFromStatesRuntime({
     mirrorStates: mirrorGuideStates,
@@ -10752,6 +11312,7 @@ function appendCreateModePayload(payload, options = {}) {
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
   const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   const steelFrameStateRaw = (payload?.steelFrame && typeof payload.steelFrame === 'object')
     ? payload.steelFrame
     : null;
@@ -10771,6 +11332,37 @@ function appendCreateModePayload(payload, options = {}) {
   const remapped = remapAllStructureGroupIdsForAppend(steelFrameStateRaw, decorationStatesRaw);
   const steelFrameState = remapped.steelFrameState;
   const decorationStates = remapped.decorationStates;
+  const remapSourceIdMap = new Map((remapped.remappedEntries || []).map((entry) => [String(entry?.sourceGroupId || ''), String(entry?.remappedGroupId || '')]));
+  const reservedGroupIds = new Set(collectStructureGroupIds());
+  (remapped.remappedEntries || []).forEach((entry) => {
+    const id = String(entry?.remappedGroupId || '').trim();
+    if (id) { reservedGroupIds.add(id); }
+  });
+  const copiedStructureGroups = copiedStructureGroupsRaw.map((entry) => {
+    const sourceId = String(entry?.sourceGroupId || '').trim();
+    const mapped = remapSourceIdMap.get(sourceId) || sourceId;
+    const requestedGroupId = String(entry?.groupId || '').trim();
+    let groupId = requestedGroupId;
+    if (groupId) {
+      if (!reservedGroupIds.has(groupId)) {
+        reservedGroupIds.add(groupId);
+      } else {
+        let n = 2;
+        let candidate = `${groupId}__${n}`;
+        while (reservedGroupIds.has(candidate)) {
+          n += 1;
+          candidate = `${groupId}__${n}`;
+        }
+        groupId = candidate;
+        reservedGroupIds.add(groupId);
+      }
+    }
+    return {
+      ...entry,
+      sourceGroupId: mapped,
+      groupId: groupId || null,
+    };
+  });
 
   const loadedGuideGrids = [];
   nonMirrorGuideStates.forEach((state) => {
@@ -10795,6 +11387,7 @@ function appendCreateModePayload(payload, options = {}) {
 
   restoreSteelFrameState(steelFrameState, keyToGrid);
   restoreDecorationsState(decorationStates, keyToGrid);
+  restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
   registerStructureGroupSourceMappings(remapped.remappedEntries, sourceTag);
   syncStructureGroupSequenceFromExisting();
 
@@ -10924,6 +11517,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
+  const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   syncStructureGroupSequenceFromExisting();
   const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
   const mirrorGuideStates = [];
@@ -10967,9 +11561,41 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   const mapped = remapStructureGroupIdsForAppend(groupedSteelFrameState, groupedDecorationStates);
   const steelFrameState = mapped.steelFrameState;
   const decorationStates = mapped.decorationStates;
+  const reservedGroupIds = new Set(collectStructureGroupIds());
+  (mapped.remappedEntries || []).forEach((entry) => {
+    const id = String(entry?.remappedGroupId || '').trim();
+    if (id) { reservedGroupIds.add(id); }
+  });
+  const remapSourceIdMap = new Map((mapped.remappedEntries || []).map((entry) => [String(entry?.sourceGroupId || ''), String(entry?.remappedGroupId || '')]));
+  const copiedStructureGroups = copiedStructureGroupsRaw.map((entry) => {
+    const sourceId = String(entry?.sourceGroupId || '').trim();
+    const mappedId = remapSourceIdMap.get(sourceId) || sourceId;
+    const requestedGroupId = String(entry?.groupId || '').trim();
+    let groupId = requestedGroupId;
+    if (groupId) {
+      if (!reservedGroupIds.has(groupId)) {
+        reservedGroupIds.add(groupId);
+      } else {
+        let n = 2;
+        let candidate = `${groupId}__${n}`;
+        while (reservedGroupIds.has(candidate)) {
+          n += 1;
+          candidate = `${groupId}__${n}`;
+        }
+        groupId = candidate;
+        reservedGroupIds.add(groupId);
+      }
+    }
+    return {
+      ...entry,
+      sourceGroupId: mappedId,
+      groupId: groupId || null,
+    };
+  });
   const appendSegmentCount = Array.isArray(steelFrameState?.segments) ? steelFrameState.segments.length : 0;
   const appendDecorationCount = decorationStates.length;
-  if (appendSegmentCount < 1 && appendDecorationCount < 1) {
+  const appendCopiedGroupCount = copiedStructureGroups.length;
+  if (appendSegmentCount < 1 && appendDecorationCount < 1 && appendCopiedGroupCount < 1) {
     throw new Error('追加対象のグループ付き構造物が見つかりませんでした。');
   }
   if (appendSegmentCount > 0) {
@@ -10978,6 +11604,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   if (appendDecorationCount > 0) {
     restoreDecorationsState(decorationStates, keyToGrid);
   }
+  restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
   registerStructureGroupSourceMappings(mapped.remappedEntries, sourceTag);
   syncStructureGroupSequenceFromExisting();
   setRailConstructionGroupOptions();
@@ -10987,6 +11614,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     guideCount: loadedGuideGrids.filter(Boolean).length,
     segmentCount: appendSegmentCount,
     decorationCount: appendDecorationCount,
+    copiedGroupCount: appendCopiedGroupCount,
     remappedGroupCount: mapped.remappedCount || 0,
   };
 }
