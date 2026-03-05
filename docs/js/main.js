@@ -650,6 +650,7 @@ const threeUi = document.getElementById('three-ui');
   let differenceLinePickModeActive = false;
   const AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD = ['Points_0', 'Points_1', 'Points_2', 'Points_3'];
   const AUTO_DIFFERENCE_LINE_ON_LOAD = true;
+  const AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD = true;
   const AUTO_DIFFERENCE_LINE_MAX_RETRY = 120;
   let autoDifferenceLineTriedOnLoad = false;
   let autoDifferenceLineRetryCount = 0;
@@ -1336,6 +1337,28 @@ const threeUi = document.getElementById('three-ui');
     const direct = String(params?.groupId || '').trim();
     if (direct) { return direct; }
     return '';
+  }
+
+  function resolveRuntimeStructureGroupIdFromSourceId(rawSourceGroupId) {
+    const sourceGroupId = String(rawSourceGroupId || '').trim();
+    if (!sourceGroupId) { return ''; }
+    const existingIds = collectStructureGroupIds();
+    if (existingIds.includes(sourceGroupId)) {
+      return sourceGroupId;
+    }
+    const candidates = [];
+    structureGroupSourceById.forEach((source, remappedGroupId) => {
+      if (!source || typeof source !== 'object') { return; }
+      const src = String(source.sourceGroupId || '').trim();
+      const mapped = String(remappedGroupId || '').trim();
+      if (!src || !mapped) { return; }
+      if (src !== sourceGroupId) { return; }
+      if (!existingIds.includes(mapped)) { return; }
+      candidates.push(mapped);
+    });
+    if (candidates.length < 1) { return ''; }
+    if (candidates.includes(sourceGroupId)) { return sourceGroupId; }
+    return String(candidates[candidates.length - 1] || '').trim();
   }
 
   function buildGroupRailRangeSummary(pinsPayload) {
@@ -3821,13 +3844,13 @@ const threeUi = document.getElementById('three-ui');
     if (profile === 'corrugated_bar') { return 0xEDE7DD; }
     if (profile === 'panel_wall') { return 0xF4F6F8; }
     if (profile === 'tubular') { return 0xFFFFFF; }
+    if (profile === 'tube') { return 0x666666; }
     if (
       profile === 'round'
       || profile === 'rect_bar'
       || profile === 'h_beam'
       || profile === 't_beam'
       || profile === 'l_beam'
-      || profile === 'tube'
     ) {
       return 0x9DA2A1;
     }
@@ -3871,7 +3894,40 @@ const threeUi = document.getElementById('three-ui');
       paintObjectColorRecursive(mesh, 0x3f7bff);
       return;
     }
-    paintObjectColorRecursive(mesh, mesh?.userData?.baseColor || getSteelSegmentDefaultColor(mesh));
+    const baseColor = Number(mesh?.userData?.baseColor);
+    paintObjectColorRecursive(mesh, Number.isFinite(baseColor) ? baseColor : getSteelSegmentDefaultColor(mesh));
+  }
+
+  function isTubeSteelFrameSegment(mesh) {
+    if (!mesh || mesh?.name !== 'SteelFrameSegment') { return false; }
+    const profile = String(mesh?.userData?.steelFrameSegmentProfile || '').toLowerCase();
+    return profile === 'tube';
+  }
+
+  function enforceTubeSegmentBlack(mesh) {
+    if (!isTubeSteelFrameSegment(mesh)) { return false; }
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      baseColor: 0,
+    };
+    const keepHighlight = copySelectedObjects.has(mesh)
+      || styleSelectedObjects.has(mesh)
+      || groupSelectedObjects.has(mesh)
+      || deleteSelectedObjects.has(mesh)
+      || Boolean(mesh?.userData?.steelFrameCopiedObject);
+    if (!keepHighlight) {
+      paintObjectColorRecursive(mesh, 0x666666);
+    }
+    return true;
+  }
+
+  function enforceTubeSegmentsBlack(meshes = null) {
+    const targets = Array.isArray(meshes) && meshes.length > 0
+      ? meshes
+      : (steelFrameMode?.getSegmentMeshes?.() || []);
+    targets.forEach((mesh) => {
+      enforceTubeSegmentBlack(mesh);
+    });
   }
 
   function clearCopySelection() {
@@ -4946,13 +5002,30 @@ const threeUi = document.getElementById('three-ui');
     const existingIds = new Set(collectStructureGroupIds());
     let createdCount = 0;
 
-    entries.forEach((entry) => {
-      const sourceId = String(entry?.sourceGroupId || '').trim();
-      if (!sourceId) { return; }
+    entries.forEach((entry, entryIndex) => {
+      const sourceIdRaw = String(entry?.sourceGroupId || '').trim();
+      if (!sourceIdRaw) { return; }
+      const sourceId = resolveRuntimeStructureGroupIdFromSourceId(sourceIdRaw) || sourceIdRaw;
+      const beforeCreatedCount = createdCount;
+      console.info('[group_copy_restore] resolve source', {
+        entryIndex,
+        targetGroupId: String(entry?.groupId || '').trim(),
+        sourceGroupIdRaw: sourceIdRaw,
+        sourceGroupIdResolved: sourceId,
+        existingGroupIds: collectStructureGroupIds(),
+      });
       const sourceMembers = getConstructionCopyTargets()
         .filter((mesh) => mesh?.parent)
         .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === sourceId);
-      if (sourceMembers.length < 1) { return; }
+      if (sourceMembers.length < 1) {
+        console.warn('[group_copy_restore] source members not found', {
+          entryIndex,
+          sourceGroupIdRaw: sourceIdRaw,
+          sourceGroupIdResolved: sourceId,
+          existingGroupIds: collectStructureGroupIds(),
+        });
+        return;
+      }
 
       const centerRaw = Array.isArray(entry?.center) ? entry.center : [0, 0, 0];
       const targetCenter = new THREE.Vector3(
@@ -5036,6 +5109,7 @@ const threeUi = document.getElementById('three-ui');
         delete copied.userData.guideCurve;
         delete copied.userData.guideControlIndex;
         steelFrameMode?.addExistingPoint?.(copied, lineIndex);
+        copied.visible = true;
         sourceToCopiedPoint.set(srcPoint, copied);
         copiedPointsForRotate.push(copied);
         return copied;
@@ -5052,6 +5126,7 @@ const threeUi = document.getElementById('three-ui');
           cloned.position.copy(src.position).add(copyOffset);
           cloned.quaternion.copy(src.quaternion);
           cloned.scale.copy(src.scale);
+          cloned.visible = true;
           scene.add(cloned);
           decorationObjects.push(cloned);
           copiedObjectsForRotate.push(cloned);
@@ -5067,6 +5142,7 @@ const threeUi = document.getElementById('three-ui');
           cloned.position.copy(src.position).add(copyOffset);
           cloned.quaternion.copy(src.quaternion);
           cloned.scale.copy(src.scale);
+          cloned.visible = true;
           scene.add(cloned);
           decorationObjects.push(cloned);
           copiedObjectsForRotate.push(cloned);
@@ -5103,6 +5179,7 @@ const threeUi = document.getElementById('three-ui');
               };
               steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
             }
+            seg.visible = true;
             setCopyObjectVisual(seg, false);
             registerCopyObject(seg);
             copiedObjectsForRotate.push(seg);
@@ -5120,6 +5197,7 @@ const threeUi = document.getElementById('three-ui');
           if (src?.scale && cloned?.scale) {
             cloned.scale.copy(src.scale);
           }
+          cloned.visible = true;
           cloned.userData = {
             ...(src.userData || {}),
             structureGroupId: newGroupId,
@@ -5149,6 +5227,14 @@ const threeUi = document.getElementById('three-ui');
           && mesh.userData.steelFrameSegmentPointRefs.length >= 2;
         if (hasPointRefs) { return; }
         rotateAroundCenter(mesh);
+      });
+      console.info('[group_copy_restore] restored entry', {
+        entryIndex,
+        targetGroupIdRequested: String(entry?.groupId || '').trim(),
+        sourceGroupIdRaw: sourceIdRaw,
+        sourceGroupIdResolved: sourceId,
+        sourceMemberCount: sourceMembers.length,
+        createdObjects: createdCount - beforeCreatedCount,
       });
     });
 
@@ -10638,6 +10724,22 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
   const segmentStates = Array.isArray(payloadSteelFrame.segments) ? payloadSteelFrame.segments : [];
   const copiedInstances = Array.isArray(payloadSteelFrame.copiedInstances) ? payloadSteelFrame.copiedInstances : [];
   const pointMap = new Map();
+  const usedCopyRefIds = new Set();
+  const copyRefAliasMap = new Map();
+  const reserveUniqueCopyRefId = (preferredRefId = '') => {
+    const preferred = String(preferredRefId || '').trim();
+    if (preferred && !usedCopyRefIds.has(preferred)) {
+      usedCopyRefIds.add(preferred);
+      return preferred;
+    }
+    let next = '';
+    do {
+      next = `copy_obj_${copyObjectRegistrySeq}`;
+      copyObjectRegistrySeq += 1;
+    } while (usedCopyRefIds.has(next));
+    usedCopyRefIds.add(next);
+    return next;
+  };
 
   pointStates.forEach((p) => {
     if (!Array.isArray(p?.position) || p.position.length < 3) { return; }
@@ -10681,6 +10783,11 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
       ? 'panel_wall'
       : normalizedProfile;
     const style = normalizeSerializedSegmentStyle(profile, s?.style);
+    const rawCopyRefId = String(s?.copyObjectRefId || '').trim();
+    const assignedCopyRefId = reserveUniqueCopyRefId(rawCopyRefId);
+    if (rawCopyRefId && !copyRefAliasMap.has(rawCopyRefId)) {
+      copyRefAliasMap.set(rawCopyRefId, assignedCopyRefId);
+    }
     const seg = steelFrameMode?.createSegmentBetweenPoints?.(p0, p1, {
       profile,
       style,
@@ -10690,7 +10797,7 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
         structureGroupId: s?.structureGroupId ?? null,
         structureGroupScale: Number(s?.structureGroupScale) || null,
         copyObjectSourceRefId: s?.copyObjectSourceRefId ?? null,
-        copyObjectRefId: s?.copyObjectRefId ?? null,
+        copyObjectRefId: assignedCopyRefId || null,
       },
     });
     if (!seg) { return; }
@@ -10707,16 +10814,20 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
       };
       steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
     }
+    enforceTubeSegmentBlack(seg);
     registerCopyObject(seg);
   });
 
   const restoreCopiedInstances = (instances) => {
     const list = Array.isArray(instances) ? instances : [];
     list.forEach((inst) => {
-      const sourceRefId = String(inst?.sourceRefId || '').trim();
-      if (!sourceRefId) { return; }
+      const sourceRefIdRaw = String(inst?.sourceRefId || '').trim();
+      if (!sourceRefIdRaw) { return; }
+      const sourceRefId = copyRefAliasMap.get(sourceRefIdRaw) || sourceRefIdRaw;
       const sourceMesh = copyObjectRegistry.get(sourceRefId);
       if (!sourceMesh?.parent || sourceMesh?.name !== 'SteelFrameSegment') { return; }
+      const instanceCopyRefIdRaw = String(inst?.copyObjectRefId || '').trim();
+      const instanceCopyRefId = reserveUniqueCopyRefId(instanceCopyRefIdRaw);
 
       const pos = Array.isArray(inst?.position) ? inst.position : [sourceMesh.position.x, sourceMesh.position.y, sourceMesh.position.z];
       const quat = Array.isArray(inst?.quaternion) ? inst.quaternion : [sourceMesh.quaternion.x, sourceMesh.quaternion.y, sourceMesh.quaternion.z, sourceMesh.quaternion.w];
@@ -10777,7 +10888,7 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
             steelFrameSegmentPointRefs: copiedRefs,
             steelFrameCopiedObject: true,
             copyObjectSourceRefId: sourceRefId,
-            copyObjectRefId: inst?.copyObjectRefId ?? null,
+            copyObjectRefId: instanceCopyRefId,
             steelFrameCopyGroupId: copyGroupId || null,
             structureGroupId: sourceGroupId,
       structureGroupScale: sourceGroupScale,
@@ -10791,6 +10902,7 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
           };
           steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
         }
+        enforceTubeSegmentBlack(seg);
         setCopyObjectVisual(seg, false);
         registerCopyObject(seg);
         return;
@@ -10806,13 +10918,14 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
         steelFrameSegmentPointRefs: [],
         steelFrameCopiedObject: true,
         copyObjectSourceRefId: sourceRefId,
-        copyObjectRefId: inst?.copyObjectRefId ?? null,
+        copyObjectRefId: instanceCopyRefId,
         steelFrameCopyGroupId: copyGroupId || null,
         structureGroupId: sourceGroupId,
         structureGroupScale: sourceGroupScale,
       };
       scene.add(cloned);
       steelFrameMode?.addExistingSegmentMesh?.(cloned);
+      enforceTubeSegmentBlack(cloned);
       setCopyObjectVisual(cloned, false);
       registerCopyObject(cloned);
     });
@@ -11688,10 +11801,7 @@ async function autoLoadStructureGroupsFromFolder() {
   if (!Array.isArray(files) || files.length < 1) {
     return;
   }
-  let loadedFiles = 0;
-  let totalSegments = 0;
-  let totalDecorations = 0;
-  let remappedGroups = 0;
+  const sourceRows = [];
   for (let i = 0; i < files.length; i += 1) {
     const url = files[i];
     try {
@@ -11701,13 +11811,37 @@ async function autoLoadStructureGroupsFromFolder() {
       const sourceTag = fileName
         ? fileName.replace(/\.(json|msgpack|mpk)$/i, '')
         : `structure_group_${i + 1}`;
-      const result = appendCreateModeGroupsPayload(payload, { sourceTag });
+      const mode = String(payload?.meta?.mode || '').trim();
+      const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+      const isCopyReference = mode === 'group_copy_reference' || hasCopiedRefs;
+      sourceRows.push({
+        url,
+        payload,
+        sourceTag,
+        isCopyReference,
+      });
+    } catch (err) {
+      console.warn('[structure_group] preload failed', { url, err });
+    }
+  }
+  // 元グループを先に復元し、その後でコピー参照を復元する。
+  const orderedRows = sourceRows
+    .filter((row) => !row.isCopyReference)
+    .concat(sourceRows.filter((row) => row.isCopyReference));
+  let loadedFiles = 0;
+  let totalSegments = 0;
+  let totalDecorations = 0;
+  let remappedGroups = 0;
+  for (let i = 0; i < orderedRows.length; i += 1) {
+    const row = orderedRows[i];
+    try {
+      const result = appendCreateModeGroupsPayload(row.payload, { sourceTag: row.sourceTag });
       loadedFiles += 1;
       totalSegments += Number(result?.segmentCount) || 0;
       totalDecorations += Number(result?.decorationCount) || 0;
       remappedGroups += Number(result?.remappedGroupCount) || 0;
     } catch (err) {
-      console.warn('[structure_group] load failed', { url, err });
+      console.warn('[structure_group] load failed', { url: row.url, err });
     }
   }
   if (loadedFiles > 0) {
@@ -12780,6 +12914,8 @@ function drawingObject(changedPoints = null){
 
   if (editObject === 'STEEL_FRAME') {
     steelFrameMode.setPointsFromTargets(changedPoints);
+    // 再描画後に tube の基準色を黒へ戻す。
+    enforceTubeSegmentsBlack();
     refreshSteelFrameMirrorPreviews();
     return;
   }
@@ -18987,7 +19123,8 @@ function buildDifferenceCutterMeshFromRailTracks({
   return cutter;
 }
 
-function runDifferenceOnSinjyukuFromRailTracks() {
+function runDifferenceOnSinjyukuFromRailTracks(options = {}) {
+  const keepPreview = options?.keepPreview !== false;
   const appliedHeight = readDifferenceLineBandHeight();
   const cutter = buildDifferenceCutterMeshFromRailTracks({ bandHeight: appliedHeight });
   if (!cutter) {
@@ -19004,14 +19141,17 @@ function runDifferenceOnSinjyukuFromRailTracks() {
   if (differencePreviewTube?.material?.dispose) {
     differencePreviewTube.material.dispose();
   }
-  differencePreviewTube = cutter;
   scene.add(cutter);
+  differencePreviewTube = cutter;
 
   // くり抜き時の縦壁表示は無効化（既存壁のみクリア）。
   clearDifferenceRailWallMeshes();
 
   const changedCount = applyDifferenceToSinjyuku(cutter);
   if (changedCount < 1) {
+    if (!keepPreview) {
+      clearDifferencePreviewTube();
+    }
     updateDifferenceStatus('線路形状でのくり抜き対象が見つかりませんでした。');
     return false;
   }
@@ -19019,6 +19159,9 @@ function runDifferenceOnSinjyukuFromRailTracks() {
   const rightEdge = String(cutter.userData?.rightEdgeTrackName || '');
   const leftEdge = String(cutter.userData?.leftEdgeTrackName || '');
   updateDifferenceStatus(`線路くり抜き完了: ${changedCount} メッシュ更新 / 対象線路 ${usedTrackCount} 本 / 端: ${rightEdge} - ${leftEdge}`);
+  if (!keepPreview) {
+    clearDifferencePreviewTube();
+  }
   return true;
 }
 
@@ -19040,20 +19183,26 @@ function tryAutoRunDifferenceFromLineTracksOnLoad() {
 
   const normalizedTracks = normalizeDifferenceLineTrackNames(AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD);
   differenceLineTrackNames = normalizedTracks;
-  differenceSpaceModeActive = true;
-  differenceLinePickModeActive = true;
-  differenceSpaceTransformMode = 'line';
-  editObject = 'DIFFERENCE_SPACE';
-  objectEditMode = 'Standby';
+  differenceSpaceModeActive = !AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD;
+  differenceLinePickModeActive = !AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD;
+  differenceSpaceTransformMode = AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD ? 'none' : 'line';
+  if (!AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD) {
+    editObject = 'DIFFERENCE_SPACE';
+    objectEditMode = 'Standby';
+  }
   if (differencePanel) {
-    differencePanel.style.display = 'block';
+    differencePanel.style.display = AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD ? 'none' : 'block';
   }
   toggleRailTube(true);
   setDifferenceLineOptions();
-  refreshDifferenceLineOnlyPreview(true);
-  updateDifferenceLineSelectionStatus();
+  if (!AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD) {
+    refreshDifferenceLineOnlyPreview(true);
+    updateDifferenceLineSelectionStatus();
+  }
 
-  const done = runDifferenceOnSinjyukuFromRailTracks();
+  const done = runDifferenceOnSinjyukuFromRailTracks({
+    keepPreview: !AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD,
+  });
   autoDifferenceLineTriedOnLoad = true;
   if (!done) {
     console.warn('[Difference][line][autoload] run failed.');

@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "version": 4,
+    "savedAt": "2026-03-05T13:30:43.815Z",
+    "groupId": "st_mini_6_2",
+    "mode": "group_copy_reference",
+    "memberCount": 11
+  },
+  "guideAddGrids": [],
+  "steelFrame": {
+    "points": [],
+    "segments": [],
+    "copiedInstances": []
+  },
+  "decorations": [],
+  "pins": [],
+  "generationRuns": [],
+  "copiedStructureGroups": [
+    {
+      "groupId": "st_mini_6_2",
+      "sourceGroupId": "st_mini_6",
+      "center": [
+        -21.669059972375074,
+        9.696399642096178,
+        36.395804251257665
+      ],
+      "rotation": {
+        "x": -2.0673605429512955e-14,
+        "y": -1.0336802714756427e-13,
+        "y_2": -1.0495830448829603e-13,
+        "z": -1.0495830448829603e-13
+      }
+    }
+  ]
+}

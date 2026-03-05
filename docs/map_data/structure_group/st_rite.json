@@ -1,0 +1,78 @@
+{
+  "meta": {
+    "version": 3,
+    "savedAt": "2026-03-04T03:20:22.527Z",
+    "groupId": "st_rite",
+    "mode": "group_only_with_guides",
+    "memberCount": 1
+  },
+  "guideAddGrids": [
+    {
+      "name": "AddPointGuideGridClone",
+      "saveKey": "g7",
+      "position": [
+        -23.25098506359476,
+        8.948635429757285,
+        41.27585351064036
+      ],
+      "quaternion": [
+        0,
+        0.27054373354239003,
+        0,
+        0.9627076857701637
+      ],
+      "guideGridColor": 8956552,
+      "guideGridDisplay": "grid",
+      "guideGridOpacity": 1,
+      "guideMirrorLocked": false,
+      "mirroredFromEdge": null,
+      "mirroredFromSourceGridId": null,
+      "mirroredFromSourceGridKey": null,
+      "mirroredFromInfluencePlaneId": null,
+      "mirroredFromInfluencePlaneKey": null,
+      "guideMillerInfluencePlane": false,
+      "guideMirrorCoordFrame": null,
+      "guideRectSize": {
+        "width": 20,
+        "height": 20
+      },
+      "changeAnglePanelAngles": {
+        "x": 0,
+        "y": 31.39324943587564,
+        "z": 0
+      }
+    }
+  ],
+  "steelFrame": {
+    "points": [],
+    "segments": [],
+    "copiedInstances": []
+  },
+  "decorations": [
+    {
+      "type": "rect_spot_light",
+      "position": [
+        -22.134787077329218,
+        10.299548291540846,
+        43.0155713245352
+      ],
+      "quaternion": [
+        0,
+        0.2713767004556909,
+        0,
+        1
+      ],
+      "scale": [
+        0.12,
+        0.12,
+        0.12
+      ],
+      "planeRefKey": "g7",
+      "baseColor": 2830134,
+      "structureGroupId": "st_rite",
+      "structureGroupScale": 1
+    }
+  ],
+  "pins": [],
+  "generationRuns": []
+}

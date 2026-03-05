@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "version": 4,
+    "savedAt": "2026-03-05T13:30:57.197Z",
+    "groupId": "st_w_4_2",
+    "mode": "group_copy_reference",
+    "memberCount": 7
+  },
+  "guideAddGrids": [],
+  "steelFrame": {
+    "points": [],
+    "segments": [],
+    "copiedInstances": []
+  },
+  "decorations": [],
+  "pins": [],
+  "generationRuns": [],
+  "copiedStructureGroups": [
+    {
+      "groupId": "st_w_4_2",
+      "sourceGroupId": "st_w_4",
+      "center": [
+        -24.324339082612703,
+        9.428074081716671,
+        37.84397550609179
+      ],
+      "rotation": {
+        "x": -3.498610149609871e-14,
+        "y": 7.951386703658791e-14,
+        "y_2": 4.1347210859025696e-14,
+        "z": 4.1347210859025696e-14
+      }
+    }
+  ]
+}
