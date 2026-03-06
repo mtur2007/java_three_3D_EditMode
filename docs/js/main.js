@@ -5001,11 +5001,24 @@ const threeUi = document.getElementById('three-ui');
     if (entries.length < 1) { return 0; }
     const existingIds = new Set(collectStructureGroupIds());
     let createdCount = 0;
+    const rows = entries.map((entry, entryIndex) => ({ entry, entryIndex }));
+    const rowByGroupId = new Map();
+    const restoredAliasMap = new Map();
+    rows.forEach((row) => {
+      const gid = String(row?.entry?.groupId || '').trim();
+      if (gid && !rowByGroupId.has(gid)) {
+        rowByGroupId.set(gid, row);
+      }
+    });
 
-    entries.forEach((entry, entryIndex) => {
+    const completedKeys = new Set();
+    const visitingKeys = new Set();
+
+    const restoreSingleEntry = (entry, entryIndex) => {
       const sourceIdRaw = String(entry?.sourceGroupId || '').trim();
-      if (!sourceIdRaw) { return; }
-      const sourceId = resolveRuntimeStructureGroupIdFromSourceId(sourceIdRaw) || sourceIdRaw;
+      if (!sourceIdRaw) { return false; }
+      const sourceAliasId = restoredAliasMap.get(sourceIdRaw) || '';
+      const sourceId = sourceAliasId || resolveRuntimeStructureGroupIdFromSourceId(sourceIdRaw) || sourceIdRaw;
       const beforeCreatedCount = createdCount;
       console.info('[group_copy_restore] resolve source', {
         entryIndex,
@@ -5024,7 +5037,7 @@ const threeUi = document.getElementById('three-ui');
           sourceGroupIdResolved: sourceId,
           existingGroupIds: collectStructureGroupIds(),
         });
-        return;
+        return false;
       }
 
       const centerRaw = Array.isArray(entry?.center) ? entry.center : [0, 0, 0];
@@ -5036,7 +5049,7 @@ const threeUi = document.getElementById('three-ui');
       const savedAngles = parseSavedGroupRotationAngles(entry);
 
       const sourcePose = computeStructureGroupPoseFromMembers(sourceMembers);
-      if (!sourcePose) { return; }
+      if (!sourcePose) { return false; }
       const sourceCenter = sourcePose.center;
       const sourceQuat = sourcePose.quaternion;
 
@@ -5056,8 +5069,6 @@ const threeUi = document.getElementById('three-ui');
         if (mode === 'relative_from_copy') {
           return q;
         }
-        // mode 未指定で単位クォータニオンの場合は「回転なし」を優先する。
-        // （旧形式の自動相対化で意図せず回転が入るのを防ぐ）
         const isIdentityQuat = Math.abs(q.x) < 1e-8
           && Math.abs(q.y) < 1e-8
           && Math.abs(q.z) < 1e-8
@@ -5065,7 +5076,6 @@ const threeUi = document.getElementById('three-ui');
         if (!mode && isIdentityQuat) {
           return q;
         }
-        // 旧形式は絶対姿勢保存だったため相対化する。
         return q.multiply(sourceQuat.clone().invert()).normalize();
       })();
       const requestedGroupId = String(entry?.groupId || '').trim();
@@ -5086,6 +5096,16 @@ const threeUi = document.getElementById('three-ui');
         existingIds.add(candidate);
         return candidate;
       })();
+      if (requestedGroupId) {
+        restoredAliasMap.set(requestedGroupId, newGroupId);
+        // copiedStructureGroups 同士（ファイル跨ぎ含む）の sourceGroupId 解決で使えるよう、
+        // 「要求ID -> 実際に復元されたID」の対応をランタイム索引へ残す。
+        structureGroupSourceById.set(newGroupId, {
+          sourceTag: 'copied_runtime',
+          sourceGroupId: requestedGroupId,
+          sourceKey: '',
+        });
+      }
 
       const sourceToCopiedPoint = new Map();
       const copiedPointsForRotate = [];
@@ -5231,11 +5251,65 @@ const threeUi = document.getElementById('three-ui');
       console.info('[group_copy_restore] restored entry', {
         entryIndex,
         targetGroupIdRequested: String(entry?.groupId || '').trim(),
+        targetGroupIdActual: newGroupId,
         sourceGroupIdRaw: sourceIdRaw,
         sourceGroupIdResolved: sourceId,
         sourceMemberCount: sourceMembers.length,
         createdObjects: createdCount - beforeCreatedCount,
+        targetCenter: [targetCenter.x, targetCenter.y, targetCenter.z],
       });
+      console.info(
+        `[group_copy_restore] restored entry idx=${entryIndex} targetReq=${String(entry?.groupId || '').trim() || '-'} `
+        + `targetActual=${newGroupId || '-'} `
+        + `sourceRaw=${sourceIdRaw || '-'} sourceResolved=${sourceId || '-'} `
+        + `sourceMembers=${sourceMembers.length} created=${createdCount - beforeCreatedCount} `
+        + `center=[${targetCenter.x.toFixed(3)},${targetCenter.y.toFixed(3)},${targetCenter.z.toFixed(3)}]`
+      );
+      return createdCount > beforeCreatedCount;
+    };
+
+    const resolveEntryRecursively = (row) => {
+      const entry = row?.entry;
+      const entryIndex = Number(row?.entryIndex);
+      if (!entry || !Number.isFinite(entryIndex)) { return false; }
+      const requestedGroupId = String(entry?.groupId || '').trim();
+      const visitKey = requestedGroupId || `__idx_${entryIndex}`;
+      if (completedKeys.has(visitKey)) { return true; }
+      if (visitingKeys.has(visitKey)) {
+        console.warn('[group_copy_restore] cyclic dependency detected', {
+          entryIndex,
+          groupId: requestedGroupId || null,
+          sourceGroupId: String(entry?.sourceGroupId || '').trim() || null,
+        });
+        return false;
+      }
+      visitingKeys.add(visitKey);
+      const sourceIdRaw = String(entry?.sourceGroupId || '').trim();
+      const sourceAliasId = restoredAliasMap.get(sourceIdRaw) || '';
+      let sourceIdResolved = sourceAliasId || resolveRuntimeStructureGroupIdFromSourceId(sourceIdRaw) || sourceIdRaw;
+      let sourceExists = getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .some((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === sourceIdResolved);
+      if (!sourceExists && sourceIdRaw) {
+        const dep = rowByGroupId.get(sourceIdRaw);
+        if (dep && dep !== row) {
+          resolveEntryRecursively(dep);
+          sourceIdResolved = restoredAliasMap.get(sourceIdRaw) || resolveRuntimeStructureGroupIdFromSourceId(sourceIdRaw) || sourceIdRaw;
+          sourceExists = getConstructionCopyTargets()
+            .filter((mesh) => mesh?.parent)
+            .some((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === sourceIdResolved);
+        }
+      }
+      const ok = sourceExists ? restoreSingleEntry(entry, entryIndex) : false;
+      visitingKeys.delete(visitKey);
+      if (ok) {
+        completedKeys.add(visitKey);
+      }
+      return ok;
+    };
+
+    rows.forEach((row) => {
+      resolveEntryRecursively(row);
     });
 
     if (createdCount > 0) {
@@ -11717,7 +11791,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   if (appendDecorationCount > 0) {
     restoreDecorationsState(decorationStates, keyToGrid);
   }
-  restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
+  const restoredCopiedObjectCount = restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
   registerStructureGroupSourceMappings(mapped.remappedEntries, sourceTag);
   syncStructureGroupSequenceFromExisting();
   setRailConstructionGroupOptions();
@@ -11728,6 +11802,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     segmentCount: appendSegmentCount,
     decorationCount: appendDecorationCount,
     copiedGroupCount: appendCopiedGroupCount,
+    copiedGroupRestoredObjectCount: Number(restoredCopiedObjectCount) || 0,
     remappedGroupCount: mapped.remappedCount || 0,
   };
 }
@@ -11798,6 +11873,10 @@ async function autoLoadStructureGroupsFromFolder() {
   if (structureGroupFolderAutoLoaded) { return; }
   structureGroupFolderAutoLoaded = true;
   const files = await fetchStructureGroupFileListFromFolder(STRUCTURE_GROUP_FOLDER_URL);
+  console.info('[structure_group] discovered files', {
+    count: Array.isArray(files) ? files.length : 0,
+    files,
+  });
   if (!Array.isArray(files) || files.length < 1) {
     return;
   }
@@ -11824,16 +11903,26 @@ async function autoLoadStructureGroupsFromFolder() {
       console.warn('[structure_group] preload failed', { url, err });
     }
   }
+  console.info('[structure_group] preload rows', sourceRows.map((row) => ({
+    sourceTag: row.sourceTag,
+    isCopyReference: row.isCopyReference,
+    url: row.url,
+  })));
+  const hasMini42 = sourceRows.some((row) => String(row?.sourceTag || '').trim() === 'st_mini_4_2');
+  if (!hasMini42) {
+    console.warn('[structure_group] missing sourceTag in preload rows: st_mini_4_2', {
+      sourceTags: sourceRows.map((row) => row.sourceTag),
+    });
+  }
   // 元グループを先に復元し、その後でコピー参照を復元する。
-  const orderedRows = sourceRows
-    .filter((row) => !row.isCopyReference)
-    .concat(sourceRows.filter((row) => row.isCopyReference));
+  const baseRows = sourceRows.filter((row) => !row.isCopyReference);
+  const copyRows = sourceRows.filter((row) => row.isCopyReference);
   let loadedFiles = 0;
   let totalSegments = 0;
   let totalDecorations = 0;
   let remappedGroups = 0;
-  for (let i = 0; i < orderedRows.length; i += 1) {
-    const row = orderedRows[i];
+  for (let i = 0; i < baseRows.length; i += 1) {
+    const row = baseRows[i];
     try {
       const result = appendCreateModeGroupsPayload(row.payload, { sourceTag: row.sourceTag });
       loadedFiles += 1;
@@ -11843,6 +11932,54 @@ async function autoLoadStructureGroupsFromFolder() {
     } catch (err) {
       console.warn('[structure_group] load failed', { url: row.url, err });
     }
+  }
+  // copiedStructureGroups の参照先が別ファイルにある場合に備えて、
+  // 依存が揃うまで複数パスで再試行する。
+  const pendingCopyRows = copyRows.slice();
+  let pass = 0;
+  while (pendingCopyRows.length > 0 && pass <= copyRows.length) {
+    pass += 1;
+    let progressed = false;
+    const retryRows = [];
+    for (let i = 0; i < pendingCopyRows.length; i += 1) {
+      const row = pendingCopyRows[i];
+      try {
+        const result = appendCreateModeGroupsPayload(row.payload, { sourceTag: row.sourceTag });
+        const copiedCount = Number(result?.copiedGroupCount) || 0;
+        const copiedRestoredCount = Number(result?.copiedGroupRestoredObjectCount) || 0;
+        if (copiedCount < 1 || copiedRestoredCount > 0) {
+          loadedFiles += 1;
+          totalSegments += Number(result?.segmentCount) || 0;
+          totalDecorations += Number(result?.decorationCount) || 0;
+          remappedGroups += Number(result?.remappedGroupCount) || 0;
+          progressed = true;
+        } else {
+          retryRows.push(row);
+          console.info('[structure_group] retry copy reference', {
+            sourceTag: row.sourceTag,
+            url: row.url,
+            copiedCount,
+            copiedRestoredCount,
+          });
+        }
+      } catch (err) {
+        console.warn('[structure_group] load failed', { url: row.url, err });
+      }
+    }
+    if (!progressed) {
+      pendingCopyRows.splice(0, pendingCopyRows.length, ...retryRows);
+      break;
+    }
+    pendingCopyRows.splice(0, pendingCopyRows.length, ...retryRows);
+  }
+  if (pendingCopyRows.length > 0) {
+    console.warn('[structure_group] copy references pending after retry', pendingCopyRows.map((row) => ({
+      sourceTag: row.sourceTag,
+      url: row.url,
+    })));
+    pendingCopyRows.forEach((row) => {
+      console.warn('[structure_group] copy reference unresolved', { url: row.url, sourceTag: row.sourceTag });
+    });
   }
   if (loadedFiles > 0) {
     const statusText = `structure_group 自動読込: ${loadedFiles} files / segment ${totalSegments} / decoration ${totalDecorations} / group再採番 ${remappedGroups}`;
