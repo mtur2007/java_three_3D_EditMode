@@ -7548,6 +7548,51 @@ const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
 };
 const extraCommuterTrainModels = {};
 
+function isPicPrefixedNode(node) {
+  const matchesPicPrefix = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) { return false; }
+    if (normalized.startsWith('pic')) { return true; }
+    return normalized.split(/[\s._:-]+/).some((token) => token.startsWith('pic'));
+  };
+
+  if (matchesPicPrefix(node?.name)) { return true; }
+  if (matchesPicPrefix(node?.userData?.name)) { return true; }
+
+  const mats = Array.isArray(node?.material) ? node.material : [node?.material];
+  if (mats.some((mat) => matchesPicPrefix(mat?.name))) { return true; }
+
+  let parent = node?.parent || null;
+  while (parent) {
+    if (matchesPicPrefix(parent.name)) { return true; }
+    parent = parent.parent || null;
+  }
+  return false;
+}
+
+function forEachNodeMaterial(node, callback) {
+  const mats = Array.isArray(node?.material) ? node.material : [node?.material];
+  mats.forEach((mat) => {
+    if (mat) { callback(mat); }
+  });
+}
+
+function setTrainNodeEnvMap(node, targetEnvMap) {
+  if (!node?.isMesh) { return; }
+  if (isPicPrefixedNode(node)) {
+    forEachNodeMaterial(node, (mat) => {
+      mat.envMap = null;
+      mat.envMapIntensity = 0;
+      mat.needsUpdate = true;
+    });
+    return;
+  }
+  forEachNodeMaterial(node, (mat) => {
+    mat.envMap = targetEnvMap;
+    mat.needsUpdate = true;
+  });
+}
+
 async function loadExtraCommuterTrainModels() {
   const loader = new GLTFLoader();
   const entries = Object.entries(EXTRA_COMMUTER_TRAIN_MODEL_PATHS);
@@ -7567,11 +7612,7 @@ async function loadExtraCommuterTrainModels() {
           if (!node?.isMesh) { return; }
           node.castShadow = true;
           node.receiveShadow = true;
-          if (Array.isArray(node.material)) {
-            node.material.forEach((m) => { if (m) { m.needsUpdate = true; } });
-          } else if (node.material) {
-            node.material.needsUpdate = true;
-          }
+          setTrainNodeEnvMap(node, scene.ref);
         });
         extraCommuterTrainModels[name] = root;
         resolve();
@@ -7698,10 +7739,9 @@ function TextureToggle(){
      
       car.traverse((node) => {
         if (node.isMesh) {
-          node.material.envMap = scene.ref;
-          node.material.needsUpdate = true;
+          setTrainNodeEnvMap(node, scene.ref);
           if (node.name.includes('平面')) {
-            const tex = node.material.map;
+            const tex = Array.isArray(node.material) ? node.material[0]?.map : node.material?.map;
             node.material = new THREE.MeshBasicMaterial({
               map: tex,
               // transparent: true,
