@@ -7482,7 +7482,7 @@ const loader = new THREE.TextureLoader();
     envMap = texture;
   });
 
-loader.load('textures/shanghai_bund_4k.jpg', (texture_night) => {
+loader.load('textures/moonless_golf.jpg', (texture_night) => {
   texture_night.mapping = THREE.EquirectangularReflectionMapping;
   texture_night.colorSpace = THREE.SRGBColorSpace;
   // scene.background = texture_night;
@@ -7549,22 +7549,20 @@ const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
 const extraCommuterTrainModels = {};
 
 function isPicPrefixedNode(node) {
-  const matchesPicPrefix = (value) => {
+  const matchesPicName = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
-    if (!normalized) { return false; }
-    if (normalized.startsWith('pic')) { return true; }
-    return normalized.split(/[\s._:-]+/).some((token) => token.startsWith('pic'));
+    return /^pic(?:\.\d+)?$/.test(normalized);
   };
 
-  if (matchesPicPrefix(node?.name)) { return true; }
-  if (matchesPicPrefix(node?.userData?.name)) { return true; }
+  if (matchesPicName(node?.name)) { return true; }
+  if (matchesPicName(node?.userData?.name)) { return true; }
 
   const mats = Array.isArray(node?.material) ? node.material : [node?.material];
-  if (mats.some((mat) => matchesPicPrefix(mat?.name))) { return true; }
+  if (mats.some((mat) => matchesPicName(mat?.name))) { return true; }
 
   let parent = node?.parent || null;
   while (parent) {
-    if (matchesPicPrefix(parent.name)) { return true; }
+    if (matchesPicName(parent.name)) { return true; }
     parent = parent.parent || null;
   }
   return false;
@@ -7580,11 +7578,24 @@ function forEachNodeMaterial(node, callback) {
 function setTrainNodeEnvMap(node, targetEnvMap) {
   if (!node?.isMesh) { return; }
   if (isPicPrefixedNode(node)) {
-    forEachNodeMaterial(node, (mat) => {
-      mat.envMap = null;
-      mat.envMapIntensity = 0;
-      mat.needsUpdate = true;
-    });
+    const toBasic = (mat) => {
+      if (!mat) { return mat; }
+      if (mat.isMeshBasicMaterial) { return mat; }
+      return new THREE.MeshBasicMaterial({
+        map: mat.map || null,
+        color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
+        transparent: Boolean(mat.transparent),
+        opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
+        side: mat.side,
+        alphaTest: typeof mat.alphaTest === 'number' ? mat.alphaTest : 0,
+      });
+    };
+    if (Array.isArray(node.material)) {
+      node.material = node.material.map((mat) => toBasic(mat));
+    } else {
+      node.material = toBasic(node.material);
+    }
+    forEachNodeMaterial(node, (mat) => { mat.needsUpdate = true; });
     return;
   }
   forEachNodeMaterial(node, (mat) => {
