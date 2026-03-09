@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>都市を走る鉄道模型 | Edit Portal</title>
+  <meta name="description" content="編集ページ専用の入口です。編集枠を選択して既存ワールドを表示できます。" />
+  <link rel="stylesheet" href="./css/public.css" />
+  <style>
+    .hero {
+      grid-template-columns: 1.2fr 0.8fr;
+      border: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      padding: 0 !important;
+    }
+    .page > section:not(.hero) {
+      border-width: 1px;
+      border-style: dashed;
+      border-color: rgba(255, 189, 110, 0.52);
+      border-radius: 16px;
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow);
+      background:
+        linear-gradient(180deg, rgba(36, 21, 8, 0.35), rgba(16, 10, 3, 0.45)),
+        var(--panel);
+    }
+    .hero-copy {
+      padding: clamp(18px, 3vw, 30px);
+      border: 1px solid rgba(255, 182, 93, 0.9);
+      border-style: dashed;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(9, 16, 30, 0.9), rgba(7, 13, 24, 0.9));
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+    }
+    .hero .status-board {
+      border-style: solid;
+    }
+    .edit-page-note {
+      margin: 10px 0 0;
+      color: #ffcf9b;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+    @media (max-width: 920px) {
+      .hero {
+        grid-template-columns: 1fr !important;
+      }
+      .hero .status-board {
+        margin-top: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-noise" aria-hidden="true"></div>
+
+  <header class="top-bar">
+    <p class="brand">TOKYO DIORAMA / <span class="brand-yellow">EDIT</span> PORTAL</p>
+    <a class="ghost-btn" href="./public.html">公開ページへ</a>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="temp-ribbon">TEMPORARY EDIT ENTRY</p>
+        <!-- <p class="eyebrow">3Dジオラマ</p> -->
+        <h1>🏗️ 編集ページ</h1>
+        <p class="lead">
+          編集用ワールドを管理するための専用ページです。
+          下の編集枠から対象ワールドを選択して、表示を開始してください。
+        </p>
+        <p class="edit-page-note">※ この入口は仮設デザインで運用中です。</p>
+      </div>
+
+      <aside class="status-board" aria-label="編集ページ情報">
+        <p class="status-title">LOGIN INFO</p>
+        <div class="status-row">
+          <span>ログイン状態</span>
+          <strong>未ログイン</strong>
+        </div>
+        <div class="status-row">
+          <span>ユーザーID</span>
+          <strong>guest_user</strong>
+        </div>
+        <div class="status-row">
+          <span>権限</span>
+          <strong>editor (仮)</strong>
+        </div>
+        <div class="status-row">
+          <span>最終ログイン</span>
+          <strong>----/--/-- --:--</strong>
+        </div>
+        <p class="ticker" aria-live="polite">
+          マップの読み込み/閲覧にはログインが必要です。
+        </p>
+      </aside>
+    </section>
+
+    <section class="editor-lab" id="edit-lab" aria-label="編集枠">
+      <div class="viewer-head">
+        <p class="meta-label">EDIT LAB</p>
+        <p class="meta-value">編集枠を選んで詳細を確認</p>
+      </div>
+      <div class="edit-grid" role="list" aria-label="編集枠一覧">
+        <button class="edit-slot is-active" type="button" role="listitem" data-slot="track">
+          <span class="slot-id">SLOT 01</span>
+          <strong>WORLD_1</strong>
+          <span class="slot-private">private</span>
+        </button>
+        <button class="edit-slot" type="button" role="listitem" data-slot="structure">
+          <span class="slot-id">SLOT 02</span>
+          <strong>WORLD_2</strong>
+          <span class="slot-private">private</span>
+        </button>
+        <button class="edit-slot" type="button" role="listitem" data-slot="scene">
+          <span class="slot-id">SLOT 03</span>
+          <strong>WORLD_3</strong>
+          <span class="slot-private">private</span>
+        </button>
+      </div>
+
+      <div class="edit-detail" id="edit-detail" aria-live="polite">
+        <p class="detail-label">選択中</p>
+        <h3 id="detail-title">SLOT 01 / WORLD_1</h3>
+        <p id="detail-desc">公開前の編集ワールドです。現在の状態: <span class="detail-private">private</span></p>
+        <a class="primary-btn start-world-btn" id="start-world-btn" href="./index.html">表示を開始する</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Train_EditMode_demo / Edit Portal Prototype</p>
+  </footer>
+
+  <script src="./js/public.js"></script>
+</body>
+</html>

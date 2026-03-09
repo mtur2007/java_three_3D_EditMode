@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>都市を走る鉄道模型 | Public View</title>
+  <meta name="description" content="都市を走る鉄道模型の公開向けビュー。雰囲気と見どころを直感的に楽しめるデザインページです。" />
+  <link rel="stylesheet" href="./css/public.css" />
+</head>
+<body>
+  <div class="bg-noise" aria-hidden="true"></div>
+
+  <header class="top-bar">
+    <p class="brand">TOKYO DIORAMA / <span class="brand-glow-green">PUBLIC</span> VIEW</p>
+    <a class="ghost-btn" href="./edit.html">編集ページへ</a>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">都市マップ & 簡易エディターが使用可能な 3Dジオラマ</p>
+        <h1>都市を走る鉄道模型</h1>
+        <p class="lead">
+          ユーザによる編集が行われたワールドが公開されています。<br>
+          表示を開始する からぜひお試しください。
+        </p>
+        <div class="hero-actions">
+          <a class="primary-btn" href="./index.html">表示を開始する</a>
+          <button class="ghost-btn" type="button" id="show-features-btn">公開ワールドの閲覧方法</button>
+        </div>
+      </div>
+
+      <aside class="status-board" aria-label="運行情報">
+        <p class="status-title">LOGIN INFO</p>
+        <div class="status-row">
+          <span>ログイン状態</span>
+          <strong>未ログイン</strong>
+        </div>
+        <div class="status-row">
+          <span>ユーザーID</span>
+          <strong>guest_user</strong>
+        </div>
+        <div class="status-row">
+          <span>権限</span>
+          <strong>viewer (仮)</strong>
+        </div>
+        <div class="status-row">
+          <span>最終ログイン</span>
+          <strong>----/--/-- --:--</strong>
+        </div>
+        <p class="ticker" aria-live="polite">
+          マップの読み込み/閲覧にはログインが必要です。
+        </p>
+      </aside>
+    </section>
+
+    <section class="features is-collapsed" id="features" hidden>
+      <article class="feature-card">
+        <p class="card-num">01</p>
+        <h2>ワールドを探す</h2>
+        <p>プレビューから気になるワールドを見つける。</p>
+      </article>
+      <article class="feature-card">
+        <p class="card-num">02</p>
+        <h2>ワールドの詳細を表示</h2>
+        <p>プレビューをクリック/タップして、ワールドの詳細情報が載ったウィンドウを表示します。</p>
+      </article>
+      <article class="feature-card">
+        <p class="card-num">03</p>
+        <h2>閲覧の開始</h2>
+        <p>表示されたウィンドウの「表示を開始する」ボタンをクリックして、マップの閲覧を開始できます。</p>
+      </article>
+    </section>
+
+    <section class="viewer-area temp-area" id="sample-map" aria-label="臨時サンプルマップ">
+      <!-- <p class="temp-ribbon">TEMPORARY RELEASE</p> -->
+      <div class="viewer-head">
+        <p class="meta-label">🟨 臨時 SAMPLE MAP</p>
+        <p class="meta-value">渋谷</p>
+      </div>
+      <div class="map-grid single" role="list" aria-label="臨時サンプルマップ一覧">
+        <article
+          class="map-card map-s is-active"
+          role="button"
+          tabindex="0"
+          aria-label="臨時 SAMPLE MAP / 渋谷"
+          data-map-key="sample_shibuya"
+          data-map-title="臨時 SAMPLE MAP / 渋谷"
+          data-map-desc="臨時公開用のサンプルマップです。検証用のためステータスは private sample です。"
+          data-map-href="./index.html?map=sample_shibuya">
+          <div class="map-preview">
+            <p class="temp-stamp">PRIVATE SAMPLE</p>
+            <div class="viewer-overlay">
+              <p class="overlay-head">渋谷</p>
+              <p class="overlay-sub">臨時公開用のサンプルマップ</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">臨時 SAMPLE MAP / 渋谷</p>
+            <p class="map-tags">sample ・ temporary</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="viewer-area" id="viewer-area" aria-label="公開マップ一覧">
+      <div class="viewer-head">
+        <p class="meta-label">🟢 PUBLIC MAP LIST</p>
+        <p class="meta-value">1マップにつき1プレビュー</p>
+      </div>
+      <div class="map-grid" role="list" aria-label="公開マップ">
+        <article
+          class="map-card map-a"
+          role="button"
+          tabindex="0"
+          aria-label="Map 01 / Ochanomizu Core"
+          data-map-key="ochanomizu_core"
+          data-map-title="Map 01 / Ochanomizu Core"
+          data-map-desc="駅前広場から入る導入カットを中心に、全体構成を確認できるメインワールドです。"
+          data-map-href="./index.html?map=ochanomizu_core">
+          <div class="map-preview">
+            <div class="viewer-overlay">
+              <p class="overlay-head">御茶ノ水 Main</p>
+              <p class="overlay-sub">駅前広場から入る導入カット</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">Map 01 / Ochanomizu Core</p>
+            <p class="map-tags">day/night ・ walkthrough</p>
+          </div>
+        </article>
+
+        <article
+          class="map-card map-b"
+          role="button"
+          tabindex="0"
+          aria-label="Map 02 / Track Crossing"
+          data-map-key="track_crossing"
+          data-map-title="Map 02 / Track Crossing"
+          data-map-desc="中央線・総武線の交差ポイントを中心に、線路構成を確認するワールドです。"
+          data-map-href="./index.html?map=track_crossing">
+          <div class="map-preview">
+            <div class="viewer-overlay">
+              <p class="overlay-head">Crossing View</p>
+              <p class="overlay-sub">中央線・総武線の交差ポイント</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">Map 02 / Track Crossing</p>
+            <p class="map-tags">front view ・ rail focus</p>
+          </div>
+        </article>
+
+        <article
+          class="map-card map-c"
+          role="button"
+          tabindex="0"
+          aria-label="Map 03 / Under Viaduct"
+          data-map-key="under_viaduct"
+          data-map-title="Map 03 / Under Viaduct"
+          data-map-desc="高架下の密度と奥行きにフォーカスした、ディテール確認向けワールドです。"
+          data-map-href="./index.html?map=under_viaduct">
+          <div class="map-preview">
+            <div class="viewer-overlay">
+              <p class="overlay-head">Viaduct Side</p>
+              <p class="overlay-sub">高架下の密度と奥行きの演出</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">Map 03 / Under Viaduct</p>
+            <p class="map-tags">detail mode ・ close look</p>
+          </div>
+        </article>
+
+        <article
+          class="map-card map-d"
+          role="button"
+          tabindex="0"
+          aria-label="Map 04 / Platform Dusk"
+          data-map-key="platform_dusk"
+          data-map-title="Map 04 / Platform Dusk"
+          data-map-desc="夕景時間帯のホーム周辺を確認する、シネマティック調整向けワールドです。"
+          data-map-href="./index.html?map=platform_dusk">
+          <div class="map-preview">
+            <div class="viewer-overlay">
+              <p class="overlay-head">Platform Dusk</p>
+              <p class="overlay-sub">夕景で見るホーム周辺</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">Map 04 / Platform Dusk</p>
+            <p class="map-tags">cinematic ・ evening</p>
+          </div>
+        </article>
+
+        <article
+          class="map-card map-e"
+          role="button"
+          tabindex="0"
+          aria-label="Map 05 / Night Tour"
+          data-map-key="night_tour"
+          data-map-title="Map 05 / Night Tour"
+          data-map-desc="夜景モード時の光源バランスと視認性を確認するワールドです。"
+          data-map-href="./index.html?map=night_tour">
+          <div class="map-preview">
+            <div class="viewer-overlay">
+              <p class="overlay-head">Night Highlight</p>
+              <p class="overlay-sub">夜景モードのハイライト</p>
+            </div>
+          </div>
+          <div class="map-meta">
+            <p class="map-title">Map 05 / Night Tour</p>
+            <p class="map-tags">night scene ・ lighting</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>Train_EditMode_demo / Public Design Prototype</p>
+  </footer>
+
+  <div class="fixed-modal" id="map-modal" aria-hidden="true">
+    <div class="fixed-modal__backdrop" data-modal-close></div>
+    <section class="fixed-modal__panel" role="dialog" aria-modal="true" aria-labelledby="map-modal-title">
+      <button class="fixed-modal__close" type="button" id="map-modal-close" aria-label="閉じる">×</button>
+      <p class="detail-label">選択中マップ</p>
+      <h3 id="map-modal-title">臨時 SAMPLE MAP / 渋谷</h3>
+      <p id="map-modal-desc">臨時公開用のサンプルマップです。検証用のためステータスは private sample です。</p>
+      <a class="primary-btn start-world-btn" id="map-modal-start-btn" href="./index.html?map=sample_shibuya">表示を開始する</a>
+    </section>
+  </div>
+
+  <script src="./js/public.js"></script>
+</body>
+</html>

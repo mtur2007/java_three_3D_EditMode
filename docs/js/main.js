@@ -531,6 +531,16 @@ const threeUi = document.getElementById('three-ui');
     applyGhostVisibility(rotationInputZ, rotationInputZGhost, rotationInputZMask);
   }
 
+  function normalizeLeadingZeroDecimalInput(raw) {
+    const text = String(raw ?? '');
+    const match = text.match(/^([+-]?)0(\d+)$/);
+    if (!match) { return text; }
+    const sign = match[1] || '';
+    const digits = match[2] || '';
+    if (!digits) { return text; }
+    return `${sign}0.${digits}`;
+  }
+
   [
     [rotationInputX, rotationInputXMask],
     [rotationInputY, rotationInputYMask],
@@ -541,6 +551,12 @@ const threeUi = document.getElementById('three-ui');
       ? rotationInputXGhost
       : (inputEl === rotationInputY ? rotationInputYGhost : rotationInputZGhost);
     inputEl.addEventListener('input', () => {
+      const normalized = normalizeLeadingZeroDecimalInput(inputEl.value);
+      if (normalized !== inputEl.value) {
+        inputEl.value = normalized;
+        const pos = inputEl.value.length;
+        inputEl.setSelectionRange?.(pos, pos);
+      }
       syncInputMask(inputEl, maskEl);
       applyGhostVisibility(inputEl, ghostEl, maskEl);
     });
@@ -20970,7 +20986,23 @@ function coord_DisplayTo3D(Axis_num=false){
     if (planeRef?.quaternion) {
       normal.applyQuaternion(planeRef.quaternion).normalize();
     }
-    const anchor = planeRef?.position ? planeRef.position : choice_object.position;
+    const useVirtualPlaneAnchor =
+      movePointCoordinateMode === 'grid'
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'MOVE_EXISTING'
+      && movePointPanelActive;
+    let anchor = planeRef?.position ? planeRef.position : choice_object.position;
+    if (useVirtualPlaneAnchor && planeRef?.position) {
+      const baseYAtChoice = computePlaneYFromPlaneRefAtXZ(
+        planeRef,
+        choice_object.position.x,
+        choice_object.position.z,
+        choice_object.position.y,
+      );
+      const offsetY = choice_object.position.y - baseYAtChoice;
+      anchor = planeRef.position.clone();
+      anchor.y += offsetY;
+    }
     raycaster.setFromCamera(mouse, camera);
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
     const hit = new THREE.Vector3();
@@ -21243,6 +21275,7 @@ let constructionStrokeLastPointId = null;
 let constructionStrokeStartPoint = null;
 let constructionStrokePreviewLine = null;
 const MOVE_CLICK_THRESHOLD = 4;
+const MOVE_POINT_SAFE_RANGE = 10;
 const CONSTRUCTION_STROKE_THRESHOLD = 6;
 let movePlaneMode = 'default';
 let movePlaneAnchor = new THREE.Vector3();
@@ -21688,6 +21721,33 @@ function applyGridHeightDeltaFromPlaneRef(mesh, nextPos) {
   return nextPos;
 }
 
+function clampMovePointBySafetyRange(point, anchor, maxRange = MOVE_POINT_SAFE_RANGE) {
+  if (!point || !anchor || !Number.isFinite(maxRange) || maxRange <= 0) { return point; }
+  if (!move_direction_y) {
+    const dx = point.x - anchor.x;
+    const dz = point.z - anchor.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > maxRange && dist > 1e-8) {
+      const scale = maxRange / dist;
+      point.x = anchor.x + dx * scale;
+      point.z = anchor.z + dz * scale;
+    }
+    return point;
+  }
+  const dy = point.y - anchor.y;
+  if (Math.abs(dy) > maxRange) {
+    point.y = anchor.y + Math.sign(dy) * maxRange;
+  }
+  return point;
+}
+
+function getMovePointSafetyAnchor() {
+  if (camera?.position?.isVector3) {
+    return camera.position;
+  }
+  return moveDragAnchorStart || null;
+}
+
 function handleDrag() {
   syncEfficacyForTransformDrag();
   if (guideRectangleDragActive) {
@@ -21734,6 +21794,17 @@ function handleDrag() {
     point = coord_DisplayTo3D(choice_object.position)
   } else {
     point = coord_DisplayTo3D(choice_object.position)
+  }
+  if (
+    editObject === 'STEEL_FRAME'
+    && objectEditMode === 'MOVE_EXISTING'
+    && movePointPanelActive
+    && point?.isVector3
+  ) {
+    const safetyAnchor = getMovePointSafetyAnchor();
+    if (safetyAnchor) {
+      clampMovePointBySafetyRange(point, safetyAnchor, MOVE_POINT_SAFE_RANGE);
+    }
   }
 
   let changedSteelFramePoints = null;
