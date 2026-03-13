@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { TrainSystem } from './train_system.js';
-import { BASE_WORLD_SCALE, LEGACY_TRACK_SOURCE_SCALE, CITY_BASE_POSITION } from './scale_config.js';
+import { BASE_WORLD_SCALE } from './scale_config.js';
 
 // 必ず three と同バージョンの examples モジュールを使う（あなたは three@0.169 を使っているので合わせる）
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
@@ -60,6 +60,17 @@ ground.receiveShadow = true; // 影を受ける
 ground.name = 'GroundPlane';
 scene.add(ground);
 
+function alignRootVisualCenterToOrigin(root) {
+  if (!root) { return; }
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) { return; }
+  const center = box.getCenter(new THREE.Vector3());
+  root.position.x -= center.x;
+  root.position.z -= center.z;
+  root.updateMatrixWorld(true);
+}
+
 if (onlyRailAndGround) {
   // create モード用の都市モデルだけは利用できるようにする
   const cityLoader = new GLTFLoader();
@@ -71,17 +82,12 @@ if (onlyRailAndGround) {
     (gltf) => {
       const root = gltf.scene || gltf.scenes?.[0];
       if (!root) { return; }
-      root.rotation.y = 100 * Math.PI / 180;
-      const scale = worldScale;
-      const positionScale = scale / LEGACY_TRACK_SOURCE_SCALE;
-      root.position.set(
-        CITY_BASE_POSITION.x * positionScale,
-        CITY_BASE_POSITION.y * positionScale,
-        CITY_BASE_POSITION.z * positionScale,
-      );
-      root.scale.setScalar(scale);
+      root.rotation.y = 0;
+      const currentY = root.position.y;
+      root.position.set(0, currentY, 0);
+      root.scale.setScalar(worldScale);
+      alignRootVisualCenterToOrigin(root);
       root.name = 'sinjyuku_city';
-      root.position.y = 0;
       root.visible = Boolean(scene?.userData?.createModeWorldFocused);
       scene.add(root);
       console.log('[world_creat] sinjyuku_city loaded in onlyRailAndGround mode:', root);
@@ -217,15 +223,11 @@ async function loadModelToScene(modelUrl, options = {}, adjustment=true, sinkans
         }
 
         if (adjustment){
-          root.rotation.y = 100 * Math.PI / 180
-          const scale = worldScale;
-          const position_scale = scale / LEGACY_TRACK_SOURCE_SCALE;
-          root.position.set(
-            CITY_BASE_POSITION.x * position_scale,
-            CITY_BASE_POSITION.y * position_scale,
-            CITY_BASE_POSITION.z * position_scale,
-          );
-          root.scale.setScalar(scale);
+          root.rotation.y = 0
+          const currentY = root.position.y;
+          root.position.set(0, currentY, 0);
+          root.scale.setScalar(worldScale);
+          alignRootVisualCenterToOrigin(root);
         } else {
           root.position.set(0.5,0,0)
           root.scale.setScalar(0.5);

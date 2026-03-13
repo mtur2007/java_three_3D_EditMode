@@ -43,6 +43,12 @@
       font-size: 12px;
       letter-spacing: 0.04em;
     }
+    .edit-auth-note {
+      margin: 8px 0 0;
+      min-height: 1.4em;
+      color: #ffc48d;
+      font-size: 12px;
+    }
     @media (max-width: 920px) {
       .hero {
         grid-template-columns: 1fr !important;
@@ -53,12 +59,16 @@
     }
   </style>
 </head>
-<body>
+<body data-auth-role="editor">
   <div class="bg-noise" aria-hidden="true"></div>
 
   <header class="top-bar">
     <p class="brand">TOKYO DIORAMA / <span class="brand-yellow">EDIT</span> PORTAL</p>
-    <a class="ghost-btn" href="./public.html">公開ページへ</a>
+    <div class="top-bar-actions">
+      <span class="auth-chip" id="auth-chip">GUEST MODE</span>
+      <a class="ghost-btn" href="./public.html">公開ページへ</a>
+      <button class="ghost-btn" type="button" id="auth-toggle-btn">ログイン</button>
+    </div>
   </header>
 
   <main class="page">
@@ -72,30 +82,34 @@
           下の編集枠から対象ワールドを選択して、表示を開始してください。
         </p>
         <p class="edit-page-note">※ この入口は仮設デザインで運用中です。</p>
+        <p class="edit-auth-note" id="edit-auth-note"></p>
       </div>
 
-      <aside class="status-board" aria-label="編集ページ情報">
-        <p class="status-title">LOGIN INFO</p>
-        <div class="status-row">
-          <span>ログイン状態</span>
-          <strong>未ログイン</strong>
-        </div>
-        <div class="status-row">
-          <span>ユーザーID</span>
-          <strong>guest_user</strong>
-        </div>
-        <div class="status-row">
-          <span>権限</span>
-          <strong>editor (仮)</strong>
-        </div>
-        <div class="status-row">
-          <span>最終ログイン</span>
-          <strong>----/--/-- --:--</strong>
-        </div>
-        <p class="ticker" aria-live="polite">
-          マップの読み込み/閲覧にはログインが必要です。
-        </p>
-      </aside>
+      <div class="status-board-wrap">
+        <aside class="status-board" aria-label="編集ページローカルマップローダー">
+          <p class="status-title">LOCAL MAP LOADER</p>
+          <div class="status-row">
+            <span>構造物</span>
+            <strong id="local-structure-file-value">未読込</strong>
+          </div>
+          <div class="status-row">
+            <span>都市</span>
+            <strong id="local-map-file-value">未読込</strong>
+          </div>
+          <div class="status-row">
+            <span>車両</span>
+            <strong id="local-train-file-value">未読込</strong>
+          </div>
+          <div class="local-map-panel" aria-label="ローカルマップファイル読込">
+            <input id="local-map-file-input" class="local-map-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" />
+            <div class="local-map-action-row">
+              <button class="ghost-btn local-map-action-btn" type="button" id="local-map-select-btn">読み込む</button>
+              <button class="primary-btn local-map-action-btn local-map-start-btn" type="button" id="local-map-start-btn" aria-disabled="true" data-auth-protected>表示を開始する</button>
+            </div>
+            <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
+          </div>
+        </aside>
+      </div>
     </section>
 
     <section class="editor-lab" id="edit-lab" aria-label="編集枠">
@@ -123,9 +137,17 @@
 
       <div class="edit-detail" id="edit-detail" aria-live="polite">
         <p class="detail-label">選択中</p>
-        <h3 id="detail-title">SLOT 01 / WORLD_1</h3>
+        <div class="detail-title-row">
+          <h3 id="detail-title">SLOT 01 / WORLD_1</h3>
+          <button class="icon-btn" type="button" id="detail-title-edit-btn" aria-label="タイトルを編集" title="タイトルを編集">✎</button>
+        </div>
+        <input class="detail-title-input" id="detail-title-input" type="text" maxlength="80" hidden />
         <p id="detail-desc">公開前の編集ワールドです。現在の状態: <span class="detail-private">private</span></p>
-        <a class="primary-btn start-world-btn" id="start-world-btn" href="./index.html">表示を開始する</a>
+        <div class="edit-action-row">
+          <a class="primary-btn start-world-btn" id="edit-detail-start-world-btn" href="./index.html" data-auth-protected>表示を開始する</a>
+          <button class="ghost-btn publish-btn" type="button" id="publish-world-btn" data-auth-protected>公開する</button>
+        </div>
+        <p class="edit-save-note" id="edit-save-note" aria-live="polite"></p>
       </div>
     </section>
   </main>
@@ -134,6 +156,35 @@
     <p>Train_EditMode_demo / Edit Portal Prototype</p>
   </footer>
 
-  <script src="./js/public.js"></script>
+  <script type="module" src="./js/public.js"></script>
+  <div class="fixed-modal auth-modal" id="auth-modal" aria-hidden="true">
+    <div class="fixed-modal__backdrop" data-auth-close></div>
+    <section class="fixed-modal__panel auth-modal__panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <button class="fixed-modal__close" type="button" id="auth-modal-close" aria-label="閉じる">×</button>
+      <p class="detail-label">DEMO SIGN-IN</p>
+      <h3 id="auth-modal-title">編集ページへログイン</h3>
+      <p>このブラウザ内だけでログイン状態を保持するデモ認証です。</p>
+      <form class="auth-form" id="auth-form">
+        <label class="auth-field">
+          <span>表示名</span>
+          <input id="auth-display-name" name="displayName" type="text" placeholder="demo_editor" maxlength="40" />
+        </label>
+        <label class="auth-field">
+          <span>メールアドレス</span>
+          <input id="auth-email" name="email" type="email" placeholder="editor@example.com" required />
+        </label>
+        <label class="auth-field">
+          <span>パスワード</span>
+          <input id="auth-password" name="password" type="password" placeholder="password" required />
+        </label>
+        <div class="auth-form-actions">
+          <button class="primary-btn" type="submit">ログインする</button>
+          <button class="ghost-btn" type="button" data-auth-close>閉じる</button>
+        </div>
+      </form>
+      <p class="auth-message" id="auth-message" hidden></p>
+    </section>
+  </div>
+  <script type="module" src="./js/mock_auth.js"></script>
 </body>
 </html>

@@ -12,7 +12,11 @@
 
   <header class="top-bar">
     <p class="brand">TOKYO DIORAMA / <span class="brand-glow-green">PUBLIC</span> VIEW</p>
-    <a class="ghost-btn" href="./edit.html">編集ページへ</a>
+    <div class="top-bar-actions">
+      <span class="auth-chip" id="auth-chip">GUEST MODE</span>
+      <a class="ghost-btn" href="./edit.html" data-auth-requires-login="true">編集ページへ</a>
+      <button class="ghost-btn" type="button" id="auth-toggle-btn">ログイン</button>
+    </div>
   </header>
 
   <main class="page">
@@ -25,33 +29,37 @@
           表示を開始する からぜひお試しください。
         </p>
         <div class="hero-actions">
-          <a class="primary-btn" href="./index.html">表示を開始する</a>
+          <a class="primary-btn" id="hero-start-link" href="./index.html">表示を開始する</a>
           <button class="ghost-btn" type="button" id="show-features-btn">公開ワールドの閲覧方法</button>
         </div>
       </div>
 
-      <aside class="status-board" aria-label="運行情報">
-        <p class="status-title">LOGIN INFO</p>
-        <div class="status-row">
-          <span>ログイン状態</span>
-          <strong>未ログイン</strong>
-        </div>
-        <div class="status-row">
-          <span>ユーザーID</span>
-          <strong>guest_user</strong>
-        </div>
-        <div class="status-row">
-          <span>権限</span>
-          <strong>viewer (仮)</strong>
-        </div>
-        <div class="status-row">
-          <span>最終ログイン</span>
-          <strong>----/--/-- --:--</strong>
-        </div>
-        <p class="ticker" aria-live="polite">
-          マップの読み込み/閲覧にはログインが必要です。
-        </p>
-      </aside>
+      <div class="status-board-wrap">
+        <aside class="status-board" aria-label="運行情報">
+          <p class="status-title">LOCAL MAP LOADER</p>
+          <div class="status-row">
+            <span>構造物</span>
+            <strong id="local-structure-file-value">未読込</strong>
+          </div>
+          <div class="status-row">
+            <span>都市</span>
+            <strong id="local-map-file-value">未読込</strong>
+          </div>
+          <div class="status-row">
+            <span>車両</span>
+            <strong id="local-train-file-value">未読込</strong>
+          </div>
+
+          <div class="local-map-panel" aria-label="ローカルマップファイル読込">
+            <input id="local-map-file-input" class="local-map-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" />
+            <div class="local-map-action-row">
+              <button class="ghost-btn local-map-action-btn" type="button" id="local-map-select-btn">読み込む</button>
+              <button class="primary-btn local-map-action-btn local-map-start-btn" type="button" id="local-map-start-btn" aria-disabled="true">表示を開始する</button>
+            </div>
+            <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
+          </div>
+        </aside>
+      </div>
     </section>
 
     <section class="features is-collapsed" id="features" hidden>
@@ -62,13 +70,13 @@
       </article>
       <article class="feature-card">
         <p class="card-num">02</p>
-        <h2>ワールドの詳細を表示</h2>
-        <p>プレビューをクリック/タップして、ワールドの詳細情報が載ったウィンドウを表示します。</p>
+        <h2>ワールドのデータ(zip)を保存</h2>
+        <p>プレビューをクリック/タップして表示されたウィンドウ内の「ダウンロードする」からマップデータをダウンロードできます。</p>
       </article>
       <article class="feature-card">
         <p class="card-num">03</p>
         <h2>閲覧の開始</h2>
-        <p>表示されたウィンドウの「表示を開始する」ボタンをクリックして、マップの閲覧を開始できます。</p>
+        <p>ローカルマップローダーでマップファイルを指定して、「表示を開始する」を選択すると、マップを閲覧できます。</p>
       </article>
     </section>
 
@@ -222,6 +230,10 @@
     <p>Train_EditMode_demo / Public Design Prototype</p>
   </footer>
 
+  <button class="ghost-btn floating-features-shortcut" type="button" id="floating-features-btn" aria-label="公開ワールドの閲覧方法">
+    公開ワールドの閲覧方法
+  </button>
+
   <div class="fixed-modal" id="map-modal" aria-hidden="true">
     <div class="fixed-modal__backdrop" data-modal-close></div>
     <section class="fixed-modal__panel" role="dialog" aria-modal="true" aria-labelledby="map-modal-title">
@@ -229,10 +241,43 @@
       <p class="detail-label">選択中マップ</p>
       <h3 id="map-modal-title">臨時 SAMPLE MAP / 渋谷</h3>
       <p id="map-modal-desc">臨時公開用のサンプルマップです。検証用のためステータスは private sample です。</p>
-      <a class="primary-btn start-world-btn" id="map-modal-start-btn" href="./index.html?map=sample_shibuya">表示を開始する</a>
+      <div class="modal-action-row">
+        <a class="primary-btn start-world-btn" id="map-modal-start-btn" href="./index.html?map=sample_shibuya">表示を開始する</a>
+        <button class="ghost-btn download-world-btn" type="button" id="map-modal-download-btn">ダウンロードする</button>
+      </div>
     </section>
   </div>
 
-  <script src="./js/public.js"></script>
+  <div class="fixed-modal auth-modal" id="auth-modal" aria-hidden="true">
+    <div class="fixed-modal__backdrop" data-auth-close></div>
+    <section class="fixed-modal__panel auth-modal__panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <button class="fixed-modal__close" type="button" id="auth-modal-close" aria-label="閉じる">×</button>
+      <p class="detail-label">DEMO SIGN-IN</p>
+      <h3 id="auth-modal-title">デモログイン</h3>
+      <p>このブラウザ内だけでログイン状態を保持するデモ認証です。</p>
+      <form class="auth-form" id="auth-form">
+        <label class="auth-field">
+          <span>表示名</span>
+          <input id="auth-display-name" name="displayName" type="text" placeholder="demo_editor" maxlength="40" />
+        </label>
+        <label class="auth-field">
+          <span>メールアドレス</span>
+          <input id="auth-email" name="email" type="email" placeholder="editor@example.com" required />
+        </label>
+        <label class="auth-field">
+          <span>パスワード</span>
+          <input id="auth-password" name="password" type="password" placeholder="password" required />
+        </label>
+        <div class="auth-form-actions">
+          <button class="primary-btn" type="submit">ログインする</button>
+          <button class="ghost-btn" type="button" data-auth-close>閉じる</button>
+        </div>
+      </form>
+      <p class="auth-message" id="auth-message" hidden></p>
+    </section>
+  </div>
+
+  <script type="module" src="./js/public.js"></script>
+  <script type="module" src="./js/mock_auth.js"></script>
 </body>
 </html>

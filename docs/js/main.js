@@ -155,9 +155,67 @@ const {
   packState,
   unpackState,
   parseMapDataBytes,
+  readMapDataBytes,
+  readMapDataArchiveBytes,
   readMapDataFile,
   readMapDataPayloadFromUrl,
 } = createCreateModeStateCodec({ encode, decode });
+const runtimeSearchParams = new URLSearchParams(window.location.search);
+const RUNTIME_MAP_MODE = String(runtimeSearchParams.get('runtime_map') || '').trim();
+const IS_PUBLIC_RUNTIME_LOCAL_VIEW = RUNTIME_MAP_MODE === 'public_upload';
+const IS_EDIT_RUNTIME_LOCAL_VIEW = RUNTIME_MAP_MODE === 'edit_upload';
+const IS_RUNTIME_LOCAL_VIEW = IS_PUBLIC_RUNTIME_LOCAL_VIEW || IS_EDIT_RUNTIME_LOCAL_VIEW;
+const RUNTIME_MAP_DB_NAME = 'train-editmode-runtime-map';
+const RUNTIME_MAP_STORE_NAME = 'runtimeMaps';
+const RUNTIME_MAP_RECORD_KEY = 'public-selected-map';
+
+function openRuntimeMapDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(RUNTIME_MAP_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(RUNTIME_MAP_STORE_NAME)) {
+        db.createObjectStore(RUNTIME_MAP_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+  });
+}
+
+async function readRuntimeMapRecord() {
+  const db = await openRuntimeMapDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RUNTIME_MAP_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(RUNTIME_MAP_STORE_NAME);
+    const request = store.get(RUNTIME_MAP_RECORD_KEY);
+    request.onsuccess = () => {
+      db.close();
+      resolve(request.result || null);
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error || new Error('IndexedDB read failed'));
+    };
+  });
+}
+
+async function deleteRuntimeMapRecord() {
+  const db = await openRuntimeMapDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RUNTIME_MAP_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(RUNTIME_MAP_STORE_NAME);
+    store.delete(RUNTIME_MAP_RECORD_KEY);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error('IndexedDB delete failed'));
+    };
+  });
+}
 const scene = new THREE.Scene();
 let constructionFixedEnvMap = null;
 const constructionFixedEnvMaterials = new Set();
@@ -2312,6 +2370,24 @@ const threeUi = document.getElementById('three-ui');
       }
       return 1;
     })();
+    const existingGroupIdsForOrbitCopy = new Set(collectStructureGroupIds());
+    const orbitCopyGroupIdBySource = new Map();
+    const resolveOrbitCopyGroupId = (sourceGroupIdRaw) => {
+      const sourceGroupId = String(sourceGroupIdRaw || '').trim();
+      if (!sourceGroupId) { return null; }
+      if (orbitCopyGroupIdBySource.has(sourceGroupId)) {
+        return orbitCopyGroupIdBySource.get(sourceGroupId);
+      }
+      let n = 1;
+      let candidate = `${sourceGroupId}__orbit_copy_${n}`;
+      while (existingGroupIdsForOrbitCopy.has(candidate)) {
+        n += 1;
+        candidate = `${sourceGroupId}__orbit_copy_${n}`;
+      }
+      existingGroupIdsForOrbitCopy.add(candidate);
+      orbitCopyGroupIdBySource.set(sourceGroupId, candidate);
+      return candidate;
+    };
     const yAxis = new THREE.Vector3(0, 1, 0);
     const activeTwoTrackYawExtraRad = Math.PI;
     const sourceTrackHit = getNearestRailTrackHitFromPoint(sourceCenter, 900);
@@ -2839,7 +2915,7 @@ const threeUi = document.getElementById('three-ui');
         };
 
         sourceObjects.forEach((src) => {
-          const structureGroupId = src?.userData?.structureGroupId ?? null;
+          const structureGroupId = resolveOrbitCopyGroupId(src?.userData?.structureGroupId);
           const decorationType = normalizeDecorationType(src?.userData?.decorationType);
           if (decorationType === 'led_board') {
             const cloned = cloneLedBoardDecoration(src, new THREE.Vector3(), {
@@ -3012,7 +3088,7 @@ const threeUi = document.getElementById('three-ui');
       };
 
       sourceObjects.forEach((src) => {
-        const structureGroupId = src?.userData?.structureGroupId ?? null;
+        const structureGroupId = resolveOrbitCopyGroupId(src?.userData?.structureGroupId);
         const decorationType = normalizeDecorationType(src?.userData?.decorationType);
         if (decorationType === 'led_board') {
           const cloned = cloneLedBoardDecoration(src, new THREE.Vector3(), {
@@ -5006,6 +5082,20 @@ const threeUi = document.getElementById('three-ui');
         const gid = String(mesh?.userData?.structureGroupId || '').trim();
         const sourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
         if (gid && sourceId) {
+          ids.add(gid);
+        }
+      });
+    return ids;
+  }
+
+  function collectRailPlacedStructureGroupIdsForSave() {
+    const ids = new Set();
+    getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .forEach((mesh) => {
+        const gid = String(mesh?.userData?.structureGroupId || '').trim();
+        const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+        if (gid && railPlacementGroupId) {
           ids.add(gid);
         }
       });
@@ -7537,9 +7627,9 @@ renderer.toneMappingExposure = 1;
 // 駅(ホームドア)を生成
 const train_width = 6.8
 const car_Spacing = 0.15
-const SHOW_MAP_GLB = true;
-const SHOW_TRAINS = true;
-const RUN_COMMUTER_ON_EXISTING_TRACKS = true;
+const SHOW_MAP_GLB = !IS_RUNTIME_LOCAL_VIEW;
+const SHOW_TRAINS = !IS_RUNTIME_LOCAL_VIEW;
+const RUN_COMMUTER_ON_EXISTING_TRACKS = !IS_RUNTIME_LOCAL_VIEW;
 const SHOW_ELEVATORS = true;
 const ONLY_RAIL_AND_GROUND = true;
 
@@ -7548,11 +7638,14 @@ console.log('WorldCreat')
 import { WorldCreat } from './world_creat.js';
 import { BASE_WORLD_SCALE } from './scale_config.js';
 const WORLD_SCALE = 0.42;
-let LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
-  showMapGlb: SHOW_MAP_GLB,
-  onlyRailAndGround: ONLY_RAIL_AND_GROUND,
-  worldScale: WORLD_SCALE,
-});
+let LoadModels = [null, null, null];
+if (!IS_RUNTIME_LOCAL_VIEW) {
+  LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
+    showMapGlb: SHOW_MAP_GLB,
+    onlyRailAndGround: ONLY_RAIL_AND_GROUND,
+    worldScale: WORLD_SCALE,
+  });
+}
 let geo = LoadModels[0]
 
 const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
@@ -7749,6 +7842,7 @@ import { TrainSystem } from './train_system.js';
 import { createSteelFrameMode } from './steel_frame_mode.js';
 import { initTrackSetup, ENABLE_MANUAL_DIORAMA_SPACE, USE_SAVED_DATA_ONLY } from './track_setup.js';
 import { applyFixedPlacements } from './fixed_placements.js';
+const SHOULD_SKIP_DEFAULT_WORLD_PLACEMENTS = USE_SAVED_DATA_ONLY || IS_RUNTIME_LOCAL_VIEW;
 const TSys = new TrainSystem(scene,dirLight);
 
 // --- ライト追加（初回のみ） ---
@@ -10261,42 +10355,74 @@ async function loadStructureData(url) {
       return;
     }
     const data = await response.json();
-    if (!data || typeof data !== 'object' || !Array.isArray(data.pins)) {
-      return;
-    }
-    clearStructurePinnedPins();
-    const loadedRuns = Array.isArray(data.generationRuns)
-      ? data.generationRuns.map((run) => ({
-        category: String(run?.category || '').trim(),
-        pins: normalizePinsPayload(run?.pins),
-        params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
-      })).filter((run) => run.category && run.pins.length > 0)
-      : [];
-    structureGenerationRuns = dedupeGenerationRuns(loadedRuns).map((run) => ({
-      ...run,
-      replayDone: false,
-    }));
-    data.pins.forEach((pin) => {
-      if (!pin || !Number.isFinite(pin.x) || !Number.isFinite(pin.y) || !Number.isFinite(pin.z)) {
-        return;
-      }
-      placeStructurePinnedPinAt(pin, pin.trackName ?? null);
-    });
-    updateStructurePinnedVisibility();
-    structureGenerationReplayPending = structureGenerationRuns.length > 0;
-    if (structureGenerationReplayPending) {
-      scheduleReplayStructureGenerationRuns({ resetRetry: true });
-    } else {
-      scheduleRebuildStructureLinkedObjects({ resetRetry: true });
-    }
+    applyStructureDataPayload(data);
   } catch (err) {
     console.warn('structure.json load failed', err);
   }
 }
 
+function applyStructureDataPayload(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.pins)) {
+    console.info('[public_upload][pins] skipped invalid structure payload', {
+      hasData: Boolean(data),
+      hasPins: Array.isArray(data?.pins),
+    });
+    return false;
+  }
+  clearStructurePinnedPins();
+  const loadedRuns = Array.isArray(data.generationRuns)
+    ? data.generationRuns.map((run) => ({
+      category: String(run?.category || '').trim(),
+      pins: normalizePinsPayload(run?.pins),
+      params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
+    })).filter((run) => run.category && run.pins.length > 0)
+    : [];
+  structureGenerationRuns = dedupeGenerationRuns(loadedRuns).map((run) => ({
+    ...run,
+    replayDone: false,
+  }));
+  console.info('[public_upload][pins] restoring structure payload', {
+    pinCount: data.pins.length,
+    generationRunCount: structureGenerationRuns.length,
+    generationRunCategories: structureGenerationRuns.map((run) => String(run?.category || '').trim()),
+  });
+  data.pins.forEach((pin) => {
+    if (!pin || !Number.isFinite(pin.x) || !Number.isFinite(pin.y) || !Number.isFinite(pin.z)) {
+      console.info('[public_upload][pins] skipped invalid pin', pin);
+      return;
+    }
+    console.info('[public_upload][pins] place pin', {
+      x: pin.x,
+      y: pin.y,
+      z: pin.z,
+      trackName: pin.trackName ?? null,
+      linkedStructureObjectIds: Array.isArray(pin?.linkedStructureObjectIds) ? pin.linkedStructureObjectIds.length : 0,
+    });
+    placeStructurePinnedPinAt(pin, pin.trackName ?? null);
+  });
+  if (data.pins.length > 0) {
+    structureViewActive = true;
+  }
+  updateStructurePinnedVisibility();
+  structureGenerationReplayPending = structureGenerationRuns.length > 0;
+  if (structureGenerationReplayPending) {
+    console.info('[public_upload][pins] schedule generation replay', {
+      generationRunCount: structureGenerationRuns.length,
+    });
+    scheduleReplayStructureGenerationRuns({ resetRetry: true });
+  } else {
+    console.info('[public_upload][pins] no generation replay, rebuild linked objects only');
+    scheduleRebuildStructureLinkedObjects({ resetRetry: true });
+  }
+  return true;
+}
+
 function replayStructureGenerationRunsFromStructureData() {
   if (!structureGenerationReplayPending) { return true; }
   if (!structureLinkRuntimeReady) {
+    console.info('[public_upload][pins] replay deferred: structureLinkRuntimeReady=false', {
+      retryCount: structureGenerationReplayRetryCount,
+    });
     if (structureGenerationReplayRetryCount < STRUCTURE_GENERATION_REPLAY_MAX_RETRY) {
       structureGenerationReplayRetryCount += 1;
       scheduleReplayStructureGenerationRuns();
@@ -10317,6 +10443,14 @@ function replayStructureGenerationRunsFromStructureData() {
       pendingRunCount += 1;
       const params = (run?.params && typeof run.params === 'object') ? run.params : {};
       const resolvedGroupId = kind === 'group' ? resolveStructureGroupIdForReplay(params) : '';
+      console.info('[public_upload][pins] replay run', {
+        category: kind,
+        pinCount: pins.length,
+        resolvedGroupId,
+        requestedGroupId: params?.groupId,
+        groupSourceKey: params?.groupSourceKey,
+        groupSourceLabel: params?.groupSourceLabel,
+      });
       if (kind === 'group' && !resolvedGroupId) {
         unresolvedGroupReference = true;
         console.warn('[group_rail replay] group resolve failed', {
@@ -10338,6 +10472,11 @@ function replayStructureGenerationRunsFromStructureData() {
       run.replayDone = true;
     });
     const hasRemainingRuns = structureGenerationRuns.some((run) => !run?.replayDone);
+    console.info('[public_upload][pins] replay result', {
+      pendingRunCount,
+      hasRemainingRuns,
+      unresolvedGroupReference,
+    });
     if (hasRemainingRuns && unresolvedGroupReference && structureGenerationReplayRetryCount < STRUCTURE_GENERATION_REPLAY_MAX_RETRY) {
       structureGenerationReplayRetryCount += 1;
       scheduleReplayStructureGenerationRuns();
@@ -10499,49 +10638,17 @@ function buildStructurePayloadForGroup(groupId) {
   const compactGroupedSteelFrameForSave = (points, segments, members) => {
     const segmentStates = Array.isArray(segments) ? segments : [];
     const pointStates = Array.isArray(points) ? points : [];
-    const memberByRefId = new Map();
-    (Array.isArray(members) ? members : []).forEach((mesh) => {
-      const refId = String(mesh?.userData?.copyObjectRefId || '').trim();
-      if (refId) { memberByRefId.set(refId, mesh); }
-    });
-    const sourceRefSet = new Set(
-      segmentStates
-        .map((seg) => String(seg?.copyObjectRefId || '').trim())
-        .filter(Boolean)
-    );
     const keptSegments = [];
-    const copiedInstances = [];
     const usedPointKeysLocal = new Set();
 
     segmentStates.forEach((seg) => {
-      const isCopied = Boolean(seg?.steelFrameCopiedObject);
-      const sourceRefId = String(seg?.copyObjectSourceRefId || '').trim();
-      const copyRefId = String(seg?.copyObjectRefId || '').trim();
-      const liveMesh = copyRefId ? (memberByRefId.get(copyRefId) || null) : null;
-      const canCompact = isCopied
-        && sourceRefId
-        && sourceRefSet.has(sourceRefId)
-        && liveMesh?.position
-        && liveMesh?.quaternion
-        && liveMesh?.scale;
-
-      if (canCompact) {
-          copiedInstances.push({
-            sourceRefId,
-            copyObjectRefId: copyRefId || null,
-            profile: seg?.profile || null,
-            style: seg?.style ? { ...seg.style } : null,
-            structureGroupId: seg?.structureGroupId ?? null,
-            structureGroupScale: Number(seg?.structureGroupScale) || null,
-            steelFrameCopyGroupId: seg?.steelFrameCopyGroupId ?? null,
-            position: [liveMesh.position.x, liveMesh.position.y, liveMesh.position.z],
-            quaternion: [liveMesh.quaternion.x, liveMesh.quaternion.y, liveMesh.quaternion.z, liveMesh.quaternion.w],
-            scale: [liveMesh.scale.x, liveMesh.scale.y, liveMesh.scale.z],
-          });
-        return;
-      }
-
-      keptSegments.push(seg);
+      keptSegments.push({
+        ...seg,
+        steelFrameCopiedObject: false,
+        steelFrameCopyGroupId: null,
+        copyObjectSourceRefId: null,
+        copyObjectRefId: null,
+      });
       const keys = Array.isArray(seg?.pointKeys) ? seg.pointKeys : [];
       keys.forEach((k) => {
         const key = String(k || '').trim();
@@ -10556,12 +10663,17 @@ function buildStructurePayloadForGroup(groupId) {
     );
     const keptPoints = Array.from(usedPointKeysLocal)
       .map((key) => pointByKeyLocal.get(key) || null)
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((point) => ({
+        ...point,
+        steelFrameCopied: false,
+        steelFrameCopyGroupId: null,
+      }));
 
     return {
       points: keptPoints,
       segments: keptSegments,
-      copiedInstances,
+      copiedInstances: [],
     };
   };
 
@@ -10671,6 +10783,12 @@ function downloadStructureGroupData() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+  console.log('[group_save] saved group:', {
+    groupId,
+    fileName: `${groupId}.json`,
+    mode: payload?.meta?.mode || null,
+    memberCount: Number(payload?.meta?.memberCount) || null,
+  });
   alert(`グループ保存しました: ${groupId}`);
 }
 
@@ -10784,10 +10902,16 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
   const excludedGroupIds = options?.excludedGroupIds instanceof Set
     ? options.excludedGroupIds
     : new Set();
+  const excludeCopiedObjects = options?.excludeCopiedObjects === true;
+  const excludeCopiedGroupObjects = options?.excludeCopiedGroupObjects === true;
+  const materializeCopiedObjects = options?.materializeCopiedObjects === true;
   const points = (steelFrameMode?.getAllPointMeshes?.() || [])
     .filter((mesh) => mesh?.userData?.steelFramePoint && mesh?.parent);
   const pointKeyByMesh = new Map();
   const pointStates = points.map((mesh, idx) => {
+    const shouldMaterializeCopy = materializeCopiedObjects
+      && !String(mesh?.userData?.structureGroupId || '').trim()
+      && (Boolean(mesh?.userData?.steelFrameCopied) || Boolean(String(mesh?.userData?.steelFrameCopyGroupId || '').trim()));
     const key = `p${idx}`;
     pointKeyByMesh.set(mesh, key);
     const pref = mesh?.userData?.planeRef || null;
@@ -10797,8 +10921,8 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
       lineIndex: Number.isInteger(mesh?.userData?.steelFrameLine) ? mesh.userData.steelFrameLine : 0,
       position: [mesh.position.x, mesh.position.y, mesh.position.z],
       scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
-      steelFrameCopied: Boolean(mesh?.userData?.steelFrameCopied),
-      steelFrameCopyGroupId: mesh?.userData?.steelFrameCopyGroupId ?? null,
+      steelFrameCopied: shouldMaterializeCopy ? false : Boolean(mesh?.userData?.steelFrameCopied),
+      steelFrameCopyGroupId: shouldMaterializeCopy ? null : (mesh?.userData?.steelFrameCopyGroupId ?? null),
       planeRefKey,
     };
   });
@@ -10808,6 +10932,19 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
     .filter((mesh) => {
       const gid = String(mesh?.userData?.structureGroupId || '').trim();
       return !gid || !excludedGroupIds.has(gid);
+    })
+    .filter((mesh) => {
+      if (!excludeCopiedGroupObjects) { return true; }
+      const copySourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+      const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+      return !(copySourceId || railPlacementGroupId);
+    })
+    .filter((mesh) => {
+      if (!excludeCopiedObjects) { return true; }
+      const isCopiedObject = Boolean(mesh?.userData?.steelFrameCopiedObject);
+      const copyGroupId = String(mesh?.userData?.steelFrameCopyGroupId || '').trim();
+      const copySourceRefId = String(mesh?.userData?.copyObjectSourceRefId || '').trim();
+      return !(isCopiedObject || copyGroupId || copySourceRefId);
     });
   const segmentStates = segments.map((mesh) => {
     const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
@@ -10815,22 +10952,46 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
       : [];
     const refKeys = refs.map((p) => pointKeyByMesh.get(p) || null).filter(Boolean);
     const profile = normalizeSteelFrameSegmentProfile(mesh?.userData?.steelFrameSegmentProfile || 'round');
+    const shouldMaterializeCopy = materializeCopiedObjects
+      && !String(mesh?.userData?.structureGroupId || '').trim()
+      && (
+        Boolean(mesh?.userData?.steelFrameCopiedObject)
+        || Boolean(String(mesh?.userData?.steelFrameCopyGroupId || '').trim())
+        || Boolean(String(mesh?.userData?.copyObjectSourceRefId || '').trim())
+      );
     return {
       pointKeys: refKeys,
       profile,
       style: normalizeSerializedSegmentStyle(profile, mesh?.userData?.steelFrameSegmentStyle || null),
       scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
-      steelFrameCopiedObject: Boolean(mesh?.userData?.steelFrameCopiedObject),
-      steelFrameCopyGroupId: mesh?.userData?.steelFrameCopyGroupId ?? null,
+      steelFrameCopiedObject: shouldMaterializeCopy ? false : Boolean(mesh?.userData?.steelFrameCopiedObject),
+      steelFrameCopyGroupId: shouldMaterializeCopy ? null : (mesh?.userData?.steelFrameCopyGroupId ?? null),
       structureGroupId: mesh?.userData?.structureGroupId ?? null,
       structureGroupScale: Number(mesh?.userData?.structureGroupScale) || null,
-      copyObjectSourceRefId: mesh?.userData?.copyObjectSourceRefId ?? null,
-      copyObjectRefId: mesh?.userData?.copyObjectRefId ?? null,
+      copyObjectSourceRefId: shouldMaterializeCopy ? null : (mesh?.userData?.copyObjectSourceRefId ?? null),
+      copyObjectRefId: shouldMaterializeCopy ? null : (mesh?.userData?.copyObjectRefId ?? null),
     };
   });
 
+  const usedPointKeys = new Set();
+  segmentStates.forEach((segment) => {
+    const keys = Array.isArray(segment?.pointKeys) ? segment.pointKeys : [];
+    keys.forEach((key) => {
+      const normalized = String(key || '').trim();
+      if (normalized) { usedPointKeys.add(normalized); }
+    });
+  });
+  const filteredPointStates = pointStates
+    .filter((point) => usedPointKeys.has(String(point?.key || '').trim()))
+    .filter((point) => {
+      if (!excludeCopiedObjects) { return true; }
+      const copied = Boolean(point?.steelFrameCopied);
+      const copyGroupId = String(point?.steelFrameCopyGroupId || '').trim();
+      return !(copied || copyGroupId);
+    });
+
   return {
-    points: pointStates,
+    points: filteredPointStates,
     segments: segmentStates,
   };
 }
@@ -11110,11 +11271,18 @@ function serializeDecorationsState(gridToKey = new Map(), options = {}) {
   const excludedGroupIds = options?.excludedGroupIds instanceof Set
     ? options.excludedGroupIds
     : new Set();
+  const excludeCopiedGroupObjects = options?.excludeCopiedGroupObjects === true;
   return decorationObjects
     .filter((mesh) => mesh?.parent)
     .filter((mesh) => {
       const gid = String(mesh?.userData?.structureGroupId || '').trim();
       return !gid || !excludedGroupIds.has(gid);
+    })
+    .filter((mesh) => {
+      if (!excludeCopiedGroupObjects) { return true; }
+      const copySourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+      const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+      return !(copySourceId || railPlacementGroupId);
     })
     .map((mesh) => serializeDecorationState(mesh, gridToKey))
     .filter(Boolean);
@@ -11171,7 +11339,29 @@ function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
   });
 }
 
-function buildCreateModePayload() {
+function buildDifferenceSpacesPayload() {
+  const spaces = differenceSpacePlanes
+    .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .map((mesh) => serializeDifferenceSpaceMesh(mesh))
+    .filter(Boolean);
+  return {
+    meta: {
+      version: 1,
+      type: 'difference_space',
+      app: 'Train_EditMode_demo',
+      savedAt: new Date().toISOString(),
+    },
+    differenceSpaces: spaces,
+  };
+}
+
+function buildCreateModePayload(options = {}) {
+  const includeDifferenceSpaces = options?.includeDifferenceSpaces !== false;
+  const materializeCopiedObjects = options?.materializeCopiedObjects === true;
+  const excludeCopiedGroupObjects = options?.excludeCopiedGroupObjects === true;
+  const excludedGroupIdsOption = options?.excludedGroupIds instanceof Set
+    ? options.excludedGroupIds
+    : null;
   const uiStateRaw = localStorage.getItem(UI_STATE_STORAGE_KEY);
   let uiState = null;
   try {
@@ -11190,10 +11380,19 @@ function buildCreateModePayload() {
     .map((grid) => serializeGuideGridState(grid))
     .filter(Boolean);
   const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStates);
-  const copiedStructureGroups = collectCopiedStructureGroupsForSave();
-  const copiedGroupIds = collectCopiedStructureGroupIdsForSave();
-  const steelFrame = serializeSteelFrameState(gridToKey, { excludedGroupIds: copiedGroupIds });
-  const decorations = serializeDecorationsState(gridToKey, { excludedGroupIds: copiedGroupIds });
+  // createMode は「非グループ対象」を保存する運用にする。
+  const groupedStructureIds = excludedGroupIdsOption || new Set(collectStructureGroupIds());
+  const copiedStructureGroups = [];
+  const steelFrame = serializeSteelFrameState(gridToKey, {
+    excludedGroupIds: groupedStructureIds,
+    excludeCopiedGroupObjects,
+    excludeCopiedObjects: !materializeCopiedObjects,
+    materializeCopiedObjects,
+  });
+  const decorations = serializeDecorationsState(gridToKey, {
+    excludedGroupIds: groupedStructureIds,
+    excludeCopiedGroupObjects,
+  });
 
   return {
     meta: {
@@ -11221,7 +11420,47 @@ function buildCreateModePayload() {
     steelFrame,
     decorations,
     copiedStructureGroups,
-    differenceSpaces: spaces,
+    differenceSpaces: includeDifferenceSpaces ? spaces : [],
+  };
+}
+
+function filterCreateModePayloadByExcludedGroupIds(payload, excludedGroupIds) {
+  if (!payload || typeof payload !== 'object' || !(excludedGroupIds instanceof Set) || excludedGroupIds.size < 1) {
+    return payload;
+  }
+  const steelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
+    ? payload.steelFrame
+    : {};
+  const nextSegments = (Array.isArray(steelFrame?.segments) ? steelFrame.segments : [])
+    .filter((segment) => {
+      const groupId = String(segment?.structureGroupId || '').trim();
+      return !groupId || !excludedGroupIds.has(groupId);
+    });
+  const usedPointKeys = new Set();
+  nextSegments.forEach((segment) => {
+    const pointKeys = Array.isArray(segment?.pointKeys) ? segment.pointKeys : [];
+    pointKeys.forEach((key) => {
+      const normalized = String(key || '').trim();
+      if (normalized) {
+        usedPointKeys.add(normalized);
+      }
+    });
+  });
+  const nextPoints = (Array.isArray(steelFrame?.points) ? steelFrame.points : [])
+    .filter((point) => usedPointKeys.has(String(point?.key || '').trim()));
+  const nextDecorations = (Array.isArray(payload?.decorations) ? payload.decorations : [])
+    .filter((decoration) => {
+      const groupId = String(decoration?.structureGroupId || '').trim();
+      return !groupId || !excludedGroupIds.has(groupId);
+    });
+  return {
+    ...payload,
+    steelFrame: {
+      ...steelFrame,
+      points: nextPoints,
+      segments: nextSegments,
+    },
+    decorations: nextDecorations,
   };
 }
 
@@ -11241,9 +11480,263 @@ function downloadCreateModeData() {
   alert('create_mode_state.msgpack を保存しました。');
 }
 
+function buildTrackPayloadForWorldSave() {
+  const tracks = {};
+  (Array.isArray(railTrackDefs) ? railTrackDefs : []).forEach((track) => {
+    const name = String(track?.name || '').trim();
+    const points = Array.isArray(track?.points) ? track.points : [];
+    if (!name || points.length < 2) { return; }
+    tracks[name] = points.map((point) => ({
+      x: Number(point?.x) || 0,
+      y: Number(point?.y) || 0,
+      z: Number(point?.z) || 0,
+    }));
+  });
+  return {
+    meta: {
+      version: 1,
+      scaled: true,
+      scale: WORLD_SCALE,
+      savedAt: new Date().toISOString(),
+    },
+    tracks,
+  };
+}
+
+function buildWorldPayload() {
+  const buildRuntimeGroupCopySourceMap = () => {
+    const map = new Map();
+    const targets = getConstructionCopyTargets().filter((mesh) => mesh?.parent);
+    targets.forEach((mesh) => {
+      const gid = String(mesh?.userData?.structureGroupId || '').trim();
+      const sourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+      if (!gid || !sourceId) { return; }
+      if (!map.has(gid)) {
+        map.set(gid, sourceId);
+      }
+    });
+    return map;
+  };
+
+  const resolveConcreteSourceGroupIds = (sourceIds, copySourceMap) => {
+    const out = new Set();
+    sourceIds.forEach((sourceIdRaw) => {
+      let current = String(sourceIdRaw || '').trim();
+      if (!current) { return; }
+      const visited = new Set();
+      while (current) {
+        if (visited.has(current)) {
+          // 循環参照を検出した場合は現地点を採用して打ち切る。
+          out.add(current);
+          current = '';
+          break;
+        }
+        visited.add(current);
+        const next = String(copySourceMap.get(current) || '').trim();
+        if (!next) {
+          out.add(current);
+          break;
+        }
+        current = next;
+      }
+    });
+    return Array.from(out);
+  };
+
+  const copiedStructureGroups = collectCopiedStructureGroupsForSave();
+  const manualSourceGroupIds = Array.from(new Set(
+    copiedStructureGroups
+      .map((entry) => String(entry?.sourceGroupId || '').trim())
+      .filter((id) => id.length > 0)
+  ));
+  const orbitSourceGroupIds = Array.from(new Set(
+    (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : [])
+      .filter((run) => String(run?.category || '').trim() === 'group')
+      .map((run) => {
+        const params = run?.params && typeof run.params === 'object' ? run.params : {};
+        const explicit = String(params.groupSourceGroupId || '').trim();
+        if (explicit) { return explicit; }
+        const sourceKey = String(params.groupSourceKey || '').trim();
+        if (sourceKey.includes('::')) {
+          const keyParts = sourceKey.split('::');
+          const candidate = String(keyParts[keyParts.length - 1] || '').trim();
+          if (candidate) { return candidate; }
+        }
+        const sourceLabel = String(params.groupSourceLabel || '').trim();
+        if (sourceLabel.includes('/')) {
+          const labelParts = sourceLabel.split('/');
+          const candidate = String(labelParts[labelParts.length - 1] || '').trim();
+          if (candidate) { return candidate; }
+        }
+        return String(params.groupId || '').trim();
+      })
+      .filter((id) => id.length > 0)
+  ));
+  const copySourceMap = buildRuntimeGroupCopySourceMap();
+  const concreteManualSourceGroupIds = resolveConcreteSourceGroupIds(manualSourceGroupIds, copySourceMap);
+  const concreteOrbitSourceGroupIds = resolveConcreteSourceGroupIds(orbitSourceGroupIds, copySourceMap);
+  const sourceGroupIds = Array.from(new Set([
+    ...concreteManualSourceGroupIds,
+    ...concreteOrbitSourceGroupIds,
+  ]));
+  const sourceStructureGroups = sourceGroupIds
+    .map((groupId) => buildStructurePayloadForGroup(groupId))
+    .filter((payload) => payload && payload?.meta?.mode !== 'group_copy_reference');
+  return {
+    meta: {
+      version: 1,
+      type: 'world_state',
+      mode: 'copied_group_sources_only',
+      app: 'Train_EditMode_demo',
+      savedAt: new Date().toISOString(),
+    },
+    sourceGroupSummary: {
+      manual_copy: concreteManualSourceGroupIds,
+      orbit_copy: concreteOrbitSourceGroupIds,
+    },
+    sourceStructureGroups,
+  };
+}
+
+function buildManualCopyPayload() {
+  const copiedStructureGroups = collectCopiedStructureGroupsForSave();
+  return {
+    meta: {
+      version: 1,
+      type: 'manual_copy',
+      app: 'Train_EditMode_demo',
+      savedAt: new Date().toISOString(),
+    },
+    copiedStructureGroups,
+  };
+}
+
+function collectWorldSaveExcludedGroupIds(groupPayload, manualCopyPayload, orbitStructurePayload) {
+  const sourceGroups = Array.isArray(groupPayload?.sourceStructureGroups) ? groupPayload.sourceStructureGroups : [];
+  const sourceGroupIds = sourceGroups
+    .map((entry) => String(entry?.meta?.groupId || '').trim())
+    .filter((id) => id.length > 0);
+  const copiedGroupIds = Array.isArray(manualCopyPayload?.copiedStructureGroups)
+    ? manualCopyPayload.copiedStructureGroups
+      .map((entry) => String(entry?.groupId || '').trim())
+      .filter((id) => id.length > 0)
+    : [];
+  const orbitGeneratedGroupIds = Array.from(collectRailPlacedStructureGroupIdsForSave());
+  return {
+    sourceGroupIds,
+    copiedGroupIds,
+    orbitGeneratedGroupIds,
+    excludedGroupIds: new Set(sourceGroupIds),
+  };
+}
+
+async function downloadWorldData() {
+  let JSZipCtor = null;
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm');
+    JSZipCtor = mod?.default || mod?.JSZip || null;
+  } catch (error) {
+    console.warn('[world_save] jszip load failed', error);
+  }
+  if (!JSZipCtor) {
+    alert('ZIP生成ライブラリの読み込みに失敗しました。通信状態をご確認ください。');
+    return;
+  }
+
+  const groupPayload = buildWorldPayload();
+  const orbitPayload = buildTrackPayloadForWorldSave();
+  const orbitStructurePayload = buildStructurePayload();
+  const manualCopyPayload = buildManualCopyPayload();
+  const differenceSpacePayload = buildDifferenceSpacesPayload();
+  const sourceSummary = groupPayload?.sourceGroupSummary && typeof groupPayload.sourceGroupSummary === 'object'
+    ? groupPayload.sourceGroupSummary
+    : {};
+  const manualCopyGroupIds = Array.isArray(sourceSummary?.manual_copy) ? sourceSummary.manual_copy : [];
+  const orbitCopyGroupIds = Array.isArray(sourceSummary?.orbit_copy) ? sourceSummary.orbit_copy : [];
+  const {
+    sourceGroupIds,
+    copiedGroupIds,
+    orbitGeneratedGroupIds,
+    excludedGroupIds: singleStructureExcludedGroupIds,
+  } = collectWorldSaveExcludedGroupIds(groupPayload, manualCopyPayload, orbitStructurePayload);
+  const allCopiedGroupIds = Array.from(new Set([
+    ...copiedGroupIds,
+    ...orbitGeneratedGroupIds,
+  ])).sort();
+  const singleStructurePayload = buildCreateModePayload({
+    includeDifferenceSpaces: false,
+    materializeCopiedObjects: true,
+    excludeCopiedGroupObjects: true,
+    excludedGroupIds: singleStructureExcludedGroupIds,
+  });
+  const filteredSingleStructurePayload = filterCreateModePayloadByExcludedGroupIds(
+    singleStructurePayload,
+    singleStructureExcludedGroupIds,
+  );
+  const singleStructureSteelFrame = singleStructurePayload?.steelFrame && typeof singleStructurePayload.steelFrame === 'object'
+    ? filteredSingleStructurePayload.steelFrame
+    : {};
+  const singleStructureGroupIds = Array.from(new Set([
+    ...(Array.isArray(singleStructureSteelFrame?.segments) ? singleStructureSteelFrame.segments : [])
+      .map((segment) => String(segment?.structureGroupId || '').trim())
+      .filter((id) => id.length > 0),
+    ...(Array.isArray(filteredSingleStructurePayload?.decorations) ? filteredSingleStructurePayload.decorations : [])
+      .map((decoration) => String(decoration?.structureGroupId || '').trim())
+      .filter((id) => id.length > 0),
+  ])).sort();
+
+  const zip = new JSZipCtor();
+  zip.file('group.msgpack', packState(groupPayload));
+  zip.file('orbit.msgpack', packState(orbitPayload));
+  zip.file('orbit_structure.msgpack', packState(orbitStructurePayload));
+  zip.file('manual_copy.msgpack', packState(manualCopyPayload));
+  zip.file('difference_space.msgpack', packState(differenceSpacePayload));
+  zip.file('single_structure.msgpack', packState(filteredSingleStructurePayload));
+
+  const zipBlob = await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+
+  const url = URL.createObjectURL(zipBlob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'world_data.zip';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  console.log('[world_save] world_data.zip saved:', {
+    entries: [
+      'group.msgpack',
+      'orbit.msgpack',
+      'orbit_structure.msgpack',
+      'manual_copy.msgpack',
+      'difference_space.msgpack',
+      'single_structure.msgpack',
+    ],
+    group_count: sourceGroupIds.length,
+    manual_copy: manualCopyGroupIds,
+    orbit_copy: orbitCopyGroupIds,
+    copied_group_ids: allCopiedGroupIds,
+    manual_copied_group_ids: copiedGroupIds,
+    orbit_generated_groups: orbitGeneratedGroupIds,
+    single_structure_excluded_group_ids: Array.from(singleStructureExcludedGroupIds).sort(),
+    single_structure_groups: singleStructureGroupIds,
+    single_structure_group_count: singleStructureGroupIds.length,
+  });
+  alert('world_data.zip を保存しました。');
+}
+
 const saveCreateModeButton = document.getElementById('save-create-mode-data');
 if (saveCreateModeButton) {
   saveCreateModeButton.addEventListener('click', downloadCreateModeData);
+}
+const saveWorldButton = document.getElementById('save-world-data');
+if (saveWorldButton) {
+  saveWorldButton.addEventListener('click', downloadWorldData);
 }
 const undoActionButton = document.getElementById('undo-action');
 const redoActionButton = document.getElementById('redo-action');
@@ -11462,6 +11955,418 @@ function applyCreateModePayload(payload) {
   }
   setRailConstructionGroupOptions();
   updateGroupModePanelUI();
+}
+
+async function loadRuntimeMapGlbFromPublicUpload(arrayBuffer, fileName = 'public-upload.glb', kind = 'ct') {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.parse(
+      arrayBuffer,
+      '',
+      (parsed) => resolve(parsed),
+      (error) => reject(error || new Error('glb parse failed'))
+    );
+  });
+
+  const root = gltf?.scene || gltf?.scenes?.[0] || null;
+  if (!root) {
+    throw new Error('glb にシーンがありません。');
+  }
+
+  const objectName = `__public_runtime_${kind}_glb__`;
+  const previous = scene.getObjectByName(objectName);
+  if (previous?.parent) {
+    previous.parent.remove(previous);
+  }
+
+  const alignRootVisualCenterXzToOrigin = (targetRoot) => {
+    if (!targetRoot) { return; }
+    targetRoot.updateMatrixWorld(true);
+    const targetBox = new THREE.Box3().setFromObject(targetRoot);
+    if (targetBox.isEmpty()) { return; }
+    const targetCenter = targetBox.getCenter(new THREE.Vector3());
+    targetRoot.position.x -= targetCenter.x;
+    targetRoot.position.z -= targetCenter.z;
+    targetRoot.updateMatrixWorld(true);
+  };
+
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+
+  const maxDim = Math.max(size.x, size.y, size.z);
+  if (maxDim > 10000) {
+    root.scale.setScalar(0.001);
+  }
+  if (kind === 'ct') {
+    root.rotation.y = 0;
+    const currentY = root.position.y;
+    root.position.set(0, currentY, 0);
+    root.scale.multiplyScalar(WORLD_SCALE);
+    alignRootVisualCenterXzToOrigin(root);
+  }
+
+  root.name = objectName;
+  scene.add(root);
+}
+
+function activatePublicRuntimeObjectViewMode() {
+  const hiddenUiIds = [
+    'save-buttons',
+    'show-instructions-btn',
+    'instructions-panel',
+    'rotation-panel',
+    'difference-panel',
+    'group-mode-panel',
+    'construction-category-panel',
+    'rail-construction-panel',
+    'guide-window',
+  ];
+  hiddenUiIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.style.display = 'none';
+    }
+  });
+
+  search_object = false;
+  constructionModeActive = false;
+  structureModeActive = false;
+  structureViewActive = structurePinnedPins.length > 0;
+  differenceSpaceModeActive = false;
+  differenceSpaceTransformMode = 'none';
+  editObject = 'Standby';
+  objectEditMode = 'Standby';
+
+  clearCreateHistory();
+  clearDifferenceHistory();
+  clearGuideAddGridsForImport();
+  clearDifferenceSpacesForImport();
+  setAddPointGuideGridVisibleFromUI(false);
+  guideRailPickMeshes.forEach((mesh) => {
+    if (mesh) { mesh.visible = false; }
+  });
+  updateStructurePinnedVisibility();
+}
+
+async function loadRuntimeMapFromPublicUpload() {
+  const searchParams = new URLSearchParams(window.location.search);
+  if (!IS_RUNTIME_LOCAL_VIEW) {
+    return false;
+  }
+
+  const record = await readRuntimeMapRecord();
+  const runtimeFiles = record?.files && typeof record.files === 'object'
+    ? record.files
+    : { ct: record };
+  const fileEntries = Object.entries(runtimeFiles)
+    .filter(([, file]) => file && typeof file === 'object' && file.buffer);
+  if (fileEntries.length < 1) {
+    throw new Error('public.html で選択されたマップファイルが見つかりません。');
+  }
+
+  const loadedNames = [];
+  const classifyRuntimeArchiveEntry = (entryName, payload, fallbackKind = 'ct') => {
+    const lower = String(entryName || '').trim().toLowerCase();
+    if (lower.startsWith('st')) { return 'st'; }
+    if (lower.startsWith('ct')) { return 'ct'; }
+    if (lower.startsWith('tr')) { return 'tr'; }
+    if (lower.includes('create_mode_state') || lower.includes('single_structure')) { return 'ct'; }
+    if (lower.includes('orbit_structure')) { return 'st'; }
+
+    const mode = String(payload?.meta?.mode || '').trim();
+    const hasMapFeatures =
+      Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0
+      || Array.isArray(payload?.differenceSpaces) && payload.differenceSpaces.length > 0
+      || (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
+      || (payload?.uiState && typeof payload.uiState === 'object');
+    const hasPins = Array.isArray(payload?.pins) && payload.pins.length > 0;
+    const hasStructureRuns = Array.isArray(payload?.generationRuns) && payload.generationRuns.length > 0;
+    const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+    const hasGroupObjects =
+      Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0
+      || Array.isArray(payload?.decorations) && payload.decorations.length > 0
+      || hasCopiedRefs;
+
+    if (hasMapFeatures) {
+      return 'ct';
+    }
+    if (mode.startsWith('group_') || hasStructureRuns || hasPins || hasGroupObjects) {
+      return 'st';
+    }
+    return fallbackKind;
+  };
+  const applyRuntimeStructurePayload = (payload, runtimeName) => {
+    const sourceTag = String(runtimeName).replace(/\.(json|msgpack|mpk|zip)$/i, '') || 'runtime_structure';
+    const mode = String(payload?.meta?.mode || '').trim();
+    if (mode === 'copied_group_sources_only' && Array.isArray(payload?.sourceStructureGroups)) {
+      return;
+    }
+    if (String(payload?.meta?.type || '').trim() === 'manual_copy' && Array.isArray(payload?.copiedStructureGroups)) {
+      return;
+    }
+    const hasStructurePins = Array.isArray(payload?.pins) && payload.pins.length > 0;
+    const hasStructureRuns = Array.isArray(payload?.generationRuns) && payload.generationRuns.length > 0;
+    const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+    const hasGroupObjects =
+      Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0
+      || Array.isArray(payload?.decorations) && payload.decorations.length > 0
+      || hasCopiedRefs;
+    if (hasGroupObjects) {
+      appendCreateModeGroupsPayload(payload, { sourceTag });
+    }
+    if (hasStructurePins || hasStructureRuns) {
+      applyStructureDataPayload(payload);
+    }
+  };
+  for (const [kind, runtimeFile] of fileEntries) {
+    const runtimeName = String(runtimeFile?.name || 'public-upload');
+    loadedNames.push(runtimeName);
+    if (/\.glb$/i.test(runtimeName)) {
+      await loadRuntimeMapGlbFromPublicUpload(runtimeFile.buffer, runtimeName, kind);
+      continue;
+    }
+    const bytes = new Uint8Array(runtimeFile.buffer);
+    if (/\.zip$/i.test(runtimeName)) {
+      const archiveRows = await readMapDataArchiveBytes(bytes, {
+        name: runtimeName,
+        size: Number(runtimeFile?.size) || bytes.byteLength,
+      });
+      console.info('[public_upload][zip] archive entries', archiveRows.map((row) => ({
+        name: row?.name,
+        mode: String(row?.payload?.meta?.mode || '').trim(),
+        hasPins: Array.isArray(row?.payload?.pins) ? row.payload.pins.length : -1,
+        hasRuns: Array.isArray(row?.payload?.generationRuns) ? row.payload.generationRuns.length : -1,
+        steelSegments: Array.isArray(row?.payload?.steelFrame?.segments) ? row.payload.steelFrame.segments.length : -1,
+        decorations: Array.isArray(row?.payload?.decorations) ? row.payload.decorations.length : -1,
+        copiedGroups: Array.isArray(row?.payload?.copiedStructureGroups) ? row.payload.copiedStructureGroups.length : -1,
+      })));
+      const ctRows = [];
+      const sourceGroupPayloadRows = [];
+      const baseRows = [];
+      const copyRows = [];
+      const pinRows = [];
+      const manualCopyRows = [];
+      archiveRows.forEach((row) => {
+        const payload = row?.payload;
+        const mode = String(payload?.meta?.mode || '').trim();
+        const type = String(payload?.meta?.type || '').trim();
+        if (mode === 'copied_group_sources_only' && Array.isArray(payload?.sourceStructureGroups)) {
+          console.info('[public_upload][group_msgpack] discovered source groups', {
+            name: row?.name,
+            count: payload.sourceStructureGroups.length,
+          });
+          sourceGroupPayloadRows.push(...payload.sourceStructureGroups.map((groupPayload, index) => {
+            const sourceTag = String(groupPayload?.meta?.groupId || '').trim() || `runtime_group_${index + 1}`;
+            const groupMode = String(groupPayload?.meta?.mode || '').trim();
+            const hasCopiedRefs = Array.isArray(groupPayload?.copiedStructureGroups) && groupPayload.copiedStructureGroups.length > 0;
+            return {
+              url: `${row?.name || runtimeName}::${sourceTag}`,
+              payload: groupPayload,
+              sourceTag,
+              isCopyReference: groupMode === 'group_copy_reference' || hasCopiedRefs,
+            };
+          }));
+          return;
+        }
+        if (type === 'manual_copy' && Array.isArray(payload?.copiedStructureGroups)) {
+          console.info('[public_upload][manual_copy] discovered copied groups', {
+            name: row?.name,
+            count: payload.copiedStructureGroups.length,
+          });
+          manualCopyRows.push(row);
+          return;
+        }
+        const entryKind = classifyRuntimeArchiveEntry(row?.name, payload, kind);
+        console.info('[public_upload][zip] classify entry', {
+          name: row?.name,
+          entryKind,
+          fallbackKind: kind,
+          mode: String(payload?.meta?.mode || '').trim(),
+        });
+        if (entryKind === 'ct') {
+          ctRows.push(row);
+          return;
+        }
+        if (entryKind !== 'st') {
+          return;
+        }
+        const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+        const hasGroupObjects =
+          Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0
+          || Array.isArray(payload?.decorations) && payload.decorations.length > 0
+          || hasCopiedRefs;
+        const hasPins = Array.isArray(payload?.pins) && payload.pins.length > 0;
+        const hasRuns = Array.isArray(payload?.generationRuns) && payload.generationRuns.length > 0;
+        if (hasGroupObjects) {
+          if (mode === 'group_copy_reference' || hasCopiedRefs) {
+            copyRows.push(row);
+          } else {
+            baseRows.push(row);
+          }
+        }
+        if (hasPins || hasRuns) {
+          console.info('[public_upload][pins] queued runtime structure payload', {
+            name: row?.name,
+            pinCount: hasPins ? payload.pins.length : 0,
+            runCount: hasRuns ? payload.generationRuns.length : 0,
+          });
+          pinRows.push(row);
+        }
+      });
+      console.info('[public_upload][zip] restore queue summary', {
+        ctRows: ctRows.length,
+        sourceGroupPayloadRows: sourceGroupPayloadRows.length,
+        structureBaseRows: baseRows.length,
+        structureCopyRows: copyRows.length,
+        manualCopyRows: manualCopyRows.length,
+        pinRows: pinRows.length,
+      });
+      ctRows.forEach((row) => {
+        try {
+          const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {};
+          const steelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
+            ? payload.steelFrame
+            : {};
+          console.info('[public_upload][ct] applying payload start', {
+            name: row?.name,
+            mode: payload?.meta?.mode || payload?.mode || '',
+            guideAddGrids: Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids.length : 0,
+            differenceSpaces: Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces.length : 0,
+            steelFramePoints: Array.isArray(steelFrame?.points) ? steelFrame.points.length : 0,
+            steelFrameSegments: Array.isArray(steelFrame?.segments) ? steelFrame.segments.length : 0,
+            copiedInstances: Array.isArray(steelFrame?.copiedInstances) ? steelFrame.copiedInstances.length : 0,
+            decorations: Array.isArray(payload?.decorations) ? payload.decorations.length : 0,
+            copiedStructureGroups: Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups.length : 0,
+          });
+          applyCreateModePayload(payload);
+          console.info('[public_upload][ct] applying payload done', {
+            name: row?.name,
+          });
+        } catch (err) {
+          console.warn('[public_upload][ct] applying payload failed', {
+            name: row?.name,
+            err,
+          });
+        }
+      });
+      if (sourceGroupPayloadRows.length > 0) {
+        console.info('[public_upload][group_msgpack] restoring source groups start', {
+          count: sourceGroupPayloadRows.length,
+        });
+        await applyStructureGroupSourceRows(sourceGroupPayloadRows, {
+          logLabel: '[public_upload][group_msgpack]',
+          updateStatus: false,
+        });
+        console.info('[public_upload][group_msgpack] restoring source groups done', {
+          count: sourceGroupPayloadRows.length,
+        });
+      }
+      const structureGroupRows = [...baseRows, ...copyRows].map((row) => ({
+        url: row?.name || runtimeName,
+        payload: row?.payload,
+        sourceTag: String(row?.name || runtimeName).replace(/\.(json|msgpack|mpk|zip)$/i, '') || 'runtime_structure',
+        isCopyReference: copyRows.includes(row),
+      }));
+      if (structureGroupRows.length > 0) {
+        console.info('[public_upload][structure_group] restoring rows start', {
+          count: structureGroupRows.length,
+        });
+        await applyStructureGroupSourceRows(structureGroupRows, {
+          logLabel: '[public_upload][structure_group]',
+          updateStatus: false,
+        });
+        console.info('[public_upload][structure_group] restoring rows done', {
+          count: structureGroupRows.length,
+        });
+      }
+      manualCopyRows.forEach((row) => {
+        const copiedGroups = Array.isArray(row?.payload?.copiedStructureGroups) ? row.payload.copiedStructureGroups : [];
+        if (copiedGroups.length > 0) {
+          console.info('[public_upload][manual_copy] restoring copied groups', {
+            name: row?.name,
+            count: copiedGroups.length,
+          });
+          restoreCopiedStructureGroupsFromSave(copiedGroups);
+        }
+      });
+      pinRows.forEach((row) => {
+        console.info('[public_upload][pins] applying queued runtime structure payload', {
+          name: row?.name,
+        });
+        applyRuntimeStructurePayload(row.payload, row.name || runtimeName);
+      });
+      continue;
+    }
+    const payload = await readMapDataBytes(bytes, {
+      name: runtimeName,
+      size: Number(runtimeFile?.size) || bytes.byteLength,
+    });
+    if (kind === 'st') {
+      const mode = String(payload?.meta?.mode || '').trim();
+      const type = String(payload?.meta?.type || '').trim();
+      if (mode === 'copied_group_sources_only' && Array.isArray(payload?.sourceStructureGroups)) {
+        await applyStructureGroupSourceRows(
+          payload.sourceStructureGroups.map((groupPayload, index) => {
+            const sourceTag = String(groupPayload?.meta?.groupId || '').trim() || `runtime_group_${index + 1}`;
+            const groupMode = String(groupPayload?.meta?.mode || '').trim();
+            const hasCopiedRefs = Array.isArray(groupPayload?.copiedStructureGroups) && groupPayload.copiedStructureGroups.length > 0;
+            return {
+              url: `${runtimeName}::${sourceTag}`,
+              payload: groupPayload,
+              sourceTag,
+              isCopyReference: groupMode === 'group_copy_reference' || hasCopiedRefs,
+            };
+          }),
+          {
+            logLabel: '[public_upload][group_msgpack]',
+            updateStatus: false,
+          }
+        );
+        continue;
+      }
+      if (type === 'manual_copy' && Array.isArray(payload?.copiedStructureGroups)) {
+        restoreCopiedStructureGroupsFromSave(payload.copiedStructureGroups);
+        continue;
+      }
+      const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+      const hasGroupObjects =
+        Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0
+        || Array.isArray(payload?.decorations) && payload.decorations.length > 0
+        || hasCopiedRefs;
+      if (hasGroupObjects) {
+        await applyStructureGroupSourceRows([{
+          url: runtimeName,
+          payload,
+          sourceTag: String(runtimeName).replace(/\.(json|msgpack|mpk|zip)$/i, '') || 'runtime_structure',
+          isCopyReference: String(payload?.meta?.mode || '').trim() === 'group_copy_reference' || hasCopiedRefs,
+        }], {
+          logLabel: '[public_upload][structure_group]',
+          updateStatus: false,
+        });
+      }
+      applyRuntimeStructurePayload(payload, runtimeName);
+      continue;
+    }
+    if (kind !== 'ct') {
+      continue;
+    }
+    applyCreateModePayload(payload);
+  }
+
+  const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit object' : 'public object';
+  const statusText = `${runtimeLabel} 読込完了: ${loadedNames.join(', ')}`;
+  if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
+  if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
+  updateDifferenceStatus(statusText);
+  if (IS_PUBLIC_RUNTIME_LOCAL_VIEW) {
+    activatePublicRuntimeObjectViewMode();
+  }
+  try {
+    await deleteRuntimeMapRecord();
+  } catch (err) {
+    console.warn('runtime map cleanup failed', err);
+  }
+  return true;
 }
 
 function buildExistingGuideGridKeyMap() {
@@ -11766,12 +12671,44 @@ function remapStructureGroupIdsForAppend(steelFrameState, decorationStates) {
   };
 }
 
+function hydrateStandaloneStructureGroupPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      steelFrame: null,
+      decorations: [],
+    };
+  }
+  const groupId = String(payload?.meta?.groupId || '').trim();
+  const rawSteelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
+    ? payload.steelFrame
+    : null;
+  const rawPoints = Array.isArray(rawSteelFrame?.points) ? rawSteelFrame.points : [];
+  const rawSegments = Array.isArray(rawSteelFrame?.segments) ? rawSteelFrame.segments : [];
+  const steelFrame = (rawPoints.length > 0 || rawSegments.length > 0)
+    ? {
+      points: rawPoints.map((point) => ({ ...point })),
+      segments: rawSegments.map((segment) => ({
+        ...segment,
+        structureGroupId: String(segment?.structureGroupId || '').trim() || groupId || null,
+      })),
+    }
+    : null;
+  const decorations = Array.isArray(payload?.decorations)
+    ? payload.decorations.map((decoration) => ({
+      ...decoration,
+      structureGroupId: String(decoration?.structureGroupId || '').trim() || groupId || null,
+    }))
+    : [];
+  return { steelFrame, decorations };
+}
+
 function appendCreateModeGroupsPayload(payload, options = {}) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
+  const payloadMode = String(payload?.meta?.mode || '').trim();
   syncStructureGroupSequenceFromExisting();
   const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
   const mirrorGuideStates = [];
@@ -11810,8 +12747,15 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   });
   rebuildMirrorStateOnLoad(keyToGrid, 4);
 
-  const groupedSteelFrameState = filterGroupedSteelFrameState(payload?.steelFrame);
-  const groupedDecorationStates = filterGroupedDecorationStates(payload?.decorations);
+  const standaloneGroupState = payloadMode === 'group_only_with_guides'
+    ? hydrateStandaloneStructureGroupPayload(payload)
+    : null;
+  const groupedSteelFrameState = standaloneGroupState
+    ? standaloneGroupState.steelFrame
+    : filterGroupedSteelFrameState(payload?.steelFrame);
+  const groupedDecorationStates = standaloneGroupState
+    ? standaloneGroupState.decorations
+    : filterGroupedDecorationStates(payload?.decorations);
   const mapped = remapStructureGroupIdsForAppend(groupedSteelFrameState, groupedDecorationStates);
   const steelFrameState = mapped.steelFrameState;
   const decorationStates = mapped.decorationStates;
@@ -11981,9 +12925,26 @@ async function autoLoadStructureGroupsFromFolder() {
       sourceTags: sourceRows.map((row) => row.sourceTag),
     });
   }
+  await applyStructureGroupSourceRows(sourceRows, {
+    logLabel: '[structure_group]',
+    updateStatus: true,
+  });
+}
+
+async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structure_group]', updateStatus = false } = {}) {
+  const rows = Array.isArray(sourceRows) ? sourceRows : [];
+  console.info(`${logLabel} begin`, { rowCount: rows.length });
+  if (rows.length < 1) {
+    return {
+      loadedFiles: 0,
+      totalSegments: 0,
+      totalDecorations: 0,
+      remappedGroups: 0,
+    };
+  }
   // 元グループを先に復元し、その後でコピー参照を復元する。
-  const baseRows = sourceRows.filter((row) => !row.isCopyReference);
-  const copyRows = sourceRows.filter((row) => row.isCopyReference);
+  const baseRows = rows.filter((row) => !row.isCopyReference);
+  const copyRows = rows.filter((row) => row.isCopyReference);
   let loadedFiles = 0;
   let totalSegments = 0;
   let totalDecorations = 0;
@@ -11991,13 +12952,32 @@ async function autoLoadStructureGroupsFromFolder() {
   for (let i = 0; i < baseRows.length; i += 1) {
     const row = baseRows[i];
     try {
+      console.info(`${logLabel} base row start`, { index: i, url: row.url, sourceTag: row.sourceTag });
       const result = appendCreateModeGroupsPayload(row.payload, { sourceTag: row.sourceTag });
       loadedFiles += 1;
       totalSegments += Number(result?.segmentCount) || 0;
       totalDecorations += Number(result?.decorationCount) || 0;
       remappedGroups += Number(result?.remappedGroupCount) || 0;
+      console.info(`${logLabel} base row done`, {
+        index: i,
+        url: row.url,
+        sourceTag: row.sourceTag,
+        segmentCount: Number(result?.segmentCount) || 0,
+        decorationCount: Number(result?.decorationCount) || 0,
+        remappedGroupCount: Number(result?.remappedGroupCount) || 0,
+      });
     } catch (err) {
-      console.warn('[structure_group] load failed', { url: row.url, err });
+      console.error(`${logLabel} load failed`, {
+        url: row.url,
+        sourceTag: row.sourceTag,
+        err,
+        errMessage: err?.message || String(err),
+        payloadMeta: row?.payload?.meta || null,
+        steelPointCount: Array.isArray(row?.payload?.steelFrame?.points) ? row.payload.steelFrame.points.length : -1,
+        steelSegmentCount: Array.isArray(row?.payload?.steelFrame?.segments) ? row.payload.steelFrame.segments.length : -1,
+        decorationCount: Array.isArray(row?.payload?.decorations) ? row.payload.decorations.length : -1,
+        copiedGroupCount: Array.isArray(row?.payload?.copiedStructureGroups) ? row.payload.copiedStructureGroups.length : -1,
+      });
     }
   }
   // copiedStructureGroups の参照先が別ファイルにある場合に備えて、
@@ -12022,7 +13002,7 @@ async function autoLoadStructureGroupsFromFolder() {
           progressed = true;
         } else {
           retryRows.push(row);
-          console.info('[structure_group] retry copy reference', {
+          console.info(`${logLabel} retry copy reference`, {
             sourceTag: row.sourceTag,
             url: row.url,
             copiedCount,
@@ -12030,7 +13010,13 @@ async function autoLoadStructureGroupsFromFolder() {
           });
         }
       } catch (err) {
-        console.warn('[structure_group] load failed', { url: row.url, err });
+        console.error(`${logLabel} load failed`, {
+          url: row.url,
+          sourceTag: row.sourceTag,
+          err,
+          errMessage: err?.message || String(err),
+          payloadMeta: row?.payload?.meta || null,
+        });
       }
     }
     if (!progressed) {
@@ -12040,19 +13026,32 @@ async function autoLoadStructureGroupsFromFolder() {
     pendingCopyRows.splice(0, pendingCopyRows.length, ...retryRows);
   }
   if (pendingCopyRows.length > 0) {
-    console.warn('[structure_group] copy references pending after retry', pendingCopyRows.map((row) => ({
+    console.warn(`${logLabel} copy references pending after retry`, pendingCopyRows.map((row) => ({
       sourceTag: row.sourceTag,
       url: row.url,
     })));
     pendingCopyRows.forEach((row) => {
-      console.warn('[structure_group] copy reference unresolved', { url: row.url, sourceTag: row.sourceTag });
+      console.warn(`${logLabel} copy reference unresolved`, { url: row.url, sourceTag: row.sourceTag });
     });
   }
-  if (loadedFiles > 0) {
+  if (updateStatus && loadedFiles > 0) {
     const statusText = `structure_group 自動読込: ${loadedFiles} files / segment ${totalSegments} / decoration ${totalDecorations} / group再採番 ${remappedGroups}`;
     if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
     if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
   }
+  console.info(`${logLabel} done`, {
+    loadedFiles,
+    totalSegments,
+    totalDecorations,
+    remappedGroups,
+    pendingCopyRows: pendingCopyRows.length,
+  });
+  return {
+    loadedFiles,
+    totalSegments,
+    totalDecorations,
+    remappedGroups,
+  };
 }
 
 if (loadMapDataButton && loadMapDataInput) {
@@ -12153,7 +13152,9 @@ if (loadMapDataButton && loadMapDataInput) {
   });
 }
 
-await loadStructureData(structureDataUrl);
+if (!IS_RUNTIME_LOCAL_VIEW) {
+  await loadStructureData(structureDataUrl);
+}
 
 function sliceCurvePoints(curve, startRatio, endRatio, resolution = 1000) {
   const points = curve.getPoints(resolution);
@@ -12394,9 +13395,11 @@ setRailConstructionCategory(null);
 setRailConstructionGroupOptions();
 setGroupModePanelVisible(false);
 updateGroupModePanelUI();
-autoLoadStructureGroupsFromFolder().catch((err) => {
-  console.warn('[structure_group] auto load error', err);
-});
+if (!IS_RUNTIME_LOCAL_VIEW) {
+  autoLoadStructureGroupsFromFolder().catch((err) => {
+    console.warn('[structure_group] auto load error', err);
+  });
+}
 const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
@@ -12407,7 +13410,7 @@ let track2_doors = new THREE.Group();
 let track3_doors = new THREE.Group();
 let track4_doors = new THREE.Group();
 
-if (!USE_SAVED_DATA_ONLY) {
+if (!SHOULD_SKIP_DEFAULT_WORLD_PLACEMENTS) {
   ({
     door_interval,
     track1_doors,
@@ -12444,7 +13447,10 @@ if (!USE_SAVED_DATA_ONLY) {
     setMeshListOpacity,
   }));
 } else {
-  console.info('[main] USE_SAVED_DATA_ONLY=true: applyFixedPlacements をスキップ');
+  console.info('[main] default world placements skipped', {
+    useSavedDataOnly: USE_SAVED_DATA_ONLY,
+    isPublicRuntimeLocalView: IS_PUBLIC_RUNTIME_LOCAL_VIEW,
+  });
   railTrackDefs.forEach((track) => {
     if (!track?.curve) { return; }
     TSys.createRail(track.curve);
@@ -13158,6 +14164,33 @@ GuideLine.name = 'GuideLine'
 GuideLine.position.set(0,0,0);
 scene.add(GuideLine)
 
+const WORLD_ORIGIN_AXIS_LEN = 12;
+const WorldOriginAxisGroup = new THREE.Group();
+WorldOriginAxisGroup.name = 'WorldOriginAxisGroup';
+const WorldOriginAxisX = createLine(
+  { x: -WORLD_ORIGIN_AXIS_LEN, y: 0.02, z: 0 },
+  { x: WORLD_ORIGIN_AXIS_LEN, y: 0.02, z: 0 },
+  0xe34c4c
+);
+WorldOriginAxisX.name = 'WorldOriginAxisX';
+const WorldOriginAxisY = createLine(
+  { x: 0, y: -3, z: 0 },
+  { x: 0, y: 3, z: 0 },
+  0x46b86a
+);
+WorldOriginAxisY.name = 'WorldOriginAxisY';
+const WorldOriginAxisZ = createLine(
+  { x: 0, y: 0.02, z: -WORLD_ORIGIN_AXIS_LEN },
+  { x: 0, y: 0.02, z: WORLD_ORIGIN_AXIS_LEN },
+  0x3f7fd6
+);
+WorldOriginAxisZ.name = 'WorldOriginAxisZ';
+WorldOriginAxisGroup.add(WorldOriginAxisX);
+WorldOriginAxisGroup.add(WorldOriginAxisY);
+WorldOriginAxisGroup.add(WorldOriginAxisZ);
+WorldOriginAxisGroup.position.set(0, 0, 0);
+scene.add(WorldOriginAxisGroup);
+
 function updateGuideLineDirectionFromMesh(mesh) {
   if (!GuideLine) { return; }
   const baseAxis = new THREE.Vector3(0, 1, 0);
@@ -13647,6 +14680,21 @@ let guideMillerSelectedEdge = null
 let guideMillerAddModeActive = false
 let guideMillerInfluenceModeActive = false
 let guideCoordinateFrameOverride = null
+
+if (IS_RUNTIME_LOCAL_VIEW) {
+  setTimeout(async () => {
+    try {
+      await loadRuntimeMapFromPublicUpload();
+    } catch (err) {
+      console.warn('runtime map load failed', err);
+      const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit map' : 'public map';
+      const message = `${runtimeLabel} 読込失敗: ${err?.message || err}`;
+      if (mapLoadStatus) { mapLoadStatus.textContent = message; }
+      if (railConstructionStatus) { railConstructionStatus.textContent = message; }
+      updateDifferenceStatus(message);
+    }
+  }, 0);
+}
 let guideCoordinateEdgeOverride = null
 const guideMillerInfluencePlanes = []
 let guideMillerInfluenceSelectedPlane = null
@@ -14322,6 +15370,16 @@ function syncSinjyukuCityVisibility() {
 function clearDifferencePreviewTube() {
   purgeDifferencePreviewCuttersInScene();
   differencePreviewTube = null;
+}
+
+function getDifferenceTargetMapRoot() {
+  if (!sinjyukuCity) {
+    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+  }
+  if (sinjyukuCity) {
+    return sinjyukuCity;
+  }
+  return scene.getObjectByName('__public_runtime_ct_glb__') || null;
 }
 
 function purgeDifferencePreviewCuttersInScene() {
@@ -18773,11 +19831,9 @@ function refreshDifferencePreview() {
 
 function applyDifferenceToSinjyuku(cutterMesh) {
   if (!cutterMesh || !cutterMesh.geometry) { return 0; }
-  if (!sinjyukuCity) {
-    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
-  }
-  if (!sinjyukuCity) {
-    console.warn('sinjyuku_city is not available yet.');
+  const targetMapRoot = getDifferenceTargetMapRoot();
+  if (!targetMapRoot) {
+    console.warn('difference target city model is not available yet.');
     return 0;
   }
 
@@ -18795,7 +19851,7 @@ function applyDifferenceToSinjyuku(cutterMesh) {
   const cutterBox = cutterWorldGeometry.boundingBox?.clone?.() || new THREE.Box3().setFromObject(cutterMesh);
 
   let changedCount = 0;
-  sinjyukuCity.traverse((node) => {
+  targetMapRoot.traverse((node) => {
     if (!node?.isMesh || !node.geometry) { return; }
 
     const sourceGeometry = node.geometry;
@@ -19373,14 +20429,11 @@ function tryAutoRunDifferenceFromLineTracksOnLoad() {
   if (!AUTO_DIFFERENCE_LINE_ON_LOAD || autoDifferenceLineTriedOnLoad) { return; }
   if (!loadingReady) { return; }
   if (!Array.isArray(railTrackDefs) || railTrackDefs.length < 1) { return; }
-  if (!sinjyukuCity) {
-    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
-  }
-  if (!sinjyukuCity) {
+  if (!getDifferenceTargetMapRoot()) {
     autoDifferenceLineRetryCount += 1;
     if (autoDifferenceLineRetryCount >= AUTO_DIFFERENCE_LINE_MAX_RETRY) {
       autoDifferenceLineTriedOnLoad = true;
-      console.warn('[Difference][line][autoload] canceled: sinjyuku_city was not ready.');
+      console.warn('[Difference][line][autoload] canceled: difference target city model was not ready.');
     }
     return;
   }

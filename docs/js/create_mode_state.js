@@ -108,10 +108,115 @@ export function createCreateModeStateCodec({ encode, decode }) {
     }
   }
 
+  function isZipBytes(bytes) {
+    return bytes instanceof Uint8Array
+      && bytes.byteLength >= 4
+      && bytes[0] === 0x50
+      && bytes[1] === 0x4b
+      && bytes[2] === 0x03
+      && bytes[3] === 0x04;
+  }
+
+  async function loadJsZipCtor() {
+    const candidates = [
+      'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm',
+      'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+    ];
+    for (const url of candidates) {
+      try {
+        const mod = await import(url);
+        const ctor = mod?.default || mod?.JSZip || null;
+        if (ctor) {
+          return ctor;
+        }
+      } catch (_error) {
+        // Try the next candidate.
+      }
+    }
+    throw new Error('ZIP 解析ライブラリの読み込みに失敗しました。');
+  }
+
+  function rankZipEntryName(name) {
+    const lower = String(name || '').toLowerCase();
+    if (lower.endsWith('single_structure.msgpack')) { return 0; }
+    if (lower.endsWith('single_structure.mpk')) { return 1; }
+    if (lower.endsWith('single_structure.json')) { return 2; }
+    if (lower.endsWith('create_mode_state.msgpack')) { return 3; }
+    if (lower.endsWith('create_mode_state.mpk')) { return 4; }
+    if (lower.endsWith('create_mode_state.json')) { return 5; }
+    if (lower.endsWith('.msgpack')) { return 10; }
+    if (lower.endsWith('.mpk')) { return 11; }
+    if (lower.endsWith('.json')) { return 12; }
+    return 999;
+  }
+
+  async function readMapDataBytes(bytes, { name = 'unknown', size = 0 } = {}) {
+    const lowerName = String(name || '').toLowerCase();
+    const explicitZip = lowerName.endsWith('.zip');
+    if (!explicitZip && !isZipBytes(bytes)) {
+      return parseMapDataBytes(bytes, { name, size });
+    }
+
+    const JSZipCtor = await loadJsZipCtor();
+    const zip = await JSZipCtor.loadAsync(bytes);
+    const candidates = Object.values(zip.files)
+      .filter((entry) => entry && !entry.dir)
+      .filter((entry) => /\.(json|msgpack|mpk)$/i.test(String(entry.name || '')))
+      .sort((a, b) => rankZipEntryName(a.name) - rankZipEntryName(b.name));
+
+    if (candidates.length < 1) {
+      throw new Error('ZIP 内に読込可能な map_data ファイルが見つかりません。');
+    }
+
+    const selectedEntry = candidates[0];
+    const entryBytes = new Uint8Array(await selectedEntry.async('uint8array'));
+    return parseMapDataBytes(entryBytes, {
+      name: selectedEntry.name || name,
+      size: entryBytes.byteLength,
+    });
+  }
+
+  async function readMapDataArchiveBytes(bytes, { name = 'unknown', size = 0 } = {}) {
+    const lowerName = String(name || '').toLowerCase();
+    const explicitZip = lowerName.endsWith('.zip');
+    if (!explicitZip && !isZipBytes(bytes)) {
+      return [{
+        name,
+        size: Number(size) || bytes.byteLength || 0,
+        payload: parseMapDataBytes(bytes, { name, size }),
+      }];
+    }
+
+    const JSZipCtor = await loadJsZipCtor();
+    const zip = await JSZipCtor.loadAsync(bytes);
+    const candidates = Object.values(zip.files)
+      .filter((entry) => entry && !entry.dir)
+      .filter((entry) => /\.(json|msgpack|mpk)$/i.test(String(entry.name || '')))
+      .sort((a, b) => rankZipEntryName(a.name) - rankZipEntryName(b.name));
+
+    if (candidates.length < 1) {
+      throw new Error('ZIP 内に読込可能な map_data ファイルが見つかりません。');
+    }
+
+    const rows = [];
+    for (const entry of candidates) {
+      const entryBytes = new Uint8Array(await entry.async('uint8array'));
+      rows.push({
+        name: entry.name || name,
+        size: entryBytes.byteLength,
+        payload: parseMapDataBytes(entryBytes, {
+          name: entry.name || name,
+          size: entryBytes.byteLength,
+        }),
+      });
+    }
+    return rows;
+  }
+
   function readMapDataFile(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
           const data = reader.result;
           if (!(data instanceof ArrayBuffer)) {
@@ -119,7 +224,7 @@ export function createCreateModeStateCodec({ encode, decode }) {
             return;
           }
           const bytes = new Uint8Array(data);
-          resolve(parseMapDataBytes(bytes, {
+          resolve(await readMapDataBytes(bytes, {
             name: file?.name || 'unknown',
             size: Number(file?.size) || 0,
           }));
@@ -142,15 +247,16 @@ export function createCreateModeStateCodec({ encode, decode }) {
     const bytes = new Uint8Array(buffer);
     const pathname = String(url || '').split('?')[0];
     const name = pathname.split('/').pop() || pathname || 'unknown';
-    return parseMapDataBytes(bytes, { name, size: bytes.byteLength });
+    return readMapDataBytes(bytes, { name, size: bytes.byteLength });
   }
 
   return {
     packState,
     unpackState,
     parseMapDataBytes,
+    readMapDataBytes,
+    readMapDataArchiveBytes,
     readMapDataFile,
     readMapDataPayloadFromUrl,
   };
 }
-
