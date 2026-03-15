@@ -197,12 +197,18 @@ async function deleteRuntimeMapRecord() {
     return Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => !runtimeFiles[kind]);
   }
 
+  function hasCityRuntimeFile() {
+    const cityFile = runtimeFiles?.ct;
+    const name = String(cityFile?.name || "").trim().toLowerCase();
+    return /^ct/i.test(name) && /\.(glb|gltf)$/i.test(name);
+  }
+
   function getStartValidationMessage() {
     const loadedKinds = Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => Boolean(runtimeFiles[kind]));
     if (loadedKinds.length > 0) {
-      return "";
-    }
-    if (fallbackMapDataAvailable) {
+      if (!hasCityRuntimeFile()) {
+        return "表示には都市データ `ct_*.glb` が必要です。";
+      }
       return "";
     }
     return "先頭が st / ct / tr のファイルを1つ以上読み込んでください。";

@@ -436,6 +436,24 @@ const threeUi = document.getElementById('three-ui');
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
   let railGroupRangePreviewGroup = null;
+  let mapLoadStatusHideTimer = 0;
+
+  function setMapLoadStatusText(text, { autoHide = true, delayMs = 5000 } = {}) {
+    if (!mapLoadStatus) { return; }
+    const nextText = String(text || '').trim();
+    mapLoadStatus.textContent = nextText;
+    mapLoadStatus.style.display = nextText ? 'block' : 'none';
+    if (mapLoadStatusHideTimer) {
+      window.clearTimeout(mapLoadStatusHideTimer);
+      mapLoadStatusHideTimer = 0;
+    }
+    if (!nextText || !autoHide) { return; }
+    mapLoadStatusHideTimer = window.setTimeout(() => {
+      mapLoadStatus.textContent = '';
+      mapLoadStatus.style.display = 'none';
+      mapLoadStatusHideTimer = 0;
+    }, Math.max(0, Number(delayMs) || 0));
+  }
 
   function clearRailGroupRangePreview() {
     if (!railGroupRangePreviewGroup) { return; }
@@ -8212,7 +8230,7 @@ async function triggerRuntimeMapLoadFromStartButton() {
     console.warn('runtime map load failed', err);
     const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit map' : 'public map';
     const message = `${runtimeLabel} 読込失敗: ${err?.message || err}`;
-    if (mapLoadStatus) { mapLoadStatus.textContent = message; }
+    setMapLoadStatusText(message);
     if (railConstructionStatus) { railConstructionStatus.textContent = message; }
     updateDifferenceStatus(message);
   }
@@ -12828,7 +12846,7 @@ async function loadRuntimeMapFromPublicUpload() {
 
   const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit object' : 'public object';
   const statusText = `${runtimeLabel} 読込完了: ${loadedNames.join(', ')}`;
-  if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
+  setMapLoadStatusText(statusText);
   if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
   updateDifferenceStatus(statusText);
   updateGroundOpacityButtonState();
@@ -13488,7 +13506,7 @@ async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structur
   }
   if (updateStatus && loadedFiles > 0) {
     const statusText = `structure_group 自動読込: ${loadedFiles} files / segment ${totalSegments} / decoration ${totalDecorations} / group再採番 ${remappedGroups}`;
-    if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
+    setMapLoadStatusText(statusText);
     if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
   }
   console.info(`${logLabel} done`, {
@@ -13519,9 +13537,7 @@ if (loadMapDataButton && loadMapDataInput) {
   let mapLoadMode = 'replace';
   const notifyMapLoadStatus = (message) => {
     const text = String(message || '');
-    if (mapLoadStatus) {
-      mapLoadStatus.textContent = text;
-    }
+    setMapLoadStatusText(text);
     updateDifferenceStatus(text);
     if (constructionCategoryStatus) {
       constructionCategoryStatus.textContent = text;
@@ -15583,9 +15599,7 @@ function updateGroundOpacityButtonState() {
 function toggleGroundOpacity() {
   const meshes = getGroundMeshes();
   if (meshes.length < 1) {
-    if (mapLoadStatus) {
-      mapLoadStatus.textContent = 'ground が見つかりません。';
-    }
+    setMapLoadStatusText('ground が見つかりません。');
     return false;
   }
   const materials = meshes.flatMap((mesh) => Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
@@ -15604,11 +15618,11 @@ function toggleGroundOpacity() {
     setMaterialOpacity(material, 0.3);
   });
   updateGroundOpacityButtonState();
-  if (mapLoadStatus) {
-    mapLoadStatus.textContent = shouldRestore
+  setMapLoadStatusText(
+    shouldRestore
       ? `ground 表示を戻しました: ${meshes.length} 件`
-      : `ground を透過しました: ${meshes.length} 件`;
-  }
+      : `ground を透過しました: ${meshes.length} 件`
+  );
   return true;
 }
 
