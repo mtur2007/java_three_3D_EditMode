@@ -275,6 +275,7 @@ a {
 
 .viewer-area {
   padding: 14px;
+  display: none;
 }
 
 .temp-area {
