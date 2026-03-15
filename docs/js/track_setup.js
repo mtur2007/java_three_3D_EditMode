@@ -8,21 +8,7 @@ const RUNTIME_MAP_STORE_NAME = 'runtimeMaps';
 const RUNTIME_MAP_RECORD_KEY = 'public-selected-map';
 export const ENABLE_MANUAL_DIORAMA_SPACE = false;
 export const USE_SAVED_DATA_ONLY = true;
-const CORE_TRACK_KEYS = [
-  'Points_0',
-  'Points_1',
-  'Points_2',
-  'Points_3',
-  'JK_upbound_point',
-  'JY_upbound_point',
-  'JY_downbound_point',
-  'JK_downbound_point',
-  'J_UJT_upbound_point',
-  'J_UJT_downbound_point',
-  'sinkansen_upbound_point',
-  'sinkansen_downbound_point',
-  'marunouchi_point',
-];
+const REQUIRED_TRACK_KEYS = ['Points_0'];
 
 function isPlainPoint(value) {
   return !!value &&
@@ -302,8 +288,7 @@ function normalizeTrackData(rawData) {
     tracks[name] = pointsToVector3(rawList);
   });
 
-  // 既存コード互換のため、主要キーは不足時に補完して必ず存在させる。
-  CORE_TRACK_KEYS.forEach((name) => {
+  REQUIRED_TRACK_KEYS.forEach((name) => {
     if (Array.isArray(tracks[name]) && tracks[name].length >= 2) { return; }
     console.warn(`[track_setup] 不足/不正な点群を補完しました: ${name}`);
     tracks[name] = pointsToVector3(baseFallback);
@@ -323,14 +308,6 @@ function buildFallbackTrackData() {
       { x: 40, y: 1, z: 0 },
     ],
   };
-  CORE_TRACK_KEYS.forEach((name, index) => {
-    if (fallbackTracks[name]) { return; }
-    const zOffset = (index % 4) * 6 - 9;
-    fallbackTracks[name] = [
-      { x: -40, y: 1, z: zOffset },
-      { x: 40, y: 1, z: zOffset },
-    ];
-  });
   return {
     meta: {
       version: TRACK_DATA_VERSION,
@@ -410,40 +387,6 @@ export async function initTrackSetup(options = {}) {
     saveTrackButton.addEventListener('click', () => downloadTrackData(trackMap, worldScale));
   }
 
-  const Points_0 = trackMap.Points_0;
-  const Points_1 = trackMap.Points_1;
-  const Points_2 = trackMap.Points_2;
-  const Points_3 = trackMap.Points_3;
-
-  const JK_upbound_point = trackMap.JK_upbound_point;
-  const JY_upbound_point = trackMap.JY_upbound_point;
-  const JY_downbound_point = trackMap.JY_downbound_point;
-  const JK_downbound_point = trackMap.JK_downbound_point;
-
-  const J_UJT_upbound_point = trackMap.J_UJT_upbound_point;
-  const J_UJT_downbound_point = trackMap.J_UJT_downbound_point;
-
-  const sinkansen_upbound_point = trackMap.sinkansen_upbound_point;
-  const sinkansen_downbound_point = trackMap.sinkansen_downbound_point;
-  const marunouchi_point = trackMap.marunouchi_point;
-
-  const line_1 = new THREE.CatmullRomCurve3(Points_0);
-  const line_2 = new THREE.CatmullRomCurve3(Points_1);
-  const line_3 = new THREE.CatmullRomCurve3(Points_2);
-  const line_4 = new THREE.CatmullRomCurve3(Points_3);
-
-  const JK_upbound = new THREE.CatmullRomCurve3(JK_upbound_point);
-  const JY_upbound = new THREE.CatmullRomCurve3(JY_upbound_point);
-  const JY_downbound = new THREE.CatmullRomCurve3(JY_downbound_point);
-  const JK_downbound = new THREE.CatmullRomCurve3(JK_downbound_point);
-
-  const J_UJT_upbound = new THREE.CatmullRomCurve3(J_UJT_upbound_point);
-  const J_UJT_downbound = new THREE.CatmullRomCurve3(J_UJT_downbound_point);
-
-  const sinkansen_upbound = new THREE.CatmullRomCurve3(sinkansen_upbound_point);
-  const sinkansen_downbound = new THREE.CatmullRomCurve3(sinkansen_downbound_point);
-  const marunouchi = new THREE.CatmullRomCurve3(marunouchi_point);
-
   const railTrackDefs = Object.entries(trackMap).map(([name, points]) => ({
     name,
     curve: new THREE.CatmullRomCurve3(points),
@@ -456,32 +399,6 @@ export async function initTrackSetup(options = {}) {
   }, {});
 
   return {
-    Points_0,
-    Points_1,
-    Points_2,
-    Points_3,
-    JK_upbound_point,
-    JY_upbound_point,
-    JY_downbound_point,
-    JK_downbound_point,
-    J_UJT_upbound_point,
-    J_UJT_downbound_point,
-    sinkansen_upbound_point,
-    sinkansen_downbound_point,
-    marunouchi_point,
-    line_1,
-    line_2,
-    line_3,
-    line_4,
-    JK_upbound,
-    JY_upbound,
-    JY_downbound,
-    JK_downbound,
-    J_UJT_upbound,
-    J_UJT_downbound,
-    sinkansen_upbound,
-    sinkansen_downbound,
-    marunouchi,
     railTrackDefs,
     railTrackCurveMap,
   };

@@ -220,6 +220,7 @@ const uiTree = {
                     'pillar': '',
                     'rib_bridge': '',
                     'tunnel_rect': '',
+                    'tunnel_circle': '',
                     'platform': '',
                     'group_rail': '',
                 },

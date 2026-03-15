@@ -103,6 +103,7 @@ async function deleteRuntimeMapRecord() {
     ct: null,
     tr: null,
   };
+  let fallbackMapDataAvailable = false;
   let featuresGuideActive = false;
   let guideReturnScrollY = 0;
   let featuresWasHiddenBeforeGuide = false;
@@ -153,10 +154,11 @@ async function deleteRuntimeMapRecord() {
 
   function normalizeRuntimeFiles(record) {
     if (record?.files && typeof record.files === "object") {
+      const rawTr = record.files.tr;
       return {
         st: record.files.st || null,
         ct: record.files.ct || null,
-        tr: record.files.tr || null,
+        tr: Array.isArray(rawTr) ? rawTr.filter(Boolean) : (rawTr ? [rawTr] : []),
       };
     }
     if (record?.buffer && record?.name) {
@@ -170,17 +172,24 @@ async function deleteRuntimeMapRecord() {
           savedAt: Number(record.savedAt) || Date.now(),
           buffer: record.buffer,
         },
-        tr: null,
+        tr: [],
       };
     }
     return {
       st: null,
       ct: null,
-      tr: null,
+      tr: [],
     };
   }
 
   function getRuntimeFileName(kind) {
+    if (kind === "tr") {
+      const list = Array.isArray(runtimeFiles?.tr) ? runtimeFiles.tr : [];
+      const names = list.map((file) => String(file?.name || "").trim()).filter(Boolean);
+      if (names.length < 1) { return ""; }
+      if (names.length === 1) { return names[0]; }
+      return `${names[0]} ほか${names.length - 1}件`;
+    }
     return String(runtimeFiles?.[kind]?.name || "").trim();
   }
 
@@ -191,6 +200,9 @@ async function deleteRuntimeMapRecord() {
   function getStartValidationMessage() {
     const loadedKinds = Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => Boolean(runtimeFiles[kind]));
     if (loadedKinds.length > 0) {
+      return "";
+    }
+    if (fallbackMapDataAvailable) {
       return "";
     }
     return "先頭が st / ct / tr のファイルを1つ以上読み込んでください。";
@@ -280,7 +292,7 @@ async function deleteRuntimeMapRecord() {
       }
 
       const buffer = await file.arrayBuffer();
-      runtimeFiles[kind] = {
+      const nextEntry = {
         name: file.name || "selected file",
         type: file.type || "",
         size: Number(file.size) || 0,
@@ -288,6 +300,12 @@ async function deleteRuntimeMapRecord() {
         savedAt: Date.now(),
         buffer,
       };
+      if (kind === "tr") {
+        const current = Array.isArray(runtimeFiles.tr) ? runtimeFiles.tr : [];
+        runtimeFiles.tr = [...current, nextEntry];
+      } else {
+        runtimeFiles[kind] = nextEntry;
+      }
       acceptedKinds.push(kind);
     }
 
@@ -319,9 +337,36 @@ async function deleteRuntimeMapRecord() {
       runtimeFiles = {
         st: null,
         ct: null,
-        tr: null,
+        tr: [],
       };
       updateLocalMapSummary();
+    }
+  }
+
+  async function detectFallbackMapData() {
+    try {
+      const response = await fetch("../map_data/manifest.json", { cache: "no-store" });
+      if (!response.ok) {
+        fallbackMapDataAvailable = false;
+        updateLocalMapSummary();
+        return false;
+      }
+      const manifest = await response.json();
+      const manifestFiles = Array.isArray(manifest?.files) ? manifest.files : [];
+      fallbackMapDataAvailable = manifestFiles.some((entry) => {
+        const name = String(entry?.name || "").trim();
+        const kind = String(entry?.kind || "").trim();
+        return Boolean(name) && (kind === "st" || kind === "ct" || kind === "tr");
+      });
+      updateLocalMapSummary();
+      if (fallbackMapDataAvailable && !runtimeFiles.st && !runtimeFiles.ct && !runtimeFiles.tr) {
+        setLocalMapComment("未選択時は map_data から自動ロードします。", "success");
+      }
+      return fallbackMapDataAvailable;
+    } catch (_error) {
+      fallbackMapDataAvailable = false;
+      updateLocalMapSummary();
+      return false;
     }
   }
 
@@ -454,7 +499,9 @@ async function deleteRuntimeMapRecord() {
 
   updateLocalMapSummary();
   setLocalMapComment("", "info", false);
-  restoreCachedRuntimeMap();
+  restoreCachedRuntimeMap().finally(() => {
+    detectFallbackMapData();
+  });
   syncFeaturesGuideButtonLabel();
 
   scrollButtons.forEach((button) => {

@@ -1003,6 +1003,77 @@ export class TrainSystem {
     }
   }
 
+  createCircularTunnelAlongCurve(curve, {
+    innerRadius = 1.4,
+    yOffset = -0.1,
+    color = 0x8b8f94,
+    tubularSegments = 160,
+    radialSegments = 28,
+  } = {}) {
+    if (!curve || typeof curve.getLength !== 'function' || curve.getLength() <= 0) { return null; }
+    const radius = Math.max(0.2, Number(innerRadius) || 1.4);
+    const points = curve.getPoints(Math.max(12, tubularSegments));
+    if (!Array.isArray(points) || points.length < 2) { return null; }
+    const shiftedCurve = new THREE.CatmullRomCurve3(
+      points.map((point) => point.clone().setY(point.y + yOffset + radius))
+    );
+    const geometry = new THREE.TubeGeometry(
+      shiftedCurve,
+      Math.max(12, tubularSegments),
+      radius,
+      Math.max(12, radialSegments),
+      false
+    );
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      side: THREE.BackSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  buildTunnelEnvelopeFromTracks(trackGroups, {
+    sampleCount = 120,
+  } = {}) {
+    if (!Array.isArray(trackGroups) || trackGroups.length < 1) { return null; }
+    const validTracks = trackGroups.filter((group) => group?.curve && typeof group.curve.getLength === 'function' && group.curve.getLength() > 0);
+    if (validTracks.length < 1) { return null; }
+    const refDir = this.getCurveDirectionAtDistance(validTracks[0].curve, 0.5);
+    const alignedTracks = validTracks.map((group) => {
+      const aligned = this.alignCurveDirection(group.curve, refDir);
+      return {
+        ...group,
+        curve: aligned.curve,
+      };
+    });
+    const orderedTracks = this.getRouteOrderRightToLeft(alignedTracks);
+    const rightEdge = orderedTracks[0];
+    const leftEdge = orderedTracks[orderedTracks.length - 1];
+    if (!rightEdge?.curve || !leftEdge?.curve) { return null; }
+
+    const centerPoints = [];
+    let maxSpan = 0;
+    const count = Math.max(8, Number(sampleCount) || 120);
+    for (let i = 0; i <= count; i++) {
+      const t = count > 0 ? i / count : 0;
+      const rightPoint = rightEdge.curve.getPointAt(t).clone();
+      const leftPoint = leftEdge.curve.getPointAt(t).clone();
+      centerPoints.push(rightPoint.clone().lerp(leftPoint, 0.5));
+      const dx = rightPoint.x - leftPoint.x;
+      const dz = rightPoint.z - leftPoint.z;
+      maxSpan = Math.max(maxSpan, Math.sqrt((dx * dx) + (dz * dz)));
+    }
+
+    return {
+      orderedTracks,
+      rightEdge,
+      leftEdge,
+      maxSpan,
+      centerCurve: centerPoints.length > 1 ? new THREE.CatmullRomCurve3(centerPoints) : rightEdge.curve.clone(),
+    };
+  }
+
   reverseCurveCopy(curve, steps = 300) {
     const reversedPoints = curve.getPoints(steps).map((point) => point.clone()).reverse();
     return new THREE.CatmullRomCurve3(reversedPoints);
@@ -1393,10 +1464,52 @@ export class TrainSystem {
         wallThickness: options.wallThickness ?? 0.25,
         segmentSpacing: options.segmentSpacing ?? 1.2,
         yOffset: options.yOffset ?? -0.1,
+        sideClearance: options.sideClearance ?? 1.2,
         color: options.color ?? 0x8b8f94,
       };
-      trackGroups.forEach((group) => {
-        this.createRectTunnelAlongCurve(group.curve, tunnelOptions);
+      const envelope = this.buildTunnelEnvelopeFromTracks(trackGroups);
+      if (!envelope) { return false; }
+      const expandedWidth = envelope.orderedTracks.length > 1
+        ? Math.max(
+          tunnelOptions.innerWidth,
+          envelope.maxSpan + (Math.max(0, Number(tunnelOptions.sideClearance) || 0) * 2)
+        )
+        : tunnelOptions.innerWidth;
+      this.createRectTunnelAlongCurve(envelope.centerCurve, {
+        innerWidth: expandedWidth,
+        innerHeight: tunnelOptions.innerHeight,
+        wallThickness: tunnelOptions.wallThickness,
+        segmentSpacing: tunnelOptions.segmentSpacing,
+        yOffset: tunnelOptions.yOffset,
+        color: tunnelOptions.color,
+      });
+      return true;
+    }
+
+    if (type === 'tunnel_circle') {
+      const tunnelOptions = {
+        innerRadius: options.innerRadius ?? 1.3,
+        yOffset: options.yOffset ?? -1.2,
+        sideClearance: options.sideClearance ?? 0.1,
+        color: options.color ?? 0x8b8f94,
+      };
+      const envelope = this.buildTunnelEnvelopeFromTracks(trackGroups);
+      if (!envelope) { return false; }
+      const trackCount = envelope.orderedTracks.length;
+      if (trackCount !== 1 && trackCount !== 2) {
+        console.warn('tunnel_circle supports only 1 or 2 tracks.');
+        return false;
+      }
+      const radius = trackCount === 2
+        ? Math.max(
+          tunnelOptions.innerRadius,
+          (envelope.maxSpan * 0.5) + Math.max(0, Number(tunnelOptions.sideClearance) || 0)
+        )
+        : tunnelOptions.innerRadius;
+      this.createCircularTunnelAlongCurve(envelope.centerCurve, {
+        innerRadius: radius,
+        yOffset: tunnelOptions.yOffset,
+        color: tunnelOptions.color,
       });
       return true;
     }

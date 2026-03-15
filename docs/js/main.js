@@ -410,6 +410,13 @@ const threeUi = document.getElementById('three-ui');
   let differenceViewToggleButton = document.getElementById('difference-view-toggle-button');
   const differenceStatus = document.getElementById('difference-status');
   const mapLoadStatus = document.getElementById('map-load-status');
+  const toggleGroundOpacityButton = document.getElementById('toggle-ground-opacity');
+  const toggleTrainPanelButton = document.getElementById('toggle-train-panel');
+  const trainPanel = document.getElementById('train-panel');
+  const trainConfigList = document.getElementById('train-config-list');
+  const trainAddButton = document.getElementById('train-add-button');
+  const trainApplyButton = document.getElementById('train-apply-button');
+  const trainStatus = document.getElementById('train-status');
   const railSelectionStatus = document.getElementById('rail-selection-status');
   const constructionCategoryPanel = document.getElementById('construction-category-panel');
   const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
@@ -417,6 +424,8 @@ const threeUi = document.getElementById('three-ui');
   const constructionCategoryStatus = document.getElementById('construction-category-status');
   const railConstructionPanel = document.getElementById('rail-construction-panel');
   const railConstructionCards = Array.from(document.querySelectorAll('[data-rail-construction-category]'));
+  const railConstructionTunnelPatternRow = document.getElementById('rail-construction-tunnel-pattern-row');
+  const railConstructionPatternCards = Array.from(document.querySelectorAll('[data-rail-construction-pattern]'));
   const railConstructionGroupRow = document.getElementById('rail-construction-group-row');
   const railConstructionGroupSelect = document.getElementById('rail-construction-group-select');
   const railConstructionOffsetRow = document.getElementById('rail-construction-offset-row');
@@ -716,19 +725,38 @@ const threeUi = document.getElementById('three-ui');
     });
   }
 
-  let differenceSpaceModeActive = false;
-  let differenceShapeType = differenceShapeSelect?.value || 'tube';
-  let differencePathType = differencePathSelect?.value || 'smooth';
+let differenceSpaceModeActive = false;
+let differenceShapeType = differenceShapeSelect?.value || 'tube';
+let differencePathType = differencePathSelect?.value || 'smooth';
   let differenceLineTrackNames = [];
   let differenceLineBandHeight = Math.max(0.2, Number(differenceLineHeightInput?.value) || 2.8);
   let differenceLinePickModeActive = false;
-  const AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD = ['Points_0', 'Points_1', 'Points_2', 'Points_3'];
-  const AUTO_DIFFERENCE_LINE_ON_LOAD = true;
+  let AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD = [];
+  const AUTO_DIFFERENCE_LINE_ON_LOAD = false;
   const AUTO_DIFFERENCE_LINE_HIDE_UI_ON_LOAD = true;
   const AUTO_DIFFERENCE_LINE_MAX_RETRY = 120;
-  let autoDifferenceLineTriedOnLoad = false;
-  let autoDifferenceLineRetryCount = 0;
-  let differenceSpaceTransformMode = 'none';
+let autoDifferenceLineTriedOnLoad = false;
+let autoDifferenceLineRetryCount = 0;
+let pendingSavedDifferenceReplay = null;
+let pendingSavedDifferenceSpacesRetryCount = 0;
+const PENDING_SAVED_DIFFERENCE_MAX_RETRY = 180;
+const DEFAULT_TRAIN_RUN_CONFIG = {
+  id: 'primary_train',
+  trackName: '',
+  trainType: '',
+  direction: 'forward',
+  speed: 0.006,
+  enabled: false,
+};
+let trainRunConfigs = [structuredClone(DEFAULT_TRAIN_RUN_CONFIG)];
+const configuredTrainRuntimes = new Map();
+let trainConfigIdSeq = 1;
+const CONFIGURED_COMMUTER_TRAIN_MAX_SPEED = 0.006;
+const CONFIGURED_SHINKANSEN_TRAIN_MAX_SPEED = 0.009;
+const CONFIGURED_TRAIN_ACCELERATION = 0.00001;
+const CONFIGURED_TRAIN_MIN_SPEED = 0.001;
+const CONFIGURED_TRAIN_MAX_SPEED = 0.1;
+let differenceSpaceTransformMode = 'none';
   let differenceBodySelectModeActive = false;
   let movePointPanelActive = false;
   let scalePointPanelActive = false;
@@ -785,6 +813,7 @@ const threeUi = document.getElementById('three-ui');
   const MOVE_POINT_REF_HIGHLIGHT = 0xff66ff;
   let selectedConstructionProfile = null;
   let selectedRailConstructionCategory = null;
+  let selectedRailConstructionParentCategory = null;
   let selectedRailConstructionGroupId = '';
   const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
   let railSelectionStatusFloating = null;
@@ -833,6 +862,12 @@ const threeUi = document.getElementById('three-ui');
     return railSelectionStatus || ensureRailSelectionStatusElement();
   }
 
+  function formatRailCoord(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) { return '0.000'; }
+    return n.toFixed(3);
+  }
+
   function updateRailSelectionStatus() {
     const el = getRailSelectionStatusElement();
     if (!el) { return; }
@@ -852,12 +887,37 @@ const threeUi = document.getElementById('three-ui');
     const selectedLabel = isHandle && groupKey
       ? (groupKey.startsWith('single_') ? '単体' : groupKey)
       : '未選択';
-    el.textContent = [
+    const selectedPointTrackName = String(choice_object?.userData?.trackName || '').trim();
+    const selectedPointIndex = Number(choice_object?.userData?.pointIndex);
+    const selectedPoint = (
+      selectedPointTrackName
+      && Number.isInteger(selectedPointIndex)
+      && choice_object?.position?.isVector3
+    )
+      ? choice_object.position
+      : null;
+    const lines = [
       `rail ${modeLabel}`,
       `選択: ${selectedLabel}`,
       `対象数: ${count}`,
       `ボックス数: ${boxCount}`,
-    ].join('\n');
+    ];
+    if (selectedPoint) {
+      lines.push(`制御点: ${selectedPointTrackName}[${selectedPointIndex}]`);
+      lines.push(`XYZ: ${formatRailCoord(selectedPoint.x)}, ${formatRailCoord(selectedPoint.y)}, ${formatRailCoord(selectedPoint.z)}`);
+      lines.push(`軸: ${move_direction_y ? 'Y(up)' : 'XZ(pick)'}`);
+      console.log('[rail move]', {
+        trackName: selectedPointTrackName,
+        pointIndex: selectedPointIndex,
+        axisMode: move_direction_y ? 'Y(up)' : 'XZ(pick)',
+        position: {
+          x: Number(formatRailCoord(selectedPoint.x)),
+          y: Number(formatRailCoord(selectedPoint.y)),
+          z: Number(formatRailCoord(selectedPoint.z)),
+        },
+      });
+    }
+    el.textContent = lines.join('\n');
     el.style.display = 'block';
   }
 
@@ -920,33 +980,48 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setRailConstructionCategory(category) {
-    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'platform', 'group'];
+    const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel', 'tunnel_rect', 'tunnel_circle', 'platform', 'group'];
     const next = allow.includes(category) ? category : null;
-    selectedRailConstructionCategory = next;
+    selectedRailConstructionParentCategory = (next === 'tunnel_rect' || next === 'tunnel_circle')
+      ? 'tunnel'
+      : next;
+    selectedRailConstructionCategory = next === 'tunnel'
+      ? null
+      : next;
     railConstructionCards.forEach((card) => {
-      const isSelected = card.dataset.railConstructionCategory === next;
+      const isSelected = card.dataset.railConstructionCategory === selectedRailConstructionParentCategory;
       card.classList.toggle('is-selected', isSelected);
       card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
+    railConstructionPatternCards.forEach((card) => {
+      const isSelected = card.dataset.railConstructionPattern === selectedRailConstructionCategory;
+      card.classList.toggle('is-selected', isSelected);
+      card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+    if (railConstructionTunnelPatternRow) {
+      railConstructionTunnelPatternRow.style.display = selectedRailConstructionParentCategory === 'tunnel' ? 'block' : 'none';
+    }
     if (railConstructionGroupRow) {
-      railConstructionGroupRow.style.display = next === 'group' ? 'block' : 'none';
+      railConstructionGroupRow.style.display = selectedRailConstructionCategory === 'group' ? 'block' : 'none';
     }
     if (railConstructionOffsetRow) {
-      railConstructionOffsetRow.style.display = next === 'group' ? 'block' : 'none';
+      railConstructionOffsetRow.style.display = selectedRailConstructionCategory === 'group' ? 'block' : 'none';
     }
-    if (next !== 'group') {
+    if (selectedRailConstructionCategory !== 'group') {
       clearRailGroupRangePreview();
     }
-    if (next === 'group') {
+    if (selectedRailConstructionCategory === 'group') {
       setRailConstructionGroupOptions();
     }
     if (railConstructionStatus) {
-      railConstructionStatus.textContent = next === 'group'
+      railConstructionStatus.textContent = selectedRailConstructionCategory === 'group'
         ? `選択中: group。ピンを選択し、グループIDを選んで「選択カテゴリで生成」。`
-        : next === 'platform'
+        : selectedRailConstructionCategory === 'platform'
         ? '選択中: platform。ピンを選択して「選択カテゴリで生成」。'
-        : next
-        ? `選択中: ${next}。ピンを選択して「選択カテゴリで生成」。`
+        : selectedRailConstructionParentCategory === 'tunnel' && !selectedRailConstructionCategory
+        ? '選択中: tunnel。パターンを選択してください。'
+        : selectedRailConstructionCategory
+        ? `選択中: ${selectedRailConstructionCategory}。ピンを選択して「選択カテゴリで生成」。`
         : '選択中: 未選択。カテゴリを選んで「選択カテゴリで生成」。';
     }
   }
@@ -3224,7 +3299,7 @@ const threeUi = document.getElementById('three-ui');
 
   function runRailConstructionByCategory(category, options = {}) {
     lastRailConstructionCreatedObjects = [];
-    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'platform', 'group'].includes(category)
+    const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'tunnel_circle', 'platform', 'group'].includes(category)
       ? category
       : 'bridge';
     const providedPins = normalizePinsPayload(options?.pinsPayload);
@@ -3327,7 +3402,7 @@ const threeUi = document.getElementById('three-ui');
       TSys.buildStructureFromPins('catenary_pole', pins, railTrackCurveMap, {
         interval: 14,
         leftHeight: 3.2,
-        rightHeight: 3.2,
+        rightHeight: 2,
         beamLength: 2.6,
         beamHeight: 3.2,
         yOffset: 0,
@@ -3340,15 +3415,34 @@ const threeUi = document.getElementById('three-ui');
       TSys.buildStructureFromPins('rib_bridge', pins, railTrackCurveMap, {
         edgeTrackNames: { right: edges.right, left: edges.left },
       });
-    } else if (kind === 'tunnel_rect') {
-      TSys.buildStructureFromPins('tunnel_rect', pins, railTrackCurveMap, {
-        innerWidth: 1.7,
-        innerHeight: 2,
+    } else if (kind === 'tunnel_rect' || kind === 'tunnel_circle') {
+      const selectedTrackCurves = providedPins.length > 0
+        ? getSelectedTrackCurvesForConstructionFromPinsPayload(pins)
+        : getSelectedTrackCurvesForConstruction();
+      const trackCount = selectedTrackCurves.length;
+      if (trackCount < 1) {
+        if (railConstructionStatus) {
+          railConstructionStatus.textContent = `${kind}: 対象路線を判定できませんでした。`;
+        }
+        return false;
+      }
+      if (kind === 'tunnel_circle' && trackCount !== 1 && trackCount !== 2) {
+        if (railConstructionStatus) {
+          railConstructionStatus.textContent = `tunnel_circle: 1路線/2路線のみ対応です（現在 ${trackCount} 路線）。`;
+        }
+        return false;
+      }
+      const built = TSys.buildStructureFromPins(kind, pins, railTrackCurveMap, {
+        innerWidth: 1.4,
+        innerHeight: 1.4,
         wallThickness: 0.15,
         segmentSpacing: 1.2,
-        yOffset: -0.1,
+        yOffset: kind === 'tunnel_circle' ? -1.0 : -0.1,
+        sideClearance: kind === 'tunnel_rect' ? 1.4 : 1.2,
+        innerRadius: 1.6,
         color: 0x8b8f94,
       });
+      if (!built) { return false; }
     } else if (kind === 'platform') {
       const runRailPlatformConstruction = () => {
         const selectedTrackCurves = providedPins.length > 0
@@ -3428,7 +3522,8 @@ const threeUi = document.getElementById('three-ui');
       });
       return true;
     } else {
-      TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
+      const built = TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
+      if (!built) { return false; }
     }
     const created = collectNewStructureObjectsSince(beforeIds);
     appendLinkedObjectIdsToPins(pinsForLink, created);
@@ -7628,7 +7723,7 @@ renderer.toneMappingExposure = 1;
 const train_width = 6.8
 const car_Spacing = 0.15
 const SHOW_MAP_GLB = !IS_RUNTIME_LOCAL_VIEW;
-const SHOW_TRAINS = !IS_RUNTIME_LOCAL_VIEW;
+const SHOW_TRAINS = true;
 const RUN_COMMUTER_ON_EXISTING_TRACKS = !IS_RUNTIME_LOCAL_VIEW;
 const SHOW_ELEVATORS = true;
 const ONLY_RAIL_AND_GROUND = true;
@@ -7657,6 +7752,16 @@ const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
 };
 const extraCommuterTrainModels = {};
 
+function getAvailableTrainTypeOptions() {
+  const commuterNames = Object.keys(extraCommuterTrainModels).filter((name) => Boolean(String(name || '').trim()));
+  const options = commuterNames.slice();
+  const hasShinkansenModel = Boolean(LoadModels?.[1]) || Boolean(LoadModels?.[2]);
+  if (hasShinkansenModel && !options.includes('shinkansen')) {
+    options.push('shinkansen');
+  }
+  return options;
+}
+
 function isPicPrefixedNode(node) {
   const matchesPicName = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
@@ -7684,32 +7789,76 @@ function forEachNodeMaterial(node, callback) {
   });
 }
 
-function setTrainNodeEnvMap(node, targetEnvMap) {
+function toTrainBasicMaterial(mat) {
+  if (!mat) { return mat; }
+  if (mat.isMeshBasicMaterial) { return mat.clone ? mat.clone() : mat; }
+  const next = new THREE.MeshBasicMaterial({
+    map: mat.map || null,
+    color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
+    transparent: Boolean(mat.transparent),
+    opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
+    side: mat.side,
+    alphaTest: typeof mat.alphaTest === 'number' ? mat.alphaTest : 0,
+  });
+  next.needsUpdate = true;
+  return next;
+}
+
+function cloneTrainMeshMaterials(root) {
+  root?.traverse?.((node) => {
+    if (!node?.isMesh) { return; }
+    if (Array.isArray(node.material)) {
+      node.material = node.material.map((mat) => (mat?.clone ? mat.clone() : mat));
+    } else if (node.material?.clone) {
+      node.material = node.material.clone();
+    }
+  });
+}
+
+function normalizeTrainRootMaterials(root) {
+  cloneTrainMeshMaterials(root);
+  root?.traverse?.((node) => {
+    if (!node?.isMesh) { return; }
+    if (isPicPrefixedNode(node) || String(node.name || '').includes('平面')) {
+      if (Array.isArray(node.material)) {
+        node.material = node.material.map((mat) => toTrainBasicMaterial(mat));
+      } else {
+        node.material = toTrainBasicMaterial(node.material);
+      }
+      return;
+    }
+    forEachNodeMaterial(node, (mat) => {
+      if ('envMap' in mat) {
+        mat.envMap = null;
+      }
+      mat.needsUpdate = true;
+    });
+  });
+}
+
+function setTrainNodeEnvMap(node) {
   if (!node?.isMesh) { return; }
   if (isPicPrefixedNode(node)) {
-    const toBasic = (mat) => {
-      if (!mat) { return mat; }
-      if (mat.isMeshBasicMaterial) { return mat; }
-      return new THREE.MeshBasicMaterial({
-        map: mat.map || null,
-        color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
-        transparent: Boolean(mat.transparent),
-        opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
-        side: mat.side,
-        alphaTest: typeof mat.alphaTest === 'number' ? mat.alphaTest : 0,
-      });
-    };
-    if (Array.isArray(node.material)) {
-      node.material = node.material.map((mat) => toBasic(mat));
-    } else {
-      node.material = toBasic(node.material);
-    }
-    forEachNodeMaterial(node, (mat) => { mat.needsUpdate = true; });
     return;
   }
   forEachNodeMaterial(node, (mat) => {
-    mat.envMap = targetEnvMap;
     mat.needsUpdate = true;
+  });
+}
+
+function refreshTrainRootEnvMap(root) {
+  root?.traverse?.((node) => {
+    if (!node?.isMesh) { return; }
+    setTrainNodeEnvMap(node);
+  });
+}
+
+function refreshAllLoadedTrainModelEnvMaps() {
+  if (LoadModels?.[0]) { refreshTrainRootEnvMap(LoadModels[0]); }
+  if (LoadModels?.[1]) { refreshTrainRootEnvMap(LoadModels[1]); }
+  if (LoadModels?.[2]) { refreshTrainRootEnvMap(LoadModels[2]); }
+  Object.values(extraCommuterTrainModels).forEach((root) => {
+    refreshTrainRootEnvMap(root);
   });
 }
 
@@ -7728,11 +7877,11 @@ async function loadExtraCommuterTrainModels() {
         }
         root.position.set(0.5, 0, 0);
         root.scale.setScalar(0.5);
+        normalizeTrainRootMaterials(root);
         root.traverse((node) => {
           if (!node?.isMesh) { return; }
           node.castShadow = true;
           node.receiveShadow = true;
-          setTrainNodeEnvMap(node, scene.ref);
         });
         extraCommuterTrainModels[name] = root;
         resolve();
@@ -7744,6 +7893,46 @@ async function loadExtraCommuterTrainModels() {
       }
     );
   })));
+}
+
+if (!IS_RUNTIME_LOCAL_VIEW) {
+  await loadExtraCommuterTrainModels();
+}
+
+async function registerRuntimeTrainModelFromArrayBuffer(arrayBuffer, fileName = 'runtime-train.glb') {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.parse(
+      arrayBuffer,
+      '',
+      (parsed) => resolve(parsed),
+      (error) => reject(error || new Error('train glb parse failed'))
+    );
+  });
+  const root = gltf?.scene || gltf?.scenes?.[0] || null;
+  if (!root) {
+    throw new Error('車両 glb にシーンがありません。');
+  }
+  root.position.set(0.5, 0, 0);
+  root.scale.setScalar(0.5);
+  normalizeTrainRootMaterials(root);
+  root.traverse((node) => {
+    if (!node?.isMesh) { return; }
+    node.castShadow = true;
+    node.receiveShadow = true;
+  });
+  const baseName = String(fileName || 'runtime-train')
+    .replace(/\.(glb|gltf)$/i, '')
+    .replace(/^tr[_-]?/i, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    || `runtime_train_${Object.keys(extraCommuterTrainModels).length + 1}`;
+  extraCommuterTrainModels[baseName] = root;
+  updateTrainTypeOptions();
+  syncTrainPanelFromConfig();
+  console.info('[train_models][runtime] registered', { name: baseName, fileName });
+  return baseName;
 }
 
 function cloneCommuterTrainModelByName(name) {
@@ -7771,6 +7960,7 @@ function createCommuterTrainWithModel(modelName, cars = 10, color = 0xaaaaaa) {
   const prevGeo = geo;
   const customGeo = cloneCommuterTrainModelByName(modelName);
   if (customGeo) {
+    normalizeTrainRootMaterials(customGeo);
     geo = customGeo;
   }
   const train = TrainSettings(
@@ -7841,8 +8031,6 @@ const dirLight = scene.getObjectByName('dirLight');
 import { TrainSystem } from './train_system.js';
 import { createSteelFrameMode } from './steel_frame_mode.js';
 import { initTrackSetup, ENABLE_MANUAL_DIORAMA_SPACE, USE_SAVED_DATA_ONLY } from './track_setup.js';
-import { applyFixedPlacements } from './fixed_placements.js';
-const SHOULD_SKIP_DEFAULT_WORLD_PLACEMENTS = USE_SAVED_DATA_ONLY || IS_RUNTIME_LOCAL_VIEW;
 const TSys = new TrainSystem(scene,dirLight);
 
 // --- ライト追加（初回のみ） ---
@@ -7853,6 +8041,7 @@ const TSys = new TrainSystem(scene,dirLight);
 let isNight = false;
 
 function TextureToggle(){
+  refreshAllLoadedTrainModelEnvMaps();
 
   for (let line = 0; line < Trains.length; line++){
     for (let cars = 0; cars < Trains[line].children.length; cars++){
@@ -7860,17 +8049,7 @@ function TextureToggle(){
      
       car.traverse((node) => {
         if (node.isMesh) {
-          setTrainNodeEnvMap(node, scene.ref);
-          if (node.name.includes('平面')) {
-            const tex = Array.isArray(node.material) ? node.material[0]?.map : node.material?.map;
-            node.material = new THREE.MeshBasicMaterial({
-              map: tex,
-              // transparent: true,
-              opacity: 1.0,
-              side: THREE.FrontSide
-            });
-          }
-
+          setTrainNodeEnvMap(node);
         }})
     }
   }
@@ -8021,8 +8200,29 @@ function startFullView() {
   }
 }
 
+let runtimeMapLoadTriggered = false;
+async function triggerRuntimeMapLoadFromStartButton() {
+  if (!IS_RUNTIME_LOCAL_VIEW || runtimeMapLoadTriggered) {
+    return;
+  }
+  runtimeMapLoadTriggered = true;
+  try {
+    await loadRuntimeMapFromPublicUpload();
+  } catch (err) {
+    console.warn('runtime map load failed', err);
+    const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit map' : 'public map';
+    const message = `${runtimeLabel} 読込失敗: ${err?.message || err}`;
+    if (mapLoadStatus) { mapLoadStatus.textContent = message; }
+    if (railConstructionStatus) { railConstructionStatus.textContent = message; }
+    updateDifferenceStatus(message);
+  }
+}
+
 if (startBtn) {
-  startBtn.addEventListener('pointerdown', startFullView);
+  startBtn.addEventListener('pointerdown', async () => {
+    startFullView();
+    await triggerRuntimeMapLoadFromStartButton();
+  });
 }
 if (skipBtn) {
   skipBtn.addEventListener('pointerdown', () => {
@@ -8032,8 +8232,9 @@ if (skipBtn) {
 
 // preview 用大ボタンからフルスクリーンに遷移するための短絡ハンドラ
 if (previewStartBtn) {
-  previewStartBtn.addEventListener('pointerdown', () => {
+  previewStartBtn.addEventListener('pointerdown', async () => {
     startFullView();
+    await triggerRuntimeMapLoadFromStartButton();
   });
 }
 // リンクからインナー（プレビュー）に戻す処理
@@ -8794,6 +8995,10 @@ function Sin_TrainSettings(
 // ホームドア開閉
 function moveDoorsFromGroup(group, mode, distance = 0.32, duration = 2000) {
   return new Promise(resolve => {
+    if (!group || !Array.isArray(group.children) || group.children.length < 1) {
+      resolve();
+      return;
+    }
 
     if (mode === 0) {
       mode = -1;
@@ -8846,7 +9051,8 @@ function moveDoorsFromGroup(group, mode, distance = 0.32, duration = 2000) {
 }
 
 // 列車の運行
-async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_position={x: 0, y:0, z:0}, start_position = 0, rapid = false, random_time = 1) {
+async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0.002, add_speed=0.000005, stop_position={x: 0, y:0, z:0}, start_position = 0, rapid = false, random_time = 1, stopController = null) {
+  const shouldStop = () => Boolean(stopController?.stopped) || run_STOP;
 
   const Equal_root = TSys.getPointsEveryM(root, 0.01); // spacing=0.1mごと（細かすぎたら25に）
 
@@ -8906,6 +9112,11 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
 
   // ランダムな秒数（1000〜5000ミリ秒）
   await sleep( 1000 + (Math.random()*random_time) * 15000);
+  if (shouldStop()) {
+    trainCars.visible = false;
+    run_num -= 1;
+    return;
+  }
   trainCars.visible = true;   // 再表示する
 
   async function runCar() {
@@ -9011,7 +9222,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
       speed = 0
 
       await sleep(3000); // 3秒待ってからまた開ける
-      if (run_STOP){
+      if (shouldStop()){
         trainCars.visible = false;
         run_num -= 1
         return
@@ -9019,14 +9230,14 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
       await moveDoorsFromGroup(track_doors,1);
 
       await sleep(7000); // 3秒待ってからまた開ける
-      if (run_STOP){
+      if (shouldStop()){
         trainCars.visible = false;
         moveDoorsFromGroup(track_doors,0);
         run_num -= 1
         return
       }
       await moveDoorsFromGroup(track_doors,0)
-      if (run_STOP){
+      if (shouldStop()){
         trainCars.visible = false;
         run_num -= 1
         return
@@ -9035,7 +9246,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
 
     }
 
-    if (run_STOP){
+    if (shouldStop()){
       trainCars.visible = false;
       run_num -= 1
       return
@@ -9055,37 +9266,13 @@ window.addEventListener('resize', onWindowResize, false);
 let y = 6
 const trackSetup = await initTrackSetup({ worldScale: WORLD_SCALE });
 const {
-  Points_0,
-  Points_1,
-  Points_2,
-  Points_3,
-  JK_upbound_point,
-  JY_upbound_point,
-  JY_downbound_point,
-  JK_downbound_point,
-  J_UJT_upbound_point,
-  J_UJT_downbound_point,
-  sinkansen_upbound_point,
-  sinkansen_downbound_point,
-  marunouchi_point,
-  line_1,
-  line_2,
-  line_3,
-  line_4,
-  JK_upbound,
-  JY_upbound,
-  JY_downbound,
-  JK_downbound,
-  J_UJT_upbound,
-  J_UJT_downbound,
-  sinkansen_upbound,
-  sinkansen_downbound,
-  marunouchi,
   railTrackDefs,
   railTrackCurveMap,
 } = trackSetup;
+AUTO_DIFFERENCE_LINE_TRACKS_ON_LOAD = railTrackDefs.map((track) => String(track?.name || '')).filter((name) => name.length > 0);
 setGroupModeTrackOptions();
 setDifferenceLineOptions();
+syncTrainPanelFromConfig();
 updateGroupModePanelUI();
 
 let railTubeMesh = null;
@@ -9113,6 +9300,8 @@ const railInsertHoverColor = 0x3bc9ff;
 let selectedRailPoint = null;
 let railInsertHoverPin = null;
 let railInsertHoverHit = null;
+let railStraightDraftStart = null;
+let railStraightPreviewLine = null;
 
 const structureSampleInterval = 0.5;
 const structureHoverColor = 0xffff33;
@@ -9315,15 +9504,16 @@ function updateDifferenceLineSelectionStatus() {
 function refreshDifferenceLineOnlyPreview(force = false) {
   if (!force && !differenceLinePickModeActive && differenceSpaceTransformMode !== 'line') { return false; }
   const appliedHeight = readDifferenceLineBandHeight();
+  const operation = buildDifferenceRailOperationFromTrackNames(null, { bandHeight: appliedHeight });
   console.log('[Difference][line] refresh preview start', {
     force,
     height: appliedHeight,
     mode: differenceSpaceTransformMode,
     pickMode: differenceLinePickModeActive,
-    selectedTracks: Array.isArray(differenceLineTrackNames) ? differenceLineTrackNames.slice() : [],
+    selectedTracks: Array.isArray(operation?.trackNames) ? operation.trackNames.slice() : [],
   });
   clearDifferencePreviewTube();
-  const cutter = buildDifferenceCutterMeshFromRailTracks({ bandHeight: appliedHeight });
+  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks(operation) : null;
   if (!cutter) {
     console.warn('[Difference][line] refresh preview failed: cutter is null');
     updateDifferenceStatus('line: カッター形状の作成に失敗しました。');
@@ -9440,6 +9630,100 @@ function hideRailInsertHoverPin() {
   if (railInsertHoverPin) {
     railInsertHoverPin.visible = false;
   }
+}
+
+function disposeRailStraightPreviewLine() {
+  if (!railStraightPreviewLine) { return; }
+  if (railStraightPreviewLine.parent) {
+    railStraightPreviewLine.parent.remove(railStraightPreviewLine);
+  }
+  railStraightPreviewLine.geometry?.dispose?.();
+  railStraightPreviewLine.material?.dispose?.();
+  railStraightPreviewLine = null;
+}
+
+function cancelRailStraightDraft() {
+  railStraightDraftStart = null;
+  disposeRailStraightPreviewLine();
+}
+
+function getRailCreatePointerPoint() {
+  if (railInsertHoverHit?.point) {
+    return railInsertHoverHit.point.clone();
+  }
+  const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+  return point?.isVector3 ? point.clone() : null;
+}
+
+function updateRailStraightPreview(forceEndPoint = null) {
+  const canPreview = railModeActive
+    && editObject === 'RAIL'
+    && objectEditMode === 'CREATE_NEW'
+    && railStraightDraftStart?.isVector3;
+  if (!canPreview) {
+    disposeRailStraightPreviewLine();
+    return;
+  }
+  const endPoint = forceEndPoint?.isVector3 ? forceEndPoint.clone() : getRailCreatePointerPoint();
+  if (!endPoint?.isVector3) {
+    disposeRailStraightPreviewLine();
+    return;
+  }
+  const points = [railStraightDraftStart.clone(), endPoint.clone()];
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  if (!railStraightPreviewLine) {
+    const material = new THREE.LineBasicMaterial({
+      color: 0x3bc9ff,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    });
+    railStraightPreviewLine = new THREE.Line(geometry, material);
+    railStraightPreviewLine.name = 'RailStraightPreviewLine';
+    railStraightPreviewLine.renderOrder = 9500;
+    scene.add(railStraightPreviewLine);
+    return;
+  }
+  railStraightPreviewLine.geometry?.dispose?.();
+  railStraightPreviewLine.geometry = geometry;
+}
+
+function getNextRailTrackName() {
+  let max = -1;
+  railTrackDefs.forEach((track) => {
+    const match = String(track?.name || '').match(/^Points_(\d+)$/i);
+    if (!match) { return; }
+    const num = Number(match[1]);
+    if (Number.isFinite(num)) {
+      max = Math.max(max, num);
+    }
+  });
+  return `Points_${max + 1}`;
+}
+
+function commitRailStraightDraft(endPoint) {
+  if (!railStraightDraftStart?.isVector3 || !endPoint?.isVector3) { return false; }
+  if (railStraightDraftStart.distanceToSquared(endPoint) < 1e-8) { return false; }
+  const trackName = getNextRailTrackName();
+  const points = [railStraightDraftStart.clone(), endPoint.clone()];
+  const track = {
+    name: trackName,
+    points,
+    curve: new THREE.CatmullRomCurve3(points),
+  };
+  railTrackDefs.push(track);
+  railTrackCurveMap[trackName] = track.curve;
+  railTubeDirty = true;
+  structureSamplesDirty = true;
+  toggleRailTube(true);
+  refreshRailSelectionTargets();
+  selectedRailPoint = { trackName, pointIndex: 1 };
+  updateRailSelectionStatus();
+  setGroupModeTrackOptions();
+  setDifferenceLineOptions();
+  cancelRailStraightDraft();
+  hideRailInsertHoverPin();
+  return true;
 }
 
 function updateRailInsertHoverFromPointer() {
@@ -10807,6 +11091,22 @@ if (saveButtonsContainer) {
 }
 
 function serializeDifferenceSpaceMesh(mesh) {
+  const railTrackNames = Array.isArray(mesh?.userData?.differenceRailTrackNames)
+    ? mesh.userData.differenceRailTrackNames
+      .map((name) => String(name || '').trim())
+      .filter((name) => name.length > 0)
+    : [];
+  if (railTrackNames.length > 0) {
+    return {
+      mode: 'rail_track_names',
+      trackNames: railTrackNames,
+      bandHeight: Number(mesh?.userData?.differenceRailBandHeight) || readDifferenceLineBandHeight(),
+      sidePadding: Number(mesh?.userData?.differenceRailSidePadding) || 0.6,
+      innerPadding: Number(mesh?.userData?.differenceRailInnerPadding) || 0.6,
+      minBandWidth: Number(mesh?.userData?.differenceRailMinBandWidth) || 1.2,
+      sampleStepMeters: Number(mesh?.userData?.differenceRailSampleStepMeters) || 2.0,
+    };
+  }
   if (!mesh?.geometry?.attributes?.position) { return null; }
   const positionAttr = mesh.geometry.attributes.position;
   const indexAttr = mesh.geometry.getIndex();
@@ -10819,6 +11119,68 @@ function serializeDifferenceSpaceMesh(mesh) {
       index: indexAttr ? Array.from(indexAttr.array) : null,
     },
   };
+}
+
+function normalizeDifferenceRailOperation(rawOperation) {
+  const trackNames = Array.isArray(rawOperation?.trackNames)
+    ? rawOperation.trackNames.map((name) => String(name || '').trim()).filter((name) => name.length > 0)
+    : [];
+  if (trackNames.length < 1) { return null; }
+  return {
+    mode: 'rail_track_names',
+    trackNames,
+    bandHeight: Number(rawOperation?.bandHeight) || readDifferenceLineBandHeight(),
+    sidePadding: Number(rawOperation?.sidePadding) || 0.6,
+    innerPadding: Number(rawOperation?.innerPadding) || 0.6,
+    minBandWidth: Number(rawOperation?.minBandWidth) || 1.2,
+    sampleStepMeters: Number(rawOperation?.sampleStepMeters) || 2.0,
+  };
+}
+
+function serializeDifferenceRailOperations() {
+  return differenceRailOperations
+    .map((operation) => normalizeDifferenceRailOperation(operation))
+    .filter(Boolean);
+}
+
+function buildDifferenceRailOperationFromCutter(sourceMesh) {
+  return normalizeDifferenceRailOperation({
+    trackNames: Array.isArray(sourceMesh?.userData?.differenceRailTrackNames)
+      ? sourceMesh.userData.differenceRailTrackNames
+      : [],
+    bandHeight: Number(sourceMesh?.userData?.differenceRailBandHeight),
+    sidePadding: Number(sourceMesh?.userData?.differenceRailSidePadding),
+    innerPadding: Number(sourceMesh?.userData?.differenceRailInnerPadding),
+    minBandWidth: Number(sourceMesh?.userData?.differenceRailMinBandWidth),
+    sampleStepMeters: Number(sourceMesh?.userData?.differenceRailSampleStepMeters),
+  });
+}
+
+function resolveDifferenceLineTrackNamesForExecution(rawTrackNames = null) {
+  const normalized = normalizeDifferenceLineTrackNames(
+    Array.isArray(rawTrackNames) && rawTrackNames.length > 0
+      ? rawTrackNames
+      : differenceLineTrackNames
+  );
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  return Array.isArray(railTrackDefs)
+    ? railTrackDefs
+      .map((track) => String(track?.name || '').trim())
+      .filter((name) => name.length > 0)
+    : [];
+}
+
+function buildDifferenceRailOperationFromTrackNames(trackNames, overrides = {}) {
+  return normalizeDifferenceRailOperation({
+    trackNames: resolveDifferenceLineTrackNamesForExecution(trackNames),
+    bandHeight: overrides?.bandHeight,
+    sidePadding: overrides?.sidePadding,
+    innerPadding: overrides?.innerPadding,
+    minBandWidth: overrides?.minBandWidth,
+    sampleStepMeters: overrides?.sampleStepMeters,
+  });
 }
 
 function buildGuideGridSaveKeyMapsForPayload(guideGridStates) {
@@ -11342,16 +11704,19 @@ function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
 function buildDifferenceSpacesPayload() {
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
+  const railOperations = serializeDifferenceRailOperations();
   return {
     meta: {
-      version: 1,
+      version: 2,
       type: 'difference_space',
       app: 'Train_EditMode_demo',
       savedAt: new Date().toISOString(),
     },
     differenceSpaces: spaces,
+    differenceRailOperations: railOperations,
   };
 }
 
@@ -11372,8 +11737,10 @@ function buildCreateModePayload(options = {}) {
 
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
+  const railOperations = serializeDifferenceRailOperations();
   const baseGuideGrid = serializeBaseGuideGridState();
   const guideGridStates = guideAddGrids
     .filter((grid) => grid?.parent)
@@ -11420,7 +11787,9 @@ function buildCreateModePayload(options = {}) {
     steelFrame,
     decorations,
     copiedStructureGroups,
+    trainRunConfigs: trainRunConfigs.map((config) => normalizeTrainRunConfig(config)),
     differenceSpaces: includeDifferenceSpaces ? spaces : [],
+    differenceRailOperations: includeDifferenceSpaces ? railOperations : [],
   };
 }
 
@@ -11738,6 +12107,43 @@ const saveWorldButton = document.getElementById('save-world-data');
 if (saveWorldButton) {
   saveWorldButton.addEventListener('click', downloadWorldData);
 }
+if (toggleGroundOpacityButton) {
+  toggleGroundOpacityButton.addEventListener('click', toggleGroundOpacity);
+}
+if (toggleTrainPanelButton) {
+  toggleTrainPanelButton.addEventListener('click', () => {
+    const nextVisible = trainPanel?.style.display !== 'block';
+    setTrainPanelVisible(nextVisible);
+    if (nextVisible) {
+      syncTrainPanelFromConfig();
+    }
+  });
+}
+if (trainApplyButton) {
+  trainApplyButton.addEventListener('click', () => {
+    applyAllConfiguredTrains();
+  });
+}
+if (trainAddButton) {
+  trainAddButton.addEventListener('click', () => {
+    trainRunConfigs.push(createDefaultTrainConfig());
+    syncTrainPanelFromConfig();
+  });
+}
+if (trainConfigList) {
+  trainConfigList.addEventListener('click', (event) => {
+    const button = event.target?.closest?.('[data-train-remove]');
+    if (!button) { return; }
+    const targetId = String(button.getAttribute('data-train-remove') || '').trim();
+    if (!targetId) { return; }
+    trainRunConfigs = trainRunConfigs.filter((config) => String(config?.id || '').trim() !== targetId);
+    stopConfiguredTrain(targetId);
+    if (trainRunConfigs.length < 1) {
+      trainRunConfigs = [createDefaultTrainConfig()];
+    }
+    syncTrainPanelFromConfig();
+  });
+}
 const undoActionButton = document.getElementById('undo-action');
 const redoActionButton = document.getElementById('redo-action');
 
@@ -11781,6 +12187,10 @@ function clearDifferenceSpacesForImport() {
   differenceSpacePlanes.length = 0;
   differenceSelectedPlane = null;
   updateDifferenceUnifyButtonState();
+}
+
+function clearDifferenceRailOperations() {
+  differenceRailOperations.length = 0;
 }
 
 function buildGeometryFromSerializedSpace(rawSpace) {
@@ -11828,6 +12238,8 @@ function applyCreateModePayload(payload) {
   }
   clearCreateHistory();
   clearDifferenceHistory();
+  clearDifferenceRailOperations();
+  stopAllConfiguredTrains();
   structureGroupSourceIndex.clear();
   structureGroupSourceById.clear();
   const baseGuideGrid = (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
@@ -11885,26 +12297,10 @@ function applyCreateModePayload(payload) {
   refreshSteelFrameMirrorPreviews();
   changeAngleGridTarget = getLastEditableGuideGrid();
   const spaces = Array.isArray(payload.differenceSpaces) ? payload.differenceSpaces : [];
-  clearDifferenceSpacesForImport();
-  spaces.forEach((rawSpace) => {
-    const geometry = buildGeometryFromSerializedSpace(rawSpace);
-    if (!geometry) { return; }
-    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
-    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
-    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
-    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
-    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
-    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
-    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
-    mesh.updateMatrixWorld(true);
-    rebuildDifferenceControlPointsFromGeometry(mesh);
-    syncDifferenceGeometryFromControlPoints(mesh);
-    mergeCoincidentDifferenceControlPoints(mesh);
-    pruneDifferenceControlPointsByMeaningfulEdges(mesh);
-  });
-  relinkImportedDifferenceSharedPoints();
-  mergeOverlappedBoundaryControlPoints();
-  rebuildDifferenceEdgeOverlapConstraints();
+  restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: true });
+  trainRunConfigs = Array.isArray(payload?.trainRunConfigs) && payload.trainRunConfigs.length > 0
+    ? payload.trainRunConfigs.map((config) => normalizeTrainRunConfig(config))
+    : [structuredClone(DEFAULT_TRAIN_RUN_CONFIG)];
 
   const mode = payload.mode && typeof payload.mode === 'object' ? payload.mode : {};
   editObject = typeof mode.editObject === 'string' ? mode.editObject : editObject;
@@ -11955,6 +12351,9 @@ function applyCreateModePayload(payload) {
   }
   setRailConstructionGroupOptions();
   updateGroupModePanelUI();
+  updateGroundOpacityButtonState();
+  syncTrainPanelFromConfig();
+  applyAllConfiguredTrains();
 }
 
 async function loadRuntimeMapGlbFromPublicUpload(arrayBuffer, fileName = 'public-upload.glb', kind = 'ct') {
@@ -12039,6 +12438,8 @@ function activatePublicRuntimeObjectViewMode() {
 
   clearCreateHistory();
   clearDifferenceHistory();
+  clearDifferenceRailOperations();
+  stopAllConfiguredTrains();
   clearGuideAddGridsForImport();
   clearDifferenceSpacesForImport();
   setAddPointGuideGridVisibleFromUI(false);
@@ -12054,14 +12455,64 @@ async function loadRuntimeMapFromPublicUpload() {
     return false;
   }
 
-  const record = await readRuntimeMapRecord();
+  const loadRuntimeMapFallbackFromFolder = async () => {
+    const manifestUrl = '../map_data/manifest.json';
+    const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
+    if (!manifestResponse.ok) {
+      throw new Error('map_data/manifest.json が見つかりません。');
+    }
+    const manifest = await manifestResponse.json();
+    const manifestFiles = Array.isArray(manifest?.files) ? manifest.files : [];
+    const loadedFiles = [];
+    for (const entry of manifestFiles) {
+      const name = String(entry?.name || '').trim();
+      const kind = String(entry?.kind || 'ct').trim() || 'ct';
+      if (!name) { continue; }
+      const fileUrl = `../map_data/${encodeURIComponent(name)}`;
+      const response = await fetch(fileUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        console.warn('[map_data fallback] file fetch failed', { fileUrl, status: response.status });
+        continue;
+      }
+      const buffer = await response.arrayBuffer();
+      loadedFiles.push([kind, {
+        name,
+        size: buffer.byteLength,
+        buffer,
+      }]);
+    }
+    return loadedFiles;
+  };
+
+  const record = await readRuntimeMapRecord().catch(() => null);
   const runtimeFiles = record?.files && typeof record.files === 'object'
     ? record.files
     : { ct: record };
-  const fileEntries = Object.entries(runtimeFiles)
-    .filter(([, file]) => file && typeof file === 'object' && file.buffer);
+  let fileEntries = Object.entries(runtimeFiles)
+    .flatMap(([kind, file]) => {
+      if (kind === 'tr' && Array.isArray(file)) {
+        return file
+          .filter((entry) => entry && typeof entry === 'object' && entry.buffer)
+          .map((entry) => [kind, entry]);
+      }
+      return (file && typeof file === 'object' && file.buffer) ? [[kind, file]] : [];
+    });
+  const runtimeKindPriority = { tr: 0, ct: 1, st: 2 };
+  fileEntries.sort((a, b) => {
+    const aPriority = runtimeKindPriority[String(a?.[0] || '')] ?? 99;
+    const bPriority = runtimeKindPriority[String(b?.[0] || '')] ?? 99;
+    return aPriority - bPriority;
+  });
   if (fileEntries.length < 1) {
-    throw new Error('public.html で選択されたマップファイルが見つかりません。');
+    fileEntries = await loadRuntimeMapFallbackFromFolder();
+    fileEntries.sort((a, b) => {
+      const aPriority = runtimeKindPriority[String(a?.[0] || '')] ?? 99;
+      const bPriority = runtimeKindPriority[String(b?.[0] || '')] ?? 99;
+      return aPriority - bPriority;
+    });
+  }
+  if (fileEntries.length < 1) {
+    throw new Error('public.html で選択されたマップファイルも map_data フォルダーも見つかりません。');
   }
 
   const loadedNames = [];
@@ -12077,6 +12528,7 @@ async function loadRuntimeMapFromPublicUpload() {
     const hasMapFeatures =
       Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0
       || Array.isArray(payload?.differenceSpaces) && payload.differenceSpaces.length > 0
+      || Array.isArray(payload?.differenceRailOperations) && payload.differenceRailOperations.length > 0
       || (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
       || (payload?.uiState && typeof payload.uiState === 'object');
     const hasPins = Array.isArray(payload?.pins) && payload.pins.length > 0;
@@ -12121,6 +12573,18 @@ async function loadRuntimeMapFromPublicUpload() {
   for (const [kind, runtimeFile] of fileEntries) {
     const runtimeName = String(runtimeFile?.name || 'public-upload');
     loadedNames.push(runtimeName);
+    if (kind === 'tr') {
+      if (/\.glb$/i.test(runtimeName)) {
+        try {
+          await registerRuntimeTrainModelFromArrayBuffer(runtimeFile.buffer, runtimeName);
+        } catch (err) {
+          console.warn('[public_upload][train] register failed', { name: runtimeName, err });
+        }
+      } else {
+        console.warn('[public_upload][train] unsupported file type', { name: runtimeName });
+      }
+      continue;
+    }
     if (/\.glb$/i.test(runtimeName)) {
       await loadRuntimeMapGlbFromPublicUpload(runtimeFile.buffer, runtimeName, kind);
       continue;
@@ -12232,13 +12696,18 @@ async function loadRuntimeMapFromPublicUpload() {
             mode: payload?.meta?.mode || payload?.mode || '',
             guideAddGrids: Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids.length : 0,
             differenceSpaces: Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces.length : 0,
+            differenceRailOperations: Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations.length : 0,
             steelFramePoints: Array.isArray(steelFrame?.points) ? steelFrame.points.length : 0,
             steelFrameSegments: Array.isArray(steelFrame?.segments) ? steelFrame.segments.length : 0,
             copiedInstances: Array.isArray(steelFrame?.copiedInstances) ? steelFrame.copiedInstances.length : 0,
             decorations: Array.isArray(payload?.decorations) ? payload.decorations.length : 0,
             copiedStructureGroups: Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups.length : 0,
           });
-          applyCreateModePayload(payload);
+          if (payloadHasOnlyDifferenceSpaces(payload)) {
+            restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: true });
+          } else {
+            applyCreateModePayload(payload);
+          }
           console.info('[public_upload][ct] applying payload done', {
             name: row?.name,
           });
@@ -12350,7 +12819,11 @@ async function loadRuntimeMapFromPublicUpload() {
     if (kind !== 'ct') {
       continue;
     }
-    applyCreateModePayload(payload);
+    if (payloadHasOnlyDifferenceSpaces(payload)) {
+      restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: true });
+    } else {
+      applyCreateModePayload(payload);
+    }
   }
 
   const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit object' : 'public object';
@@ -12358,6 +12831,7 @@ async function loadRuntimeMapFromPublicUpload() {
   if (mapLoadStatus) { mapLoadStatus.textContent = statusText; }
   if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
   updateDifferenceStatus(statusText);
+  updateGroundOpacityButtonState();
   if (IS_PUBLIC_RUNTIME_LOCAL_VIEW) {
     activatePublicRuntimeObjectViewMode();
   }
@@ -12558,30 +13032,8 @@ function appendCreateModePayload(payload, options = {}) {
   rebuildMirrorStateOnLoad(keyToGrid, 4);
   refreshSteelFrameMirrorPreviews();
   changeAngleGridTarget = getLastEditableGuideGrid();
-
   const spaces = Array.isArray(payload.differenceSpaces) ? payload.differenceSpaces : [];
-  spaces.forEach((rawSpace) => {
-    const geometry = buildGeometryFromSerializedSpace(rawSpace);
-    if (!geometry) { return; }
-    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
-    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
-    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
-    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
-    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
-    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
-    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
-    mesh.updateMatrixWorld(true);
-    rebuildDifferenceControlPointsFromGeometry(mesh);
-    syncDifferenceGeometryFromControlPoints(mesh);
-    mergeCoincidentDifferenceControlPoints(mesh);
-    pruneDifferenceControlPointsByMeaningfulEdges(mesh);
-  });
-  relinkImportedDifferenceSharedPoints();
-  mergeOverlappedBoundaryControlPoints();
-  rebuildDifferenceEdgeOverlapConstraints();
-  targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
-  setMeshListOpacity(targetObjects, 1);
-  refreshDifferencePreview();
+  restoreDifferenceSpacesFromPayload(payload, { clearExisting: false, applyToCity: true });
 
   setRailConstructionGroupOptions();
   updateGroupModePanelUI();
@@ -13292,6 +13744,11 @@ railConstructionCards.forEach((card) => {
     setRailConstructionCategory(card.dataset.railConstructionCategory);
   });
 });
+railConstructionPatternCards.forEach((card) => {
+  card.addEventListener('click', () => {
+    setRailConstructionCategory(card.dataset.railConstructionPattern);
+  });
+});
 if (railConstructionGroupSelect) {
   railConstructionGroupSelect.addEventListener('change', () => {
     selectedRailConstructionGroupId = railConstructionGroupSelect.value || '';
@@ -13404,58 +13861,16 @@ const cube = new THREE.Mesh(cube_geometry, cube_material);
 let targetObjects = [];
 const targetPins = [];
 
-let door_interval = train_width + car_Spacing;
-let track1_doors = new THREE.Group();
-let track2_doors = new THREE.Group();
-let track3_doors = new THREE.Group();
-let track4_doors = new THREE.Group();
-
-if (!SHOULD_SKIP_DEFAULT_WORLD_PLACEMENTS) {
-  ({
-    door_interval,
-    track1_doors,
-    track2_doors,
-    track3_doors,
-    track4_doors,
-  } = applyFixedPlacements({
-    TSys,
-    line_1,
-    line_2,
-    line_3,
-    line_4,
-    Points_0,
-    Points_1,
-    Points_2,
-    Points_3,
-    JK_upbound,
-    JY_upbound,
-    JY_downbound,
-    JK_downbound,
-    J_UJT_upbound,
-    J_UJT_downbound,
-    sinkansen_upbound,
-    sinkansen_downbound,
-    marunouchi,
-    train_width,
-    car_Spacing,
-    y,
-    LoadModels,
-    scene,
-    findCurveRange,
-    targetObjects,
-    resetMeshListOpacity,
-    setMeshListOpacity,
-  }));
-} else {
-  console.info('[main] default world placements skipped', {
-    useSavedDataOnly: USE_SAVED_DATA_ONLY,
-    isPublicRuntimeLocalView: IS_PUBLIC_RUNTIME_LOCAL_VIEW,
-  });
-  railTrackDefs.forEach((track) => {
-    if (!track?.curve) { return; }
-    TSys.createRail(track.curve);
-  });
-}
+const door_interval = train_width + car_Spacing;
+console.info('[main] fixed world placements disabled', {
+  useSavedDataOnly: USE_SAVED_DATA_ONLY,
+  isPublicRuntimeLocalView: IS_PUBLIC_RUNTIME_LOCAL_VIEW,
+  trackCount: railTrackDefs.length,
+});
+railTrackDefs.forEach((track) => {
+  if (!track?.curve) { return; }
+  TSys.createRail(track.curve);
+});
 // const board_length_1 = tunnel_1.getLength(line_4)/quantity;
 // const board_length_2 = tunnel_2.getLength(line_4)/quantity;
 // const points_1 = TSys.RailMargin(TSys.getPointsEveryM(tunnel_1, board_length_1), 1);
@@ -13500,273 +13915,18 @@ if (!SHOULD_SKIP_DEFAULT_WORLD_PLACEMENTS) {
 // 電車の運行
 // const max_speed = 0.001 // 制限速度(最高)
 // const add_speed = 0.0000010 // 追加速度(加速/減速)
-const max_speed = 0.1 // 制限速度(最高)
-const add_speed = 0.00008 // 追加速度(加速/減速)
-
-await loadExtraCommuterTrainModels();
-const point0ModelName = pickRandomNonYamanoteTrainModelName();
-const point1ModelName = pickRandomNonYamanoteTrainModelName();
-const point2ModelName = 'yamanote';
-const point3ModelName = 'yamanote';
-console.log('[train_models] route assignment', {
-  point_0: point0ModelName || 'default',
-  point_1: point1ModelName || 'default',
-  point_2: point2ModelName || 'default',
-  point_3: point3ModelName || 'default',
-});
-
-const exhibition_tyuou = TrainSettings(
-  train_width,
-  0xa15110,
-  3,
-  1,
-);
-
-const exhibition_soubu = TrainSettings(
-  train_width,
-  0xaaaa00,
-  3,
-  1,
-);
-
-exhibition_tyuou.position.set(11,0.8,15)
-exhibition_tyuou.visible = false;   // 再表示する
-exhibition_soubu.position.set(13,0.8,15)
-exhibition_soubu.visible = false;   // 再表示する
-
-const Train_1 = createCommuterTrainWithModel(point0ModelName, 12, 0xaaaaaa);
-
-const Train_4 = createCommuterTrainWithModel(point3ModelName, 12, 0xaaaaaa);
-
-const reversedCurve_1 = new THREE.CatmullRomCurve3(
-  line_1.getPoints(100).reverse()
-);
-const reversedCurve_4 = new THREE.CatmullRomCurve3(
-  line_4.getPoints(100).reverse()
-);
-const reversedCurve_2 = new THREE.CatmullRomCurve3(
-  line_2.getPoints(100).reverse()
-);
-
-const Train_2 = createCommuterTrainWithModel(point1ModelName, 10, 0xaaaaaa);
-Train_1.userData = {
-  ...(Train_1.userData || {}),
-  randomizeModelEachLoop: true,
-  pickCommuterModelName: pickRandomNonYamanoteTrainModelName,
-};
-Train_2.userData = {
-  ...(Train_2.userData || {}),
-  randomizeModelEachLoop: true,
-  pickCommuterModelName: pickRandomNonYamanoteTrainModelName,
-};
-
-const Train_3 = createCommuterTrainWithModel(point2ModelName, 10, 0xaaaaaa);
-
-const Train_5 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-
-const Train_6 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-
-const Train_7 = Sin_TrainSettings(
-  10,
-);
-const Train_8 = Sin_TrainSettings(
-  10,
-);
-
-const Train_9 = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-const Train_a = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-
-const Train_b = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-const Train_c = TrainSettings(
-  train_width,
-  0xaaaaaa,
-  10,
-  1,
-);
-
-const allTrains = [
-  exhibition_tyuou,
-  exhibition_soubu,
-  Train_1,
-  Train_2,
-  Train_3,
-  Train_4,
-  Train_5,
-  Train_6,
-  Train_7,
-  Train_8,
-  Train_9,
-  Train_a,
-  Train_b,
-  Train_c,
-];
-if (!SHOW_TRAINS) {
-  allTrains.forEach((train) => {
-    if (train) {
-      train.visible = false;
-    }
-  });
+// 第1段階では固定4本前提の列車配置と走行は停止する。
+const trainCars = {};
+const crossoverButton = document.getElementById('toggle-crossover');
+if (crossoverButton) {
+  crossoverButton.hidden = true;
 }
-
-
-const reversedCurve_3 = new THREE.CatmullRomCurve3(
-  line_3.getPoints(100).reverse()
-);
-
-const J_UJT_U = new THREE.CatmullRomCurve3(
-  J_UJT_upbound.getPoints(100).reverse()
-);
-const si_U = new THREE.CatmullRomCurve3(
-  sinkansen_upbound.getPoints(100).reverse()
-);
-
-const JK_U = new THREE.CatmullRomCurve3(
-  JK_upbound.getPoints(100).reverse()
-);
-
-const JY_U = new THREE.CatmullRomCurve3(
-  JY_upbound.getPoints(100).reverse()
-);
-
-TextureToggle()
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-// ボタン取得
-let button = document.getElementById("toggle-crossover");
-let run_quattro = 0
-// クアトロ交差を実行する関数
-async function startQuadrupleCrossDemo() {
-  if (!SHOW_TRAINS) { return; }
-  
-  run_quattro += 1
-  const run_number = run_quattro
-  
-  // ボタン押下イベント（要求をフラグにする）
-  button.addEventListener("click", () => {
-    crossoverRequested = true;
-    button.innerText = `立体交差 [ 準備中... ]（列車未撤収 ${run_num} 編成）`;
-  });
-
-  // ボタン押下イベント（要求をフラグにする）
-  button.addEventListener("touchstart", () => {
-    crossoverRequested = true;
-    button.innerText = `立体交差 [ 準備中... ]（列車未撤収 ${run_num} 編成）`;
-  });
-
-  crossoverRequested = true;
-
-  while (run_quattro != run_number){
-    await sleep(2000)
-  }
-
-  run_STOP = true
-  quattro = 4
-
-  while (run_num > 0){
-    if (run_quattro > run_number){
-      return
-    }  
-    button.innerText = `立体交差 [ 準備中... ]（列車未撤収 ${run_num} 編成）`;
-    await sleep(2000)
-  }
-
-  run_STOP = false
-
-  // 4本の列車を同時にスタート
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501, 0.5)
-  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, 0.5439, 0.5)
-  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, 0.7695, -0.4)
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777 -0.4)
-
-  while (quattro > 0){
-    if (run_quattro > run_number){
-      return
-    }  
-    button.innerText = `立体交差 実行中...（走行中 ${run_num}）`;
-    await sleep(2000)
-  }
-
-  button.innerText = `ランダム立体交差（クアトロ交差）切替`
-
-  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, 0.7695)
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, 0.777)
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, 0.501)
-  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, 0.5439)
-
-  run_quattro = 0
-  crossoverRequested = false;
-}
-
-// document.getElementById("toggle-crossover").addEventListener("click", () => {
-//   startQuadrupleCrossDemo();
-// });
-
-// document.getElementById("toggle-crossover").addEventListener("touchstart", () => {
-//   startQuadrupleCrossDemo();
-// });
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-if (SHOW_TRAINS) {
-  runTrain(Train_1, reversedCurve_1, track1_doors, door_interval, max_speed, add_speed, {x: 5.004321528601909, y: 5.7801280229757035, z: 37.4120950158768})
-  runTrain(Train_2, line_2, track2_doors, door_interval, max_speed, add_speed, {x: 1.0240355423268666, y: 5.816552915007958, z: 37.15240930025928})
-  runTrain(Train_3, reversedCurve_3, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405})
-  runTrain(Train_4, line_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654})
-
-  if (!RUN_COMMUTER_ON_EXISTING_TRACKS) {
-    runTrain(Train_5, J_UJT_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_6, J_UJT_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-
-    runTrain(Train_7, si_U, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_8, sinkansen_downbound, track3_doors, 7.4, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-
-    runTrain(Train_9, JY_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_a, JK_U, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-
-    runTrain(Train_b, JY_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-    runTrain(Train_c, JK_downbound, track3_doors, door_interval, max_speed, add_speed, {x: -0.6148349428903073, y: 5.777509336861839, z: -25.499137220900405}, 0, true, 8)
-  }
-}
-
-// runTrain(, reversedCurve_4, track4_doors, door_interval, max_speed, add_speed, {x: -3.649657039547105, y: 6.160546555847148, z: -37.92222740355654}, true)
 
 // 全面展望 -----------------------------------------------------------------
 
 let frontViewActive = false;
 let currentTrainCar = null;
 let frontViewRequestId = null;
-// 各列車の定義（先頭車両）
-const trainCars = {
-  1: Train_1.userData.cars[0],
-  2: Train_2.userData.cars[0],
-  3: Train_3.userData.cars[0],
-  4: Train_4.userData.cars[0],
-};
 
 function startFrontView(trainCar) {
   currentTrainCar = trainCar;
@@ -13817,10 +13977,12 @@ function stopFrontView() {
 const fbuttons = document.querySelectorAll(".frontViewBtn");
 
 fbuttons.forEach(button => {
+  button.disabled = true;
 
   button.addEventListener("click", () => {
     const trainNum = parseInt(button.dataset.train);
     const selectedCar = trainCars[trainNum];
+    if (!selectedCar) { return; }
 
     if (!frontViewActive || currentTrainCar !== selectedCar) {
       stopFrontView(); // 他の列車からの切り替え対応
@@ -13835,6 +13997,7 @@ fbuttons.forEach(button => {
   button.addEventListener("touchstart", () => {
     const trainNum = parseInt(button.dataset.train);
     const selectedCar = trainCars[trainNum];
+    if (!selectedCar) { return; }
 
     if (!frontViewActive || currentTrainCar !== selectedCar) {
       stopFrontView(); // 他の列車からの切り替え対応
@@ -13899,6 +14062,7 @@ function handleMouseMove(x, y) {
   mouse.y = -(clientY / h) * 2 + 1;
   updateDifferenceFaceHoverFromPointer();
   updateRailInsertHoverFromPointer();
+  updateRailStraightPreview();
 }
 
 // 物体の表示/非表示
@@ -14597,6 +14761,7 @@ let sinjyukuCity = null
 let baseMapRoot = null
 let differencePreviewTube = null
 const differenceSpacePlanes = []
+const differenceRailOperations = []
 let differenceSelectedPlane = null
 let differenceFaceHighlight = null
 const differenceSelectedFaceHighlights = []
@@ -14681,20 +14846,6 @@ let guideMillerAddModeActive = false
 let guideMillerInfluenceModeActive = false
 let guideCoordinateFrameOverride = null
 
-if (IS_RUNTIME_LOCAL_VIEW) {
-  setTimeout(async () => {
-    try {
-      await loadRuntimeMapFromPublicUpload();
-    } catch (err) {
-      console.warn('runtime map load failed', err);
-      const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit map' : 'public map';
-      const message = `${runtimeLabel} 読込失敗: ${err?.message || err}`;
-      if (mapLoadStatus) { mapLoadStatus.textContent = message; }
-      if (railConstructionStatus) { railConstructionStatus.textContent = message; }
-      updateDifferenceStatus(message);
-    }
-  }, 0);
-}
 let guideCoordinateEdgeOverride = null
 const guideMillerInfluencePlanes = []
 let guideMillerInfluenceSelectedPlane = null
@@ -14826,6 +14977,7 @@ function clearCreateHistory() {
 function captureDifferenceSnapshot() {
   return differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
+    .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
 }
@@ -14836,6 +14988,7 @@ function isSameDifferenceSnapshot(a, b) {
 
 function applyDifferenceSnapshot(snapshot) {
   clearDifferenceSpacesForImport();
+  clearDifferenceRailOperations();
   const list = Array.isArray(snapshot) ? snapshot : [];
   list.forEach((rawSpace) => {
     const geometry = buildGeometryFromSerializedSpace(rawSpace);
@@ -15380,6 +15533,377 @@ function getDifferenceTargetMapRoot() {
     return sinjyukuCity;
   }
   return scene.getObjectByName('__public_runtime_ct_glb__') || null;
+}
+
+function getCityModelRoot() {
+  if (!sinjyukuCity) {
+    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+  }
+  return sinjyukuCity || scene.getObjectByName('__public_runtime_ct_glb__') || null;
+}
+
+function getGroundMeshes() {
+  const root = getCityModelRoot();
+  if (!root) { return []; }
+  const meshes = [];
+  root.traverse((obj) => {
+    if (!obj?.isMesh) { return; }
+    if (String(obj.name || '').trim() !== 'ground') { return; }
+    meshes.push(obj);
+  });
+  return meshes;
+}
+
+function setMaterialOpacity(material, opacity) {
+  if (!material || !('opacity' in material)) { return; }
+  if (material.userData?.groundBaseTransparent == null) {
+    material.userData = {
+      ...(material.userData || {}),
+      groundBaseTransparent: Boolean(material.transparent),
+      groundBaseOpacity: typeof material.opacity === 'number' ? material.opacity : 1,
+      groundBaseDepthWrite: 'depthWrite' in material ? Boolean(material.depthWrite) : true,
+    };
+  }
+  material.opacity = opacity;
+  material.transparent = opacity < 1;
+  if ('depthWrite' in material) {
+    material.depthWrite = opacity >= 1;
+  }
+  material.needsUpdate = true;
+}
+
+function updateGroundOpacityButtonState() {
+  if (!toggleGroundOpacityButton) { return; }
+  const meshes = getGroundMeshes();
+  const materials = meshes.flatMap((mesh) => Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
+  const isTransparent = materials.some((material) => typeof material?.opacity === 'number' && material.opacity < 0.99);
+  toggleGroundOpacityButton.textContent = isTransparent ? 'ground戻す' : 'ground透過';
+}
+
+function toggleGroundOpacity() {
+  const meshes = getGroundMeshes();
+  if (meshes.length < 1) {
+    if (mapLoadStatus) {
+      mapLoadStatus.textContent = 'ground が見つかりません。';
+    }
+    return false;
+  }
+  const materials = meshes.flatMap((mesh) => Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
+  const shouldRestore = materials.some((material) => typeof material?.opacity === 'number' && material.opacity < 0.99);
+  materials.forEach((material) => {
+    if (shouldRestore) {
+      const baseOpacity = Number(material?.userData?.groundBaseOpacity);
+      material.opacity = Number.isFinite(baseOpacity) ? baseOpacity : 1;
+      material.transparent = Boolean(material?.userData?.groundBaseTransparent);
+      if ('depthWrite' in material) {
+        material.depthWrite = material?.userData?.groundBaseDepthWrite !== false;
+      }
+      material.needsUpdate = true;
+      return;
+    }
+    setMaterialOpacity(material, 0.3);
+  });
+  updateGroundOpacityButtonState();
+  if (mapLoadStatus) {
+    mapLoadStatus.textContent = shouldRestore
+      ? `ground 表示を戻しました: ${meshes.length} 件`
+      : `ground を透過しました: ${meshes.length} 件`;
+  }
+  return true;
+}
+
+function normalizeTrainRunConfig(rawConfig) {
+  const requestedId = String(rawConfig?.id || '').trim();
+  const trackName = String(rawConfig?.trackName || '').trim();
+  const requestedType = String(rawConfig?.trainType || '').trim();
+  const availableTypesList = getAvailableTrainTypeOptions();
+  const availableTypes = new Set(availableTypesList);
+  const trainType = availableTypes.has(requestedType)
+    ? requestedType
+    : (availableTypesList[0] || '');
+  const direction = String(rawConfig?.direction || 'forward').trim() === 'reverse'
+    ? 'reverse'
+    : 'forward';
+  const defaultSpeed = requestedType === 'shinkansen'
+    ? CONFIGURED_SHINKANSEN_TRAIN_MAX_SPEED
+    : CONFIGURED_COMMUTER_TRAIN_MAX_SPEED;
+  const speedRaw = Number(rawConfig?.speed);
+  const speed = Math.min(
+    CONFIGURED_TRAIN_MAX_SPEED,
+    Math.max(
+      CONFIGURED_TRAIN_MIN_SPEED,
+      Number.isFinite(speedRaw) ? speedRaw : defaultSpeed
+    )
+  );
+  return {
+    id: requestedId || `train_${trainConfigIdSeq += 1}`,
+    trackName,
+    trainType,
+    direction,
+    speed,
+    enabled: Boolean(rawConfig?.enabled) && trackName.length > 0 && trainType.length > 0,
+  };
+}
+
+function setTrainStatus(text) {
+  if (!trainStatus) { return; }
+  trainStatus.textContent = text;
+}
+
+function setTrainPanelVisible(visible) {
+  if (!trainPanel) { return; }
+  trainPanel.style.display = visible ? 'block' : 'none';
+}
+
+function getTrainTrackOptions() {
+  return railTrackDefs
+    .map((track) => String(track?.name || '').trim())
+    .filter((name) => name.length > 0);
+}
+
+function createDefaultTrainConfig() {
+  const usedTracks = new Set(trainRunConfigs.map((config) => String(config?.trackName || '').trim()).filter(Boolean));
+  const firstUnusedTrack = getTrainTrackOptions().find((name) => !usedTracks.has(name)) || '';
+  const firstTrainType = getAvailableTrainTypeOptions()[0] || '';
+  return normalizeTrainRunConfig({
+    id: `train_${trainConfigIdSeq += 1}`,
+    trackName: firstUnusedTrack,
+    trainType: firstTrainType,
+    direction: 'forward',
+    speed: CONFIGURED_COMMUTER_TRAIN_MAX_SPEED,
+    enabled: Boolean(firstUnusedTrack && firstTrainType),
+  });
+}
+
+function renderTrainConfigRows() {
+  if (!trainConfigList) { return; }
+  const trackOptions = getTrainTrackOptions();
+  const trainTypeOptions = getAvailableTrainTypeOptions();
+  trainConfigList.innerHTML = '';
+  trainRunConfigs.forEach((rawConfig, index) => {
+    const config = normalizeTrainRunConfig(rawConfig);
+    trainRunConfigs[index] = config;
+    const row = document.createElement('div');
+    row.dataset.trainConfigId = config.id;
+    row.style.border = '1px solid rgba(41,71,107,0.18)';
+    row.style.borderRadius = '8px';
+    row.style.padding = '8px';
+    row.style.display = 'grid';
+    row.style.gap = '6px';
+    row.style.background = 'rgba(245,249,255,0.92)';
+    const trackSelectHtml = ['<option value="">未選択</option>']
+      .concat(trackOptions.map((name) => `<option value="${name}">${name}</option>`))
+      .join('');
+    const trainSelectHtml = trainTypeOptions.length > 0
+      ? trainTypeOptions.map((name) => `<option value="${name}">${name}</option>`).join('')
+      : '<option value="">読込済み車両なし</option>';
+    row.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div style="font-size:11px; font-weight:700; color:#29476b;">列車 ${index + 1}</div>
+        <button type="button" data-train-remove="${config.id}" style="font-size:10px;">削除</button>
+      </div>
+      <label style="font-size:11px;">路線
+        <select data-train-field="trackName" style="width:100%; margin-top:4px;">${trackSelectHtml}</select>
+      </label>
+      <label style="font-size:11px;">列車
+        <select data-train-field="trainType" style="width:100%; margin-top:4px;">${trainSelectHtml}</select>
+      </label>
+      <label style="font-size:11px;">向き
+        <select data-train-field="direction" style="width:100%; margin-top:4px;">
+          <option value="forward">forward</option>
+          <option value="reverse">reverse</option>
+        </select>
+      </label>
+      <label style="font-size:11px;">速度
+        <input data-train-field="speed" type="number" min="0.001" max="0.1" step="0.001" style="width:100%; margin-top:4px;">
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:11px;">
+        <input data-train-field="enabled" type="checkbox">
+        <span>走行ON</span>
+      </label>
+    `;
+    const trackSelect = row.querySelector('[data-train-field="trackName"]');
+    const trainTypeSelect = row.querySelector('[data-train-field="trainType"]');
+    const directionSelect = row.querySelector('[data-train-field="direction"]');
+    const speedInput = row.querySelector('[data-train-field="speed"]');
+    const enabledInput = row.querySelector('[data-train-field="enabled"]');
+    if (trackSelect) { trackSelect.value = config.trackName; }
+    if (trainTypeSelect) {
+      trainTypeSelect.value = trainTypeOptions.includes(config.trainType) ? config.trainType : (trainTypeOptions[0] || '');
+      trainTypeSelect.disabled = trainTypeOptions.length < 1;
+    }
+    if (directionSelect) { directionSelect.value = config.direction; }
+    if (speedInput) { speedInput.value = String(config.speed); }
+    if (enabledInput) { enabledInput.checked = config.enabled; }
+    trainConfigList.appendChild(row);
+  });
+}
+
+function syncTrainPanelFromConfig() {
+  if (!Array.isArray(trainRunConfigs) || trainRunConfigs.length < 1) {
+    trainRunConfigs = [createDefaultTrainConfig()];
+  } else {
+    trainRunConfigs = trainRunConfigs.map((config) => normalizeTrainRunConfig(config));
+  }
+  renderTrainConfigRows();
+  const enabledCount = trainRunConfigs.filter((config) => config.enabled && config.trackName).length;
+  setTrainStatus(enabledCount > 0 ? `列車設定: ${enabledCount} 件有効` : '列車設定: 未設定');
+}
+
+function readTrainConfigsFromPanel() {
+  if (!trainConfigList) { return []; }
+  const nextConfigs = Array.from(trainConfigList.querySelectorAll('[data-train-config-id]')).map((row) => normalizeTrainRunConfig({
+    id: row.dataset.trainConfigId || '',
+    trackName: row.querySelector('[data-train-field="trackName"]')?.value || '',
+    trainType: row.querySelector('[data-train-field="trainType"]')?.value || '',
+    direction: row.querySelector('[data-train-field="direction"]')?.value || 'forward',
+    speed: Number(row.querySelector('[data-train-field="speed"]')?.value),
+    enabled: Boolean(row.querySelector('[data-train-field="enabled"]')?.checked),
+  }));
+  const seenTracks = new Set();
+  return nextConfigs.map((config) => {
+    if (config.enabled && config.trackName) {
+      if (seenTracks.has(config.trackName)) {
+        return { ...config, enabled: false };
+      }
+      seenTracks.add(config.trackName);
+    }
+    return config;
+  });
+}
+
+function disposeObject3DMaterials(root) {
+  root?.traverse?.((node) => {
+    node?.geometry?.dispose?.();
+    if (Array.isArray(node?.material)) {
+      node.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      node?.material?.dispose?.();
+    }
+  });
+}
+
+function stopConfiguredTrain(runtimeOrId) {
+  const runtime = typeof runtimeOrId === 'string'
+    ? configuredTrainRuntimes.get(runtimeOrId)
+    : runtimeOrId;
+  if (!runtime) { return; }
+  runtime.startToken += 1;
+  if (runtime.stopController) {
+    runtime.stopController.stopped = true;
+  }
+  if (runtime.stopTimerId) {
+    window.clearTimeout(runtime.stopTimerId);
+    runtime.stopTimerId = 0;
+  }
+  const group = runtime.group;
+  if (group) {
+    group.visible = false;
+    runtime.stopTimerId = window.setTimeout(() => {
+      if (group?.parent) {
+        group.parent.remove(group);
+      }
+      disposeObject3DMaterials(group);
+      const idx = Trains.indexOf(group);
+      if (idx >= 0) {
+        Trains.splice(idx, 1);
+      }
+      runtime.stopTimerId = 0;
+    }, 80);
+  }
+  configuredTrainRuntimes.delete(runtime.config?.id || runtime.id);
+}
+
+function stopAllConfiguredTrains() {
+  Array.from(configuredTrainRuntimes.values()).forEach((runtime) => {
+    stopConfiguredTrain(runtime);
+  });
+}
+
+function buildTrainRuntimeCurve(trackName, direction = 'forward') {
+  const track = railTrackDefs.find((entry) => String(entry?.name || '').trim() === String(trackName || '').trim()) || null;
+  const points = Array.isArray(track?.points) ? track.points.map((point) => point.clone()) : [];
+  if (points.length < 2) { return null; }
+  if (direction === 'reverse') {
+    points.reverse();
+  }
+  return new THREE.CatmullRomCurve3(points);
+}
+
+function createConfiguredTrainGroup(trainType) {
+  if (trainType === 'shinkansen') {
+    if (!LoadModels?.[1] && !LoadModels?.[2]) { return null; }
+    return Sin_TrainSettings(8);
+  }
+  if (!cloneCommuterTrainModelByName(trainType)) { return null; }
+  return createCommuterTrainWithModel(trainType, 10, 0xaaaaaa);
+}
+
+function applyConfiguredTrainConfig(rawConfig) {
+  const config = normalizeTrainRunConfig(rawConfig);
+  stopConfiguredTrain(config.id);
+  if (!config.enabled) { return true; }
+  const curve = buildTrainRuntimeCurve(config.trackName, config.direction);
+  if (!curve) {
+    setTrainStatus(`列車設定: ${config.trackName || config.id} の路線が無効です`);
+    return false;
+  }
+  const group = createConfiguredTrainGroup(config.trainType);
+  if (!group) {
+    setTrainStatus(`列車設定: ${config.trackName || config.id} の列車生成に失敗しました`);
+    return false;
+  }
+  const runtime = {
+    id: config.id,
+    group,
+    curve,
+    config,
+    progress: 0,
+    lastTimeMs: performance.now(),
+    startToken: 0,
+    stopTimerId: 0,
+    stopController: { stopped: false },
+  };
+  configuredTrainRuntimes.set(config.id, runtime);
+  const startToken = runtime.startToken;
+  window.setTimeout(() => {
+    const liveRuntime = configuredTrainRuntimes.get(config.id);
+    if (!liveRuntime || liveRuntime.startToken !== startToken || liveRuntime.group !== group) { return; }
+    runTrain(
+      group,
+      curve,
+      null,
+      train_width + car_Spacing,
+      Number.isFinite(Number(config.speed))
+        ? Number(config.speed)
+        : (config.trainType === 'shinkansen' ? CONFIGURED_SHINKANSEN_TRAIN_MAX_SPEED : CONFIGURED_COMMUTER_TRAIN_MAX_SPEED),
+      CONFIGURED_TRAIN_ACCELERATION,
+      { x: Number.POSITIVE_INFINITY, y: 0, z: Number.POSITIVE_INFINITY },
+      0,
+      true,
+      0,
+      runtime.stopController
+    );
+  }, 100);
+  return true;
+}
+
+function applyAllConfiguredTrains() {
+  stopAllConfiguredTrains();
+  trainRunConfigs = readTrainConfigsFromPanel();
+  let enabledCount = 0;
+  let appliedCount = 0;
+  trainRunConfigs.forEach((config) => {
+    if (config.enabled && config.trackName) {
+      enabledCount += 1;
+    }
+    if (applyConfiguredTrainConfig(config) && config.enabled && config.trackName) {
+      appliedCount += 1;
+    }
+  });
+  syncTrainPanelFromConfig();
+  setTrainStatus(enabledCount > 0 ? `列車設定: ${appliedCount}/${enabledCount} 件起動` : '列車設定: 停止');
+  return true;
 }
 
 function purgeDifferencePreviewCuttersInScene() {
@@ -19786,6 +20310,68 @@ function buildDifferenceCutterMeshFromSpaces() {
   return cutter;
 }
 
+function buildDifferenceCutterMeshFromSerializedSpace(rawSpace) {
+  let geometry = null;
+  const railTrackNames = Array.isArray(rawSpace?.trackNames)
+    ? rawSpace.trackNames.map((name) => String(name || '').trim()).filter((name) => name.length > 0)
+    : [];
+  if (String(rawSpace?.mode || '').trim() === 'rail_track_names' && railTrackNames.length > 0) {
+    const cutter = buildDifferenceCutterMeshFromRailTracks({
+      trackNames: railTrackNames,
+      bandHeight: Number(rawSpace?.bandHeight),
+      sidePadding: Number(rawSpace?.sidePadding),
+      innerPadding: Number(rawSpace?.innerPadding),
+      minBandWidth: Number(rawSpace?.minBandWidth),
+      sampleStepMeters: Number(rawSpace?.sampleStepMeters),
+    });
+    geometry = cutter?.geometry?.clone?.() || null;
+    cutter?.geometry?.dispose?.();
+    if (Array.isArray(cutter?.material)) {
+      cutter.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      cutter?.material?.dispose?.();
+    }
+  } else {
+    geometry = buildGeometryFromSerializedSpace(rawSpace);
+    if (geometry) {
+      const pos = Array.isArray(rawSpace?.position) ? rawSpace.position : [0, 0, 0];
+      const quat = Array.isArray(rawSpace?.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
+      const scl = Array.isArray(rawSpace?.scale) ? rawSpace.scale : [1, 1, 1];
+      const matrix = new THREE.Matrix4().compose(
+        new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0),
+        new THREE.Quaternion(
+          Number(quat[0]) || 0,
+          Number(quat[1]) || 0,
+          Number(quat[2]) || 0,
+          Number(quat[3]) || 1,
+        ).normalize(),
+        new THREE.Vector3(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1),
+      );
+      geometry.applyMatrix4(matrix);
+    }
+  }
+  if (!geometry) { return null; }
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x2ed0c9,
+    transparent: true,
+    opacity: 0.5,
+    metalness: 0.1,
+    roughness: 0.42,
+    depthWrite: false,
+  });
+  const cutter = new THREE.Mesh(geometry, material);
+  cutter.name = 'DifferencePreviewCutter';
+  cutter.renderOrder = 1200;
+  cutter.userData = {
+    ...(cutter.userData || {}),
+    differenceCutterSource: 'saved_difference_space',
+  };
+  return cutter;
+}
+
 function updateDifferenceStatus(text) {
   if (!differenceStatus) { return; }
   differenceStatus.textContent = text;
@@ -19900,6 +20486,232 @@ function applyDifferenceToSinjyuku(cutterMesh) {
   return changedCount;
 }
 
+function applySavedDifferenceSpacesToSinjyuku(rawSpaces, { updateStatus = true } = {}) {
+  const spaces = Array.isArray(rawSpaces) ? rawSpaces : [];
+  if (spaces.length < 1) { return 0; }
+  if (!getDifferenceTargetMapRoot()) { return -1; }
+  let totalChangedCount = 0;
+  let appliedSpaces = 0;
+  spaces.forEach((rawSpace) => {
+    const cutter = buildDifferenceCutterMeshFromSerializedSpace(rawSpace);
+    if (!cutter) { return; }
+    const changedCount = applyDifferenceToSinjyuku(cutter);
+    cutter.geometry?.dispose?.();
+    if (Array.isArray(cutter.material)) {
+      cutter.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      cutter.material?.dispose?.();
+    }
+    if (changedCount > 0) {
+      totalChangedCount += changedCount;
+      appliedSpaces += 1;
+    }
+  });
+  if (totalChangedCount > 0 && updateStatus) {
+    updateDifferenceStatus(`difference読込反映: ${totalChangedCount} メッシュ更新 / 空間 ${appliedSpaces}/${spaces.length} 件`);
+  }
+  return totalChangedCount;
+}
+
+function applySavedDifferenceRailOperationsToSinjyuku(rawOperations, { updateStatus = true } = {}) {
+  const operations = Array.isArray(rawOperations)
+    ? rawOperations.map((operation) => normalizeDifferenceRailOperation(operation)).filter(Boolean)
+    : [];
+  if (operations.length < 1) { return 0; }
+  if (!getDifferenceTargetMapRoot()) { return -1; }
+  let totalChangedCount = 0;
+  let appliedCount = 0;
+  operations.forEach((operation) => {
+    const cutter = buildDifferenceCutterMeshFromRailTracks(operation);
+    if (!cutter) { return; }
+    const changedCount = applyDifferenceToSinjyuku(cutter);
+    cutter.geometry?.dispose?.();
+    if (Array.isArray(cutter.material)) {
+      cutter.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      cutter.material?.dispose?.();
+    }
+    if (changedCount > 0) {
+      totalChangedCount += changedCount;
+      appliedCount += 1;
+    }
+  });
+  if (totalChangedCount > 0 && updateStatus) {
+    updateDifferenceStatus(`difference読込反映: ${totalChangedCount} メッシュ更新 / rail ${appliedCount}/${operations.length} 件`);
+  }
+  return totalChangedCount;
+}
+
+function scheduleSavedDifferenceReplay(rawSpaces, rawRailOperations) {
+  const spaces = Array.isArray(rawSpaces) ? rawSpaces.map((space) => structuredClone(space)) : [];
+  const railOperations = Array.isArray(rawRailOperations)
+    ? rawRailOperations.map((operation) => structuredClone(operation))
+    : [];
+  if (spaces.length < 1 && railOperations.length < 1) {
+    pendingSavedDifferenceReplay = null;
+    pendingSavedDifferenceSpacesRetryCount = 0;
+    return;
+  }
+  pendingSavedDifferenceReplay = {
+    spaces,
+    railOperations,
+  };
+  pendingSavedDifferenceSpacesRetryCount = 0;
+}
+
+function flushPendingSavedDifferenceSpacesReplay() {
+  const replay = pendingSavedDifferenceReplay && typeof pendingSavedDifferenceReplay === 'object'
+    ? pendingSavedDifferenceReplay
+    : null;
+  const spaces = Array.isArray(replay?.spaces) ? replay.spaces : [];
+  const railOperations = Array.isArray(replay?.railOperations) ? replay.railOperations : [];
+  if (spaces.length < 1 && railOperations.length < 1) { return false; }
+  const spaceResult = applySavedDifferenceSpacesToSinjyuku(spaces, { updateStatus: false });
+  const railResult = applySavedDifferenceRailOperationsToSinjyuku(railOperations, { updateStatus: false });
+  const targetNotReady = spaceResult === -1 || railResult === -1;
+  if (targetNotReady) {
+    pendingSavedDifferenceSpacesRetryCount += 1;
+    if (pendingSavedDifferenceSpacesRetryCount >= PENDING_SAVED_DIFFERENCE_MAX_RETRY) {
+      console.warn('[difference][saved] replay canceled: target map root was not ready.');
+      pendingSavedDifferenceReplay = null;
+      pendingSavedDifferenceSpacesRetryCount = 0;
+    }
+    return false;
+  }
+  pendingSavedDifferenceReplay = null;
+  pendingSavedDifferenceSpacesRetryCount = 0;
+  const totalChangedCount = Math.max(0, spaceResult) + Math.max(0, railResult);
+  const totalCount = spaces.length + railOperations.length;
+  if (totalChangedCount > 0) {
+    console.info('[difference][saved] replay applied', {
+      spaceCount: spaces.length,
+      railOperationCount: railOperations.length,
+      changedCount: totalChangedCount,
+    });
+  } else {
+    console.warn('[difference][saved] replay produced no mesh updates.', {
+      spaceCount: spaces.length,
+      railOperationCount: railOperations.length,
+    });
+  }
+  return totalChangedCount > 0;
+}
+
+function payloadHasOnlyDifferenceSpaces(payload) {
+  if (!payload || typeof payload !== 'object') { return false; }
+  const spaces = Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces : [];
+  const railOperations = Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations : [];
+  if (spaces.length < 1 && railOperations.length < 1) { return false; }
+  const hasGuideData = Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0;
+  const hasSteelFramePoints = Array.isArray(payload?.steelFrame?.points) && payload.steelFrame.points.length > 0;
+  const hasSteelFrameSegments = Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0;
+  const hasDecorations = Array.isArray(payload?.decorations) && payload.decorations.length > 0;
+  const hasPins = Array.isArray(payload?.pins) && payload.pins.length > 0;
+  const hasRuns = Array.isArray(payload?.generationRuns) && payload.generationRuns.length > 0;
+  const hasCopiedGroups = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
+  const hasBaseGuide = payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object';
+  return !(
+    hasGuideData
+    || hasSteelFramePoints
+    || hasSteelFrameSegments
+    || hasDecorations
+    || hasPins
+    || hasRuns
+    || hasCopiedGroups
+    || hasBaseGuide
+  );
+}
+
+function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, applyToCity = true } = {}) {
+  const spaces = Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces : [];
+  const railOperations = Array.isArray(payload?.differenceRailOperations)
+    ? payload.differenceRailOperations.map((operation) => normalizeDifferenceRailOperation(operation)).filter(Boolean)
+    : [];
+  if (clearExisting) {
+    clearDifferenceSpacesForImport();
+    clearDifferenceRailOperations();
+  }
+  spaces.forEach((rawSpace) => {
+    const railTrackNames = Array.isArray(rawSpace?.trackNames)
+      ? rawSpace.trackNames.map((name) => String(name || '').trim()).filter((name) => name.length > 0)
+      : [];
+    if (String(rawSpace?.mode || '').trim() === 'rail_track_names' && railTrackNames.length > 0) {
+      const cutter = buildDifferenceCutterMeshFromRailTracks({
+        trackNames: railTrackNames,
+        bandHeight: Number(rawSpace?.bandHeight),
+        sidePadding: Number(rawSpace?.sidePadding),
+        innerPadding: Number(rawSpace?.innerPadding),
+        minBandWidth: Number(rawSpace?.minBandWidth),
+        sampleStepMeters: Number(rawSpace?.sampleStepMeters),
+      });
+      const geometry = cutter?.geometry?.clone?.() || null;
+      cutter?.geometry?.dispose?.();
+      if (Array.isArray(cutter?.material)) {
+        cutter.material.forEach((mat) => mat?.dispose?.());
+      } else {
+        cutter?.material?.dispose?.();
+      }
+      if (!geometry) { return; }
+      const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+      mesh.position.set(0, 0, 0);
+      mesh.quaternion.identity();
+      mesh.scale.set(1, 1, 1);
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        differenceRailTrackNames: railTrackNames.slice(),
+        differenceRailBandHeight: Number(rawSpace?.bandHeight) || readDifferenceLineBandHeight(),
+        differenceRailSidePadding: Number(rawSpace?.sidePadding) || 0.6,
+        differenceRailInnerPadding: Number(rawSpace?.innerPadding) || 0.6,
+        differenceRailMinBandWidth: Number(rawSpace?.minBandWidth) || 1.2,
+        differenceRailSampleStepMeters: Number(rawSpace?.sampleStepMeters) || 2.0,
+      };
+      mesh.updateMatrixWorld(true);
+      rebuildDifferenceControlPointsFromGeometry(mesh);
+      syncDifferenceGeometryFromControlPoints(mesh);
+      mergeCoincidentDifferenceControlPoints(mesh);
+      pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+      return;
+    }
+    const geometry = buildGeometryFromSerializedSpace(rawSpace);
+    if (!geometry) { return; }
+    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
+    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
+    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
+    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
+    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
+    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
+    mesh.updateMatrixWorld(true);
+    rebuildDifferenceControlPointsFromGeometry(mesh);
+    syncDifferenceGeometryFromControlPoints(mesh);
+    mergeCoincidentDifferenceControlPoints(mesh);
+    pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+  });
+  relinkImportedDifferenceSharedPoints();
+  mergeOverlappedBoundaryControlPoints();
+  rebuildDifferenceEdgeOverlapConstraints();
+  railOperations.forEach((operation) => {
+    differenceRailOperations.push(operation);
+  });
+  if (applyToCity) {
+    const changedCount = applySavedDifferenceSpacesToSinjyuku(spaces, { updateStatus: false });
+    const railChangedCount = applySavedDifferenceRailOperationsToSinjyuku(railOperations, { updateStatus: false });
+    if (changedCount === -1 || railChangedCount === -1) {
+      scheduleSavedDifferenceReplay(spaces, railOperations);
+    } else {
+      pendingSavedDifferenceReplay = null;
+      pendingSavedDifferenceSpacesRetryCount = 0;
+    }
+  }
+  targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
+  setMeshListOpacity(targetObjects, 1);
+  refreshDifferencePreview();
+  return {
+    spaceCount: spaces.length,
+    railOperationCount: railOperations.length,
+  };
+}
+
 function buildWorldBakedDifferenceCutterFromMesh(sourceMesh) {
   if (!sourceMesh?.geometry) { return null; }
   sourceMesh.updateMatrixWorld(true);
@@ -19917,6 +20729,38 @@ function buildWorldBakedDifferenceCutterFromMesh(sourceMesh) {
   baked.scale.set(1, 1, 1);
   baked.updateMatrixWorld(true);
   return baked;
+}
+
+function persistDifferenceSpaceFromMesh(sourceMesh) {
+  const railTrackNames = Array.isArray(sourceMesh?.userData?.differenceRailTrackNames)
+    ? sourceMesh.userData.differenceRailTrackNames
+      .map((name) => String(name || '').trim())
+      .filter((name) => name.length > 0)
+    : [];
+  if (railTrackNames.length > 0) {
+    const railOperation = buildDifferenceRailOperationFromCutter(sourceMesh);
+    if (!railOperation) { return null; }
+    differenceRailOperations.push(railOperation);
+    structureSamplesDirty = true;
+    return {
+      userData: {
+        differenceRailTrackNames: railOperation.trackNames.slice(),
+      },
+    };
+  }
+  const baked = buildWorldBakedDifferenceCutterFromMesh(sourceMesh);
+  if (!baked?.geometry) { return null; }
+  const geometry = baked.geometry.clone();
+  const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+  baked.geometry.dispose?.();
+  baked.material?.dispose?.();
+  if (!mesh) { return null; }
+  mesh.position.set(0, 0, 0);
+  mesh.quaternion.identity();
+  mesh.scale.set(1, 1, 1);
+  mesh.updateMatrixWorld(true);
+  structureSamplesDirty = true;
+  return mesh;
 }
 
 function clearDifferenceRailWallMeshes() {
@@ -20379,6 +21223,12 @@ function buildDifferenceCutterMeshFromRailTracks({
       startOutward: [startForward.x * -1, startForward.y * -1, startForward.z * -1],
       endOutward: [endForward.x, endForward.y, endForward.z],
     },
+    differenceRailTrackNames: ordered.map((entry) => String(entry?.trackName || '').trim()).filter((name) => name.length > 0),
+    differenceRailBandHeight: height,
+    differenceRailSidePadding: outerOffset,
+    differenceRailInnerPadding: innerOffset,
+    differenceRailMinBandWidth: minWidth,
+    differenceRailSampleStepMeters: stepMeters,
   };
   return cutter;
 }
@@ -20386,7 +21236,8 @@ function buildDifferenceCutterMeshFromRailTracks({
 function runDifferenceOnSinjyukuFromRailTracks(options = {}) {
   const keepPreview = options?.keepPreview !== false;
   const appliedHeight = readDifferenceLineBandHeight();
-  const cutter = buildDifferenceCutterMeshFromRailTracks({ bandHeight: appliedHeight });
+  const operation = buildDifferenceRailOperationFromTrackNames(null, { bandHeight: appliedHeight });
+  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks(operation) : null;
   if (!cutter) {
     updateDifferenceStatus('線路カッターの作成に失敗しました。');
     return false;
@@ -20418,10 +21269,14 @@ function runDifferenceOnSinjyukuFromRailTracks(options = {}) {
   const usedTrackCount = Number(cutter.userData?.railTrackCount) || 0;
   const rightEdge = String(cutter.userData?.rightEdgeTrackName || '');
   const leftEdge = String(cutter.userData?.leftEdgeTrackName || '');
-  updateDifferenceStatus(`線路くり抜き完了: ${changedCount} メッシュ更新 / 対象線路 ${usedTrackCount} 本 / 端: ${rightEdge} - ${leftEdge}`);
-  if (!keepPreview) {
-    clearDifferencePreviewTube();
-  }
+  const savedMesh = persistDifferenceSpaceFromMesh(cutter);
+  updateDifferenceStatus(
+    `線路くり抜き完了: ${changedCount} メッシュ更新 / グループ ${usedTrackCount} 本 / 端: ${rightEdge} - ${leftEdge}`
+    + (savedMesh ? ' / difference保存対象へ追加' : '')
+  );
+  differenceLineTrackNames = [];
+  syncDifferenceLineSelectSelectionUI();
+  clearDifferencePreviewTube();
   return true;
 }
 
@@ -24105,13 +24960,32 @@ async function handleMouseDown() {
     }
 
     if (editObject === 'RAIL') {
+      if (railStraightDraftStart) {
+        const point = getRailCreatePointerPoint();
+        if (!point) {
+          return;
+        }
+        const created = commitRailStraightDraft(point);
+        if (created) {
+          drawingObject();
+        }
+        return;
+      }
       const inserted = insertRailControlPointFromPointer();
       if (inserted) {
         if (railModeActive && railTubeDirty) {
           toggleRailTube(true);
         }
+        cancelRailStraightDraft();
         drawingObject();
+        return;
       }
+      const point = getRailCreatePointerPoint();
+      if (!point) {
+        return;
+      }
+      railStraightDraftStart = point.clone();
+      updateRailStraightPreview(point);
       return;
     }
 
@@ -26629,22 +27503,26 @@ export function UIevent (uiID, toggle){
     toggleRailTube(false);
     setRailConstructionPanelVisible(false);
     hideRailInsertHoverPin();
+    cancelRailStraightDraft();
     updateRailSelectionStatus();
 
   }} else if ( uiID === 'new' ){ if ( toggle === 'active' ){
     console.log( 'new _active' )
     objectEditMode = 'CREATE_NEW'
     search_object = false
+    cancelRailStraightDraft();
     updateRailInsertHoverFromPointer();
 
   } else {
     console.log( 'new _inactive' )
     hideRailInsertHoverPin();
+    cancelRailStraightDraft();
 
   }} else if ( uiID === 'move' ){ if ( toggle === 'active' ){
     console.log( 'move _active' )
     objectEditMode = 'MOVE_EXISTING'
     hideRailInsertHoverPin();
+    cancelRailStraightDraft();
     if (editObject === 'RAIL') {
       showRailGeneratedStructures();
       refreshRailSelectionTargets();
@@ -26818,6 +27696,10 @@ export function UIevent (uiID, toggle){
   console.log( 'tunnel_rect _active' )
   setRailConstructionCategory('tunnel_rect');
   runRailConstructionByCategory('tunnel_rect');
+  }} else if ( uiID === 'tunnel_circle' ){ if ( toggle === 'active' ){
+  console.log( 'tunnel_circle _active' )
+  setRailConstructionCategory('tunnel_circle');
+  runRailConstructionByCategory('tunnel_circle');
   }} else if ( uiID === 'platform' ){ if ( toggle === 'active' ){
   console.log( 'platform _active' )
   setRailConstructionCategory('platform');
@@ -28840,6 +29722,7 @@ function animate() {
 
   renderer.render(scene, camera);
   markRenderFrame();
+  flushPendingSavedDifferenceSpacesReplay();
 
   if (dragging === true){
     if (!choice_object || !choice_object.position) {
