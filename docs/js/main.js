@@ -5317,6 +5317,60 @@ function computeStructureGroupPoseFromMembers(members) {
     };
   }
 
+  function getRotationPanelAnglesXYZ(panelAngles) {
+    return {
+      x: Number(panelAngles?.x) || 0,
+      y: Number(panelAngles?.y) || 0,
+      z: Number.isFinite(Number(panelAngles?.y2))
+        ? Number(panelAngles.y2)
+        : (Number.isFinite(Number(panelAngles?.y_2))
+          ? Number(panelAngles.y_2)
+          : (Number(panelAngles?.z) || 0)),
+    };
+  }
+
+  function applyRotationPanelAnglesToStructureMembers({
+    pointMeshes = [],
+    objectMeshes = [],
+    pivot = null,
+    panelAngles = null,
+  } = {}) {
+    if (!pivot?.isVector3 || !panelAngles) { return false; }
+    const degToRad = Math.PI / 180;
+    const { x, y, z } = getRotationPanelAnglesXYZ(panelAngles);
+    const rotations = [
+      { axis: new THREE.Vector3(1, 0, 0), rad: x * degToRad },
+      { axis: new THREE.Vector3(0, 1, 0), rad: y * degToRad },
+      { axis: new THREE.Vector3(0, 0, 1), rad: z * degToRad },
+    ];
+
+    const rotatePosition = (mesh, axis, rad) => {
+      if (!mesh?.parent || !mesh?.position || Math.abs(rad) < 1e-6) { return; }
+      const offset = mesh.position.clone().sub(pivot);
+      offset.applyAxisAngle(axis, rad);
+      mesh.position.copy(pivot.clone().add(offset));
+    };
+    const rotateQuaternion = (mesh, axis, rad) => {
+      if (!mesh?.quaternion?.isQuaternion || Math.abs(rad) < 1e-6) { return; }
+      const dq = new THREE.Quaternion().setFromAxisAngle(axis, rad);
+      mesh.quaternion.premultiply(dq).normalize();
+    };
+
+    rotations.forEach(({ axis, rad }) => {
+      if (Math.abs(rad) < 1e-6) { return; }
+      pointMeshes.forEach((mesh) => rotatePosition(mesh, axis, rad));
+      objectMeshes.forEach((mesh) => {
+        const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+          && mesh.userData.steelFrameSegmentPointRefs.length >= 2;
+        if (!hasPointRefs) {
+          rotatePosition(mesh, axis, rad);
+        }
+        rotateQuaternion(mesh, axis, rad);
+      });
+    });
+    return true;
+  }
+
   function parseSavedGroupRotationAngles(entry) {
     if (!entry || typeof entry !== 'object') { return null; }
     const compactRotation = (entry.rotation && typeof entry.rotation === 'object' && !Array.isArray(entry.rotation))
@@ -5364,6 +5418,37 @@ function computeStructureGroupPoseFromMembers(members) {
     return q.normalize();
   }
 
+  function collectUniqueStructureGroupPoints(members) {
+    const out = [];
+    const seen = new Set();
+    const pushPoint = (mesh) => {
+      if (!mesh?.parent || !mesh?.userData?.steelFramePoint) { return; }
+      if (seen.has(mesh.id)) { return; }
+      seen.add(mesh.id);
+      out.push(mesh);
+    };
+    (Array.isArray(members) ? members : []).forEach((mesh) => {
+      if (mesh?.userData?.steelFramePoint) {
+        pushPoint(mesh);
+        return;
+      }
+      const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        ? mesh.userData.steelFrameSegmentPointRefs
+        : [];
+      refs.forEach((pointMesh) => pushPoint(pointMesh));
+    });
+    return out;
+  }
+
+  function getStructureGroupAnchorPointByMinId(members) {
+    const points = collectUniqueStructureGroupPoints(members);
+    if (points.length < 1) { return null; }
+    return points.reduce((best, mesh) => {
+      if (!best) { return mesh; }
+      return mesh.id < best.id ? mesh : best;
+    }, null);
+  }
+
   function collectCopiedStructureGroupsForSave() {
     const targets = getConstructionCopyTargets().filter((mesh) => mesh?.parent);
     const grouped = new Map();
@@ -5391,13 +5476,13 @@ function computeStructureGroupPoseFromMembers(members) {
         .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === String(entry?.sourceGroupId || '').trim());
       const sourcePose = computeStructureGroupPoseFromMembers(sourceMembers);
       const sourceQuat = sourcePose?.quaternion?.isQuaternion ? sourcePose.quaternion : new THREE.Quaternion();
+      const anchorPoint = getStructureGroupAnchorPointByMinId(members);
       // 複製時を0基準にした相対回転として保存する。
       const relativeQuat = pose.quaternion.clone().multiply(sourceQuat.clone().invert()).normalize();
       const angles = getGroupRotationAnglesFromQuat(relativeQuat);
-      out.push({
+      const row = {
         groupId: gid,
         sourceGroupId: entry.sourceGroupId,
-        center: [center.x, center.y, center.z],
         absoluteQuaternion: [
           Number(pose.quaternion.x) || 0,
           Number(pose.quaternion.y) || 0,
@@ -5410,7 +5495,17 @@ function computeStructureGroupPoseFromMembers(members) {
           y_2: angles.y_2,
           z: angles.z,
         },
-      });
+      };
+      if (anchorPoint?.position) {
+        row.anchorPosition = [
+          Number(anchorPoint.position.x) || 0,
+          Number(anchorPoint.position.y) || 0,
+          Number(anchorPoint.position.z) || 0,
+        ];
+      } else {
+        row.center = [center.x, center.y, center.z];
+      }
+      out.push(row);
     });
     return out;
   }
@@ -5487,12 +5582,22 @@ function computeStructureGroupPoseFromMembers(members) {
         return false;
       }
 
-      const centerRaw = Array.isArray(entry?.center) ? entry.center : [0, 0, 0];
-      const targetCenter = new THREE.Vector3(
-        Number(centerRaw[0]) || 0,
-        Number(centerRaw[1]) || 0,
-        Number(centerRaw[2]) || 0,
-      );
+      const anchorRaw = Array.isArray(entry?.anchorPosition) ? entry.anchorPosition : null;
+      const centerRaw = Array.isArray(entry?.center) ? entry.center : null;
+      const targetAnchor = anchorRaw
+        ? new THREE.Vector3(
+          Number(anchorRaw[0]) || 0,
+          Number(anchorRaw[1]) || 0,
+          Number(anchorRaw[2]) || 0,
+        )
+        : null;
+      const targetCenter = centerRaw
+        ? new THREE.Vector3(
+          Number(centerRaw[0]) || 0,
+          Number(centerRaw[1]) || 0,
+          Number(centerRaw[2]) || 0,
+        )
+        : new THREE.Vector3();
       const savedAngles = parseSavedGroupRotationAngles(entry);
       const savedAbsoluteQuaternion = parseSavedGroupAbsoluteQuaternion(entry);
 
@@ -5500,8 +5605,12 @@ function computeStructureGroupPoseFromMembers(members) {
       if (!sourcePose) { return false; }
       const sourceCenter = sourcePose.center;
       const sourceQuat = sourcePose.quaternion;
-
-      const copyOffset = targetCenter.clone().sub(sourceCenter);
+      const sourceAnchorPoint = getStructureGroupAnchorPointByMinId(sourceMembers);
+      const sourceAnchor = sourceAnchorPoint?.position?.clone?.() || null;
+      const useAnchorRestore = Boolean(targetAnchor && sourceAnchor);
+      const copyOffset = useAnchorRestore
+        ? targetAnchor.clone().sub(sourceAnchor)
+        : targetCenter.clone().sub(sourceCenter);
       const requestedGroupId = String(entry?.groupId || '').trim();
       const newGroupId = (() => {
         if (!requestedGroupId) {
@@ -5660,53 +5769,15 @@ function computeStructureGroupPoseFromMembers(members) {
           createdCount += 1;
         }
       });
-      const createdMembersForPose = [...copiedPointsForRotate, ...copiedObjectsForRotate]
-        .filter((mesh) => mesh?.parent);
-      const computedRelativeQuat = (() => {
-        if (savedAbsoluteQuaternion) {
-          const currentPose = computeStructureGroupPoseFromMembers(createdMembersForPose);
-          if (currentPose?.quaternion?.isQuaternion) {
-            return savedAbsoluteQuaternion.clone().multiply(currentPose.quaternion.clone().invert()).normalize();
-          }
-        }
-        if (savedAngles) {
-          return buildGroupQuatFromRotationAngles(savedAngles);
-        }
-        const qRaw = Array.isArray(entry?.quaternion) ? entry.quaternion : [0, 0, 0, 1];
-        const q = new THREE.Quaternion(
-          Number(qRaw[0]) || 0,
-          Number(qRaw[1]) || 0,
-          Number(qRaw[2]) || 0,
-          Number(qRaw[3]) || 1,
-        ).normalize();
-        const mode = String(entry?.rotationMode || '').trim();
-        if (mode === 'relative_from_copy') {
-          return q;
-        }
-        const isIdentityQuat = Math.abs(q.x) < 1e-8
-          && Math.abs(q.y) < 1e-8
-          && Math.abs(q.z) < 1e-8
-          && Math.abs(q.w - 1) < 1e-8;
-        if (!mode && isIdentityQuat) {
-          return q;
-        }
-        return q.multiply(sourceQuat.clone().invert()).normalize();
-      })();
-      const rotateAroundCenter = (mesh) => {
-        if (!mesh?.parent || !mesh?.position) { return; }
-        const nextPos = mesh.position.clone().sub(targetCenter).applyQuaternion(computedRelativeQuat).add(targetCenter);
-        mesh.position.copy(nextPos);
-        if (mesh?.quaternion?.isQuaternion) {
-          mesh.quaternion.premultiply(computedRelativeQuat).normalize();
-        }
-      };
-      copiedPointsForRotate.forEach((mesh) => rotateAroundCenter(mesh));
-      copiedObjectsForRotate.forEach((mesh) => {
-        const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
-          && mesh.userData.steelFrameSegmentPointRefs.length >= 2;
-        if (hasPointRefs) { return; }
-        rotateAroundCenter(mesh);
-      });
+      if (savedAngles) {
+        const rotatePivot = useAnchorRestore ? targetAnchor.clone() : targetCenter.clone();
+        applyRotationPanelAnglesToStructureMembers({
+          pointMeshes: copiedPointsForRotate,
+          objectMeshes: copiedObjectsForRotate,
+          pivot: rotatePivot,
+          panelAngles: savedAngles,
+        });
+      }
       console.info('[group_copy_restore] restored entry', {
         entryIndex,
         targetGroupIdRequested: String(entry?.groupId || '').trim(),
@@ -5715,6 +5786,7 @@ function computeStructureGroupPoseFromMembers(members) {
         sourceGroupIdResolved: sourceId,
         sourceMemberCount: sourceMembers.length,
         createdObjects: createdCount - beforeCreatedCount,
+        targetAnchor: targetAnchor ? [targetAnchor.x, targetAnchor.y, targetAnchor.z] : null,
         targetCenter: [targetCenter.x, targetCenter.y, targetCenter.z],
       });
       console.info(
@@ -5722,6 +5794,7 @@ function computeStructureGroupPoseFromMembers(members) {
         + `targetActual=${newGroupId || '-'} `
         + `sourceRaw=${sourceIdRaw || '-'} sourceResolved=${sourceId || '-'} `
         + `sourceMembers=${sourceMembers.length} created=${createdCount - beforeCreatedCount} `
+        + `anchor=${targetAnchor ? `[${targetAnchor.x.toFixed(3)},${targetAnchor.y.toFixed(3)},${targetAnchor.z.toFixed(3)}]` : 'null'} `
         + `center=[${targetCenter.x.toFixed(3)},${targetCenter.y.toFixed(3)},${targetCenter.z.toFixed(3)}]`
       );
       return createdCount > beforeCreatedCount;
@@ -5786,6 +5859,16 @@ function computeStructureGroupPoseFromMembers(members) {
     if (ids.length < 1) { return ''; }
     const first = ids[0];
     return ids.every((id) => id === first) ? first : '';
+  }
+
+  function getSelectedSingleRotateStructureGroupId() {
+    const selected = getRotateSelectionMeshes()
+      .filter((mesh) => mesh?.parent)
+      .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
+      .filter((id) => id.length > 0);
+    if (selected.length < 1) { return ''; }
+    const first = selected[0];
+    return selected.every((id) => id === first) ? first : '';
   }
 
   function renameStructureGroupId(sourceGroupId, targetGroupId) {
@@ -13519,7 +13602,6 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     const targetGroupId = String(mapped.remappedEntries[0]?.remappedGroupId || '').trim();
     if (targetGroupId) {
       setSavedRotationForStructureGroup(targetGroupId, standaloneGroupState.rotation);
-      applyAbsoluteRotationToStructureGroup(targetGroupId, buildGroupQuatFromRotationAngles(standaloneGroupState.rotation));
     }
   }
   const restoredCopiedObjectCount = restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
@@ -24642,12 +24724,14 @@ async function handleMouseDown() {
         pointRotateModeActive = false;
         pointRotateTarget = null;
         rotateTargetObject = null;
+        rotateSelectionGroupId = String(obj?.userData?.structureGroupId || '').trim();
         toggleMovePointStructureSelection(obj);
         setRotationPanelMode('rotation');
         updatePointRotateVisuals();
       } else if (obj?.userData?.decorationType) {
         steelFrameMode.clearSelection?.();
         rotateTargetObject = null;
+        rotateSelectionGroupId = '';
         rotatePanelState.idsKey = '';
         rotatePanelState.angles = { x: 0, y: 0, z: 0 };
         setRotationPanelMode('rotation_decoration');
@@ -25627,6 +25711,7 @@ let rotateCenter = new THREE.Vector3();
 let rotateStartVector = new THREE.Vector3();
 let rotateStartPositions = [];
 let rotateTargetObject = null;
+let rotateSelectionGroupId = '';
 let rotateTargetStartQuaternion = new THREE.Quaternion();
 let rotateAxisLocal = new THREE.Vector3(0, 1, 0);
 let rotateDragAction = 'rotate_points';
@@ -27529,16 +27614,21 @@ function updateRotateGizmo() {
   const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',');
   if (rotatePanelState.idsKey !== idsKey) {
     rotatePanelState.idsKey = idsKey;
-    const baseCenter = new THREE.Vector3();
-    meshes.forEach((m) => baseCenter.add(m.position));
-    baseCenter.multiplyScalar(1 / meshes.length);
-    rotatePanelState.angles = { x: 0, y: 0, z: 0 };
-    if (rotationInputX) rotationInputX.value = '';
-    if (rotationInputY) rotationInputY.value = '';
-    if (rotationInputZ) rotationInputZ.value = '';
-    if (rotationInputX) rotationInputX.placeholder = '0';
-    if (rotationInputY) rotationInputY.placeholder = '0';
-    if (rotationInputZ) rotationInputZ.placeholder = '0';
+    const selectedGroupId = getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId;
+    const savedRotation = selectedGroupId
+      ? getSavedRotationForStructureGroup(selectedGroupId)
+      : null;
+    if (savedRotation) {
+      setRotationPanelAnglesDisplay(savedRotation);
+    } else {
+      rotatePanelState.angles = { x: 0, y: 0, z: 0 };
+      if (rotationInputX) rotationInputX.value = '';
+      if (rotationInputY) rotationInputY.value = '';
+      if (rotationInputZ) rotationInputZ.value = '';
+      if (rotationInputX) rotationInputX.placeholder = '0';
+      if (rotationInputY) rotationInputY.placeholder = '0';
+      if (rotationInputZ) rotationInputZ.placeholder = '0';
+    }
   }
   const center = new THREE.Vector3();
   meshes.forEach((m) => center.add(m.position));
@@ -28306,6 +28396,7 @@ export function UIevent (uiID, toggle){
     pointRotateModeActive = false
     clearPointRotateState()
     rotateTargetObject = null
+    rotateSelectionGroupId = ''
     rotatePanelState.idsKey = ''
     rotatePanelState.angles = { x: 0, y: 0, z: 0 }
     editObject = 'STEEL_FRAME'
@@ -28325,6 +28416,7 @@ export function UIevent (uiID, toggle){
     pointRotateModeActive = false
     clearPointRotateState()
     rotateTargetObject = null
+    rotateSelectionGroupId = ''
     rotatePanelState.idsKey = ''
     rotatePanelState.angles = { x: 0, y: 0, z: 0 }
     if (rotateGizmoGroup) {
