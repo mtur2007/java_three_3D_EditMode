@@ -8,7 +8,8 @@ export function createPointActions(deps) {
     getDifferenceSelectedPointsForTransform,
     getConstructionCopyTargets,
     getCopyStructurePointMeshes,
-    clearCopiedStateFromSegmentsByPoints,
+    detachCopiedStructureGroup,
+    syncCopiedGroupRotationPanel,
     refreshPointEditPanelUI,
   } = deps;
 
@@ -175,16 +176,12 @@ export function createPointActions(deps) {
 
     const yesDetach = window.confirm('複製されたオブジェクトを独立させますか？\nOK=はい / キャンセル=いいえ');
     if (yesDetach) {
-      partialGroups.forEach(({ picked }) => {
-        picked.forEach((mesh) => {
-          mesh.userData = {
-            ...(mesh.userData || {}),
-            steelFrameCopied: false,
-            steelFrameCopyGroupId: null,
-          };
-          getSteelFrameMode()?.restorePointColor?.(mesh);
+      partialGroups.forEach(({ structureMesh, all }) => {
+        const groupId = String(structureMesh?.userData?.structureGroupId || '').trim();
+        detachCopiedStructureGroup({
+          groupId,
+          points: all,
         });
-        clearCopiedStateFromSegmentsByPoints(picked);
       });
       return targets;
     }
@@ -209,6 +206,13 @@ export function createPointActions(deps) {
         }
       });
     });
+    const syncGroupId = partialGroups
+      .map(({ structureMesh }) => String(structureMesh?.userData?.structureGroupId || '').trim())
+      .filter(Boolean)
+      .find(Boolean);
+    if (syncGroupId) {
+      syncCopiedGroupRotationPanel?.(syncGroupId);
+    }
 
     // 既存選択は維持し、対象のみを加算選択する。
     expanded.forEach((mesh) => {
