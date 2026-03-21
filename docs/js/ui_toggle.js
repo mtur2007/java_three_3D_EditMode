@@ -5,30 +5,294 @@ const UI_COLOR_DEFAULT = '';
 const UI_COLOR_ACTIVE = '#2b4f8a';   // 親（経路）ボタン
 const UI_COLOR_SELECTED = '#3f7cff'; // 押下ボタン
 const UI_TEXT_ACTIVE = '#ffffff';
+const UI_ICON_TEXT_DEFAULT = '#f3f3f3';
+const UI_ICON_TEXT_ACTIVE = '#8ff0c2';
 const UI_STATE_STORAGE_KEY = 'train_editmode_ui_state_v1';
+const UI_BUTTON_ROW_GAP = 42;
+const UI_BUTTON_TOP_OFFSET = 2.5;
+const UI_ROOT_BUTTON_LEFT_OFFSET = 0;
+const UI_ROOT_BUTTON_COLUMN_GAP = 52;
+const UI_CHILDREN_TOP_OFFSET = 58;
+const UI_EDIT_CHILD_LEFT_OFFSET = 0;
+const UI_EDIT_CHILD_COLUMN_GAP = 45;
+const ROTATION_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <circle cx="12" cy="12" r="2.6"></circle>
+  <path d="M4.7 9.2a8.3 8.3 0 0 1 13.5-2.4"></path>
+  <path d="M19.3 14.8a8.3 8.3 0 0 1-13.5 2.4"></path>
+  <path d="M18.5 6.3l-1.1 2.5-2-1.8"></path>
+  <path d="M5.5 17.7l1.1-2.5 2 1.8"></path>
+</svg>`;
+const MOVE_POINT_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M12 3.8v16.4"></path>
+  <path d="M3.8 12h16.4"></path>
+  <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+  <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+  <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+  <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+  <rect x="10.5" y="10.5" width="3" height="3" fill="currentColor" stroke="none"></rect>
+</svg>`;
+const ADD_POINT_ICON_SVG = `
+<svg class="ui-icon-glyph ui-icon-glyph-accent" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M6 4.5h5"></path>
+  <path d="M8.5 2v5"></path>
+  <path d="M9.5 8.5h8l0 8-8 0z"></path>
+  <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+  <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+</svg>`;
+const COPY_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="5.5" y="5.5" width="10.5" height="10.5" rx="0.8"></rect>
+  <rect x="9" y="9" width="10.5" height="10.5" rx="0.8"></rect>
+</svg>`;
+const SEARCH_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M6 5v14"></path>
+  <path d="M6 19h13"></path>
+  <path d="M9.3 19a9.7 9.7 0 0 0-3.3-7.3"></path>
+  <path d="M12.5 19a6.5 6.5 0 0 0-6.5-6.5"></path>
+  <path d="M15.7 19a9.7 9.7 0 0 0-9.7-9.7"></path>
+  <path d="M4.8 7h2.4"></path>
+  <path d="M4.8 9.2h2.4"></path>
+  <path d="M4.8 11.4h2.4"></path>
+  <path d="M4.8 13.6h2.4"></path>
+  <path d="M4.8 15.8h2.4"></path>
+</svg>`;
+const GROUP_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M10.2 9H8.1a3.6 3.6 0 0 0 0 7.2h3.4a3.6 3.6 0 0 0 2.5-1"></path>
+  <path d="M13.8 15h2.1a3.6 3.6 0 1 0 0-7.2h-3.4a3.6 3.6 0 0 0-2.5 1"></path>
+  <path d="M9.6 12h4.8"></path>
+</svg>`;
+const VIEW_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5z"></path>
+  <circle cx="12" cy="12" r="2.4"></circle>
+</svg>`;
+const CONSTRUCTION_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M8 8h8v8H8z"></path>
+  <path d="M6 6h2v2H6z" fill="currentColor" stroke="none"></path>
+  <path d="M16 6h2v2h-2z" fill="currentColor" stroke="none"></path>
+  <path d="M6 16h2v2H6z" fill="currentColor" stroke="none"></path>
+  <path d="M16 16h2v2h-2z" fill="currentColor" stroke="none"></path>
+</svg>`;
+const STRUCTURE_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M4.5 15.5h15"></path>
+  <path d="M6.5 15.5V9.2"></path>
+  <path d="M17.5 15.5V9.2"></path>
+  <path d="M5.5 9.2h13"></path>
+  <path d="M7.3 9.2l2.5-2.7h4.4l2.5 2.7"></path>
+  <path d="M8.2 12.4h7.6"></path>
+</svg>`;
+const DELETE_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 48 48" aria-hidden="true">
+  <line x1="9" y1="12" x2="39" y2="12"></line>
+  <polyline points="17 12 20 8 28 8 31 12"></polyline>
+  <polyline points="36 16 34.222 40 13.778 40 12 16"></polyline>
+  <line x1="24" y1="18" x2="24" y2="32"></line>
+  <line x1="30" y1="18" x2="30" y2="32"></line>
+  <line x1="18" y1="18" x2="18" y2="32"></line>
+</svg>`;
+const DIFFERENCE_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="6" y="9" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 3"></rect>
+  <path d="M19 15v-8H11" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"></path>
+</svg>`;
+const SPACE_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M5.3 8.9L14.7 8.9L14.7 18.3L5.3 18.3L5.3 8.9" stroke-dasharray="2 3"></path>
+  <path d="M5.3 8.9L9.7 5.4L19.1 5.4L14.7 8.9" stroke-dasharray="2 3"></path>
+  <path d="M14.7 8.9L14.7 18.3L19.1 14.8L19.1 5.4" stroke-dasharray="2 3"></path>
+</svg>`;
+const EXCAVATION_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M9 7.2l8 4.8-8 4.8z" fill="currentColor" stroke="none"></path>
+</svg>`;
+const STYLE_ICON_SVG = `
+<svg class="ui-icon-glyph" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M6 10V6h4"></path>
+  <path d="M14 6h4v4"></path>
+  <path d="M18 14v4h-4"></path>
+  <path d="M10 18H6v-4"></path>
+</svg>`;
+const DECORATION_ICON_SVG = `
+<svg class="ui-icon-glyph ui-icon-glyph-filled" viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="1" y="1" width="22" height="22" rx="4.2" fill="none" stroke="currentColor" stroke-width="0.2"></rect>
+  <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke="currentColor" stroke-width="0.2"></path>
+  <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="0.2" fill="none"></circle>
+  <circle cx="12" cy="12" r="4.8" stroke="currentColor" stroke-width="0.2" fill="none"></circle>
+  <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke="currentColor" stroke-width="0.2"></path>
+</svg>`;
+const CREAT_ICON_SVG = `
+<svg class="ui-icon-glyph ui-icon-glyph-filled" viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="1" y="1" width="22" height="22" rx="4.2" fill="#2f9ae6" stroke="#8ff0c2" stroke-width="0.2"></rect>
+  <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke="#8ff0c2" stroke-width="0.2"></path>
+  <circle cx="12" cy="12" r="8.5" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+  <circle cx="12" cy="12" r="4.8" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+  <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke="#8ff0c2" stroke-width="0.2"></path>
+</svg>`;
+
+const UI_BUTTON_META = {
+    see: {
+        label: '鑑賞モード',
+        icon: '🎦',
+        variant: 'icon',
+    },
+    edit: {
+        label: '編集モード',
+        icon: '🛠️',
+        variant: 'icon',
+    },
+    rail: {
+        label: 'レール編集',
+        icon: '🛤️',
+        variant: 'icon-square',
+    },
+    structure: {
+        label: '構造物',
+        svg: STRUCTURE_ICON_SVG,
+        variant: 'icon-square',
+    },
+    creat: {
+        label: 'クリエイトモード',
+        icon: '✨',
+        variant: 'icon',
+    },
+    rotation: {
+        label: '回転',
+        svg: ROTATION_ICON_SVG,
+        variant: 'icon-square',
+    },
+    rotation_rail: {
+        label: 'レール回転',
+        svg: ROTATION_ICON_SVG,
+        variant: 'icon-square',
+    },
+    move_point: {
+        label: 'ポイント移動',
+        svg: MOVE_POINT_ICON_SVG,
+        variant: 'icon-square',
+    },
+    move: {
+        label: '移動',
+        svg: MOVE_POINT_ICON_SVG,
+        variant: 'icon-square',
+    },
+    add_point: {
+        label: 'ポイント追加',
+        svg: ADD_POINT_ICON_SVG,
+        variant: 'icon-square',
+    },
+    new: {
+        label: '新規追加',
+        svg: ADD_POINT_ICON_SVG,
+        variant: 'icon-square',
+    },
+    copy: {
+        label: 'コピー',
+        svg: COPY_ICON_SVG,
+        variant: 'icon-square',
+    },
+    delete: {
+        label: '削除',
+        svg: DELETE_ICON_SVG,
+        variant: 'icon-square',
+    },
+    Difference: {
+        label: 'Difference',
+        svg: DIFFERENCE_ICON_SVG,
+        variant: 'icon-square',
+    },
+    space: {
+        label: 'Difference Space',
+        svg: SPACE_ICON_SVG,
+        variant: 'icon-square',
+    },
+    excavation: {
+        label: 'Excavation',
+        svg: EXCAVATION_ICON_SVG,
+        variant: 'icon-square',
+    },
+    style: {
+        label: 'スタイル',
+        svg: STYLE_ICON_SVG,
+        variant: 'icon-square',
+    },
+    search: {
+        label: '検索',
+        svg: SEARCH_ICON_SVG,
+        variant: 'icon-square',
+    },
+    group: {
+        label: 'グループ',
+        svg: GROUP_ICON_SVG,
+        variant: 'icon-square',
+    },
+    view: {
+        label: '表示',
+        svg: VIEW_ICON_SVG,
+        variant: 'icon-square',
+    },
+    construction: {
+        label: '構造生成',
+        svg: CONSTRUCTION_ICON_SVG,
+        variant: 'icon-square',
+    },
+    'construction/2': {
+        label: '構造生成',
+        svg: CONSTRUCTION_ICON_SVG,
+        variant: 'icon-square',
+    },
+    decoration: {
+        label: 'デコレーション',
+        svg: DECORATION_ICON_SVG,
+        variant: 'icon-square',
+    },
+};
 
 function compactVisibleButtons() {
     const buttons = Array.from(UiGroup.querySelectorAll('button'));
-    let row = 0;
+    let rootColumn = 0;
+    let editChildColumn = 0;
+    let row = 1;
+    console.log('compactVisibleButtons', buttons.map(b => ({ id: b.id, hidden: b.hidden })));
     buttons.forEach((b) => {
         if (b.hidden) {
             return;
         }
-        b.style.top = ((30 * row) + 10) + 'px';
+        if (b.dataset.uiRootLevel === '1') {
+             console.log(UI_CHILDREN_TOP_OFFSET);
+            b.style.top = UI_BUTTON_TOP_OFFSET + 'px';
+            b.style.left = (UI_ROOT_BUTTON_LEFT_OFFSET + (UI_ROOT_BUTTON_COLUMN_GAP * rootColumn)) + 'px';
+            rootColumn += 1;
+            return;
+        }
+        if (b.dataset.uiParentId === 'edit') {
+             console.log(UI_CHILDREN_TOP_OFFSET);
+            b.style.top = UI_CHILDREN_TOP_OFFSET + 'px';
+            b.style.left = (UI_EDIT_CHILD_LEFT_OFFSET + (UI_EDIT_CHILD_COLUMN_GAP * editChildColumn)) + 'px';
+            editChildColumn += 1;
+            return;
+        }
+        b.style.top = 15+((UI_BUTTON_ROW_GAP * row) + UI_CHILDREN_TOP_OFFSET) + 'px';
         row += 1;
+        console.log('compacting', b.id, b.style.top);
     });
 }
 
 function paintUiSelection(uiIDs = [], selectedId = null) {
     UiGroup.querySelectorAll('button').forEach((b) => {
         b.style.backgroundColor = UI_COLOR_DEFAULT;
-        b.style.color = '';
+        b.style.color = b.classList.contains('ui-icon-button') ? UI_ICON_TEXT_DEFAULT : '';
     });
 
     UiGroup.querySelectorAll('button').forEach((b) => {
         if (uiIDs.includes(b.id)) {
             b.style.backgroundColor = UI_COLOR_ACTIVE;
-            b.style.color = UI_TEXT_ACTIVE;
+            b.style.color = b.classList.contains('ui-icon-button') ? UI_ICON_TEXT_ACTIVE : UI_TEXT_ACTIVE;
         }
     });
 
@@ -36,7 +300,7 @@ function paintUiSelection(uiIDs = [], selectedId = null) {
         const selected = document.getElementById(selectedId);
         if (selected) {
             selected.style.backgroundColor = UI_COLOR_SELECTED;
-            selected.style.color = UI_TEXT_ACTIVE;
+            selected.style.color = selected.classList.contains('ui-icon-button') ? UI_ICON_TEXT_ACTIVE : UI_TEXT_ACTIVE;
         }
     }
 }
@@ -50,6 +314,7 @@ function toggleProcessing(uiIDs,next_nest,selectedId = null){
         const next = next_nest.includes(b.id);
         if (!active) {
             b.hidden = true; // 非表示
+            b.style.display = 'none';
             if(UisToggle[b.id] === 'active'){
                 // console.log('ruuu')
                 UisToggle[b.id] = 'inactive'
@@ -59,6 +324,7 @@ function toggleProcessing(uiIDs,next_nest,selectedId = null){
 
         if (next){
             b.hidden = false; // 表示
+            b.style.display = '';
         }
     })
 
@@ -68,6 +334,7 @@ function toggleProcessing(uiIDs,next_nest,selectedId = null){
         const active = uiIDs.includes(b.id);
         if (active) {
             b.hidden = false; // 表示
+            b.style.display = '';
             if(UisToggle[b.id] === 'inactive'){
                 // console.log('runn')
                 UisToggle[b.id] = 'active'
@@ -162,7 +429,7 @@ function buildUiGroup(uiTree, uiGroup){
     const railRowIndex = orderedKeys.indexOf('rail')
     const creatRowIndex = orderedKeys.indexOf('creat')
     const railBaseLeft = Array.isArray(railPath) ? (railPath.length - 1) * 10 : 10
-    const creatBranchOffset = 80
+    const creatBranchOffset = 0//36
 
     if (!uiGroup) {
         return { allKeysMap, orderedKeys, renameTree: ReturnValue[2] }
@@ -176,19 +443,51 @@ function buildUiGroup(uiTree, uiGroup){
         const inCreatBranch = Array.isArray(creatPath)
           && Array.isArray(path)
           && creatPath.every((v, idx) => path[idx] === v)
+        const parentKey = Array.isArray(path) && path.length > 1
+          ? orderedKeys.find((candidate) => {
+              const candidatePath = deepth[candidate]
+              return Array.isArray(candidatePath)
+                && candidatePath.length === path.length - 1
+                && candidatePath.every((v, idx) => v === path[idx])
+            }) || ''
+          : ''
         btn.id = key
+        btn.dataset.uiParentId = parentKey
         const topRow = inCreatBranch && railRowIndex >= 0 && creatRowIndex >= 0
             ? railRowIndex + (i - creatRowIndex)
             : i
-        btn.style.top = ((30 * topRow) + 10) + 'px'
-        if (inCreatBranch) {
-            btn.style.left = (railBaseLeft + creatBranchOffset + (path.length - creatPath.length) * 10) + 'px'
+        if (path.length === 1) {
+            // btn.style.top = UI_BUTTON_TOP_OFFSET + 'px'
+            btn.style.left = (UI_ROOT_BUTTON_LEFT_OFFSET + (UI_ROOT_BUTTON_COLUMN_GAP * i)) + 'px'
+            btn.style.right = 'auto'
+        } else if (inCreatBranch) {
+            // btn.style.top = ( 20 + (UI_BUTTON_ROW_GAP * topRow) + UI_CHILDREN_TOP_OFFSET) + 'px'
+            btn.style.left = (creatBranchOffset + (path.length - 3) * 7) + 'px'
             btn.style.right = 'auto'
         } else {
-            btn.style.left = ((path.length - 1) * 10) + 'px'
+            // btn.style.top = ( 20 + (UI_BUTTON_ROW_GAP * topRow) + UI_CHILDREN_TOP_OFFSET) + 'px'
+            btn.style.left = ((path.length - 3) * 7) + 'px'
             btn.style.right = 'auto'
         }
-        btn.textContent = key
+        const meta = UI_BUTTON_META[key] || null
+        btn.setAttribute('type', 'button')
+        if (meta) {
+            if (meta.svg) {
+                btn.innerHTML = meta.svg
+            } else {
+                btn.textContent = meta.icon
+            }
+            btn.classList.add('ui-icon-button')
+            if (meta.variant === 'icon-square') {
+                btn.classList.add('ui-icon-button-square')
+            }
+            btn.setAttribute('aria-label', meta.label)
+            btn.title = meta.label
+            btn.dataset.uiVariant = meta.variant
+        } else {
+            btn.textContent = key
+            btn.setAttribute('aria-label', key)
+        }
         uiGroup.appendChild(btn)
     }
 
@@ -209,7 +508,9 @@ const uiTree = {
     'edit': {
         'rail': {
             'new': '',
-            'move': { 'x_z': '', 'y': '', 'rotation_rail': '' },
+            'move': { 'x_z': '', 'y': '', 
+                // 'rotation_rail': '' 
+            },
             'structure': {
                 'new': '',
                 'construction': {
@@ -267,11 +568,11 @@ const uiTree = {
                 'excavation': '',
             },
         },
-        'custom': {
-            'new': '',
-            'move': { 'x_z': '', 'y': '' },
-            'construct': '',
-        },
+        // 'custom': {
+        //     'new': '',
+        //     'move': { 'x_z': '', 'y': '' },
+        //     'construct': '',
+        // },
     },
 }
 
@@ -348,6 +649,10 @@ const uiTree = {
 //   }
 
 const UiGroup = document.getElementById('UiGroup');
+UI_BUTTON_META.creat.svg = CREAT_ICON_SVG
+UI_BUTTON_META.creat.variant = 'icon-square'
+UI_BUTTON_META.creat.iconClass = 'ui-icon-glyph-decoration'
+delete UI_BUTTON_META.creat.icon
 const buildResult = buildUiGroup(uiTree, UiGroup)
 const Allkeys = buildResult.allKeysMap
 const rename_uiTree = buildResult.renameTree

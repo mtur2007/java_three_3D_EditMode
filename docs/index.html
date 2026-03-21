@@ -204,7 +204,8 @@
     #show-instructions-btn {
       position: fixed;
       right: 12px;
-      top: 20px;
+      bottom: 20px;
+      top: auto;
       z-index: 10000;
       padding: 8px 12px;
       background: rgba(0,0,0,0.6);
@@ -550,6 +551,63 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  #save-buttons {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 0 !important;
+    justify-content: flex-start;
+    padding: 4px 10px 4px 120px;
+    border-top: 1px solid rgba(96, 103, 113, 0.72);
+    border-bottom: 1px solid rgba(96, 103, 113, 0.72);
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    background: rgba(22, 22, 24, 0.92);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    overflow: hidden;
+  }
+  #save-buttons .control-square-button {
+    min-width: auto;
+    height: 38px;
+    padding: 0 18px !important;
+    border: none;
+    border-right: 1px solid rgba(78, 82, 90, 0.9);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #f1f1f1;
+    font-size: 13px !important;
+    letter-spacing: 0.01em;
+  }
+  #save-buttons .control-square-button:last-child {
+    border-right: none;
+  }
+  #save-buttons .control-square-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  #save-buttons .control-square-button:disabled {
+    color: rgba(241, 241, 241, 0.38);
+    cursor: default;
+  }
+  #save-buttons #save-world-data {
+    margin-left: auto;
+    border-right: none;
+    border-left: 1px solid rgba(78, 82, 90, 0.9);
+    border-radius: 8px;
+    background: rgba(48, 48, 52, 0.96);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    color: #fbfbfb;
+    font-weight: 600;
+  }
+  #save-buttons #save-world-data:hover {
+    background: rgba(66, 66, 72, 0.98);
+  }
 
   /* ホバー（マウスを乗せたとき）で暗くする */
   .control-button:hover {
@@ -640,22 +698,97 @@
   /* .circle-ctrl:active { cursor: grabbing; } */
   #UiGroup {
     position: relative; /* ここを基準にする */
-    width: 10%;
+    /* width: 10%;
     height: 590px;
     border: 1px solid rgba(195, 219, 255, 0.25);
     border-radius: 10px;
     background: rgba(8, 16, 28, 0.45);
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px); */
   }
   #UiGroup button {
     position: absolute; /* top が効くようにする */
     left: 0;
     width: 72px;
-    height: 28px;
+    height: 30px;
     border-radius: 8px;
     border: 1px solid rgba(180, 208, 255, 0.32);
     background: rgba(10, 20, 36, 0.85);
     color: #e6f1ff;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+    cursor: pointer;
+    transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  }
+  #UiGroup button:hover {
+    transform: translateX(2px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+  }
+  #UiGroup button.ui-icon-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 20px;
+    line-height: 1;
+    border-color: rgba(150, 208, 255, 0.44);
+    background:
+      radial-gradient(circle at 30% 30%, rgba(118, 188, 255, 0.34), rgba(12, 23, 40, 0.92) 68%),
+      rgba(10, 20, 36, 0.9);
+    box-shadow:
+      0 12px 22px rgba(0, 0, 0, 0.34),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  #UiGroup button.ui-icon-button:hover {
+    transform: translateX(0) scale(1.05);
+    box-shadow:
+      0 14px 26px rgba(0, 0, 0, 0.38),
+      0 0 0 4px rgba(86, 152, 255, 0.12);
+  }
+  #UiGroup button.ui-icon-button-square {
+    width: 42px;
+    height: 42px;
+    border-radius: 4px;
+    background:
+      linear-gradient(180deg, rgba(58, 58, 58, 0.98), rgba(44, 44, 44, 0.98)),
+      rgba(42, 42, 42, 0.98);
+    border-color: rgba(118, 118, 118, 0.48);
+    color: #f3f3f3;
+    box-shadow:
+      0 8px 14px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+  }
+  #UiGroup button.ui-icon-button-square:hover {
+    transform: translateX(0) translateY(-1px);
+    box-shadow:
+      0 10px 18px rgba(0, 0, 0, 0.34),
+      0 0 0 2px rgba(196, 196, 196, 0.08);
+  }
+  #UiGroup button.ui-icon-button:focus-visible {
+    outline: 2px solid rgba(138, 196, 255, 0.88);
+    outline-offset: 3px;
+  }
+  #UiGroup .ui-icon-glyph {
+    width: 24px;
+    height: 24px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.35;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: none;
+  }
+  #UiGroup .ui-icon-glyph-filled {
+    stroke: none;
+  }
+  #UiGroup button.ui-icon-glyph-decoration .ui-icon-glyph {
+    width: 28px;
+    height: 28px;
+  }
+  #UiGroup .ui-icon-glyph-accent {
+    color: currentColor;
   }
   #frontViewButtons {
     display: flex;
@@ -683,6 +816,28 @@
     color: #ebf5ff;
     box-shadow: 0 6px 14px rgba(0,0,0,0.35);
     cursor: pointer;
+  }
+  #create-mode-utility-buttons {
+    position: fixed;
+    top: 70px;
+    left: 20px;
+    right: 20px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: flex-start;
+    pointer-events: none;
+  }
+  body.creat-mode-ui-active #create-mode-utility-buttons {
+    justify-content: flex-end;
+  }
+  #create-mode-utility-buttons > button {
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    pointer-events: auto;
   }
   #instructions-panel,
   #rotation-panel {
@@ -1323,7 +1478,8 @@
     }
     #show-instructions-btn {
       right: 10px;
-      top: 12px;
+      bottom: 12px;
+      top: auto;
     }
     .log-control-square-button {
       width: min(88vw, 640px);
@@ -1376,9 +1532,9 @@
               <button id="controller-area" class="circle-ctrl-area" style="left: 160px; bottom: 60px; width: 80px; height: 80px"></button>
               <button id="controller" class="circle-ctrl" style="left: 160px; bottom: 110px; width: 30px; height: 30px"></button>
 
-              <button id="log" class="control-button" style="right: 20px; top: 40px;">📤</button>
+              <button id="log" class="control-button" style="right: 20px; top: 40px; display: none;">📤</button>
 
-              <div id="UiGroup" style="position: fixed; top: 140px; left: 20px; z-index: 100;">
+              <div id="UiGroup" style="position: fixed; top: 0px; left: 20px; z-index: 100;">
                 <button id = 'see' style = 'top: 10px;' > 🎦 </button>
                 <button id = 'edit' style = 'top: 40px;' > 🛠️ </button>
                 <button id = 'rail' style = 'top: 70px; left:10px;' > 🛤️ </button>
@@ -1397,23 +1553,17 @@
 
               <div id="frontViewButtons" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 100;"></div>
 
-              <button id="toggle-daynight" style="position: absolute; top: 70px; left: 20px; z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
-
-              <div id="save-buttons" style="position: absolute; left: 20px; top: 20px; display: flex; flex-wrap: nowrap; gap: 8px; z-index: 10;">
-                <button id="undo-action" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);" title="元に戻す (Ctrl/Cmd+Z)" disabled>↩︎</button>
-                <button id="redo-action" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);" title="やり直し (Ctrl/Cmd+Shift+Z)" disabled>↪︎</button>
-                <button id="save-track-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">軌道保存</button>
-                <button id="save-structure-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ピン保存</button>
-                <button id="save-structure-group-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">グループ保存</button>
-                <button id="save-create-mode-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">モード保存</button>
-                <button id="save-world-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">ワールド保存</button>
-                <button id="load-map-data" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ読込</button>
-                <button id="load-map-data-append" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">マップ追加読込</button>
-                <button id="load-map-data-append-group" class="control-square-button" style="padding: 10px; font-size: 14px; backdrop-filter: blur(4px);">グループ追加読込</button>
-                <input id="load-map-data-input" type="file" accept=".msgpack,.mpk,.json,application/x-msgpack,application/json,application/octet-stream,*/*" style="display: none;" />
+              <div id="create-mode-utility-buttons">
+                <button id="toggle-daynight" style="z-index: 10; padding: 10px 15px; font-size: 16px; border-radius: 8px;">🌙 夜にする</button>
+                <button id="toggle-train-panel" class="control-square-button" style="z-index: 10; padding: 10px 12px; font-size: 18px; backdrop-filter: blur(4px);" title="列車設定">🚆</button>
+                <button id="toggle-ground-opacity" class="control-square-button" style="z-index: 10; padding: 10px 12px; font-size: 14px; backdrop-filter: blur(4px);">ground透過</button>
               </div>
-              <button id="toggle-train-panel" class="control-square-button" style="position: absolute; left: 158px; top: 70px; z-index: 10; padding: 10px 12px; font-size: 18px; backdrop-filter: blur(4px);" title="列車設定">🚆</button>
-              <button id="toggle-ground-opacity" class="control-square-button" style="position: absolute; left: 214px; top: 70px; z-index: 10; padding: 10px 12px; font-size: 14px; backdrop-filter: blur(4px);">ground透過</button>
+
+              <div id="save-buttons" style="z-index: 10;">
+                <button id="undo-action" class="control-square-button" title="元に戻す (Ctrl/Cmd+Z)" disabled>↩︎</button>
+                <button id="redo-action" class="control-square-button" title="やり直し (Ctrl/Cmd+Shift+Z)" disabled>↪︎</button>
+                <button id="save-world-data" class="control-square-button">ワールド保存</button>
+              </div>
               <div id="map-load-status" aria-live="polite">map_data: 未実行</div>
 
               <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 420px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>

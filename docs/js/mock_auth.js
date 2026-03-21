@@ -101,9 +101,7 @@ function clearDemoSession() {
     authChip.dataset.state = signedIn ? "signed-in" : "guest";
     authToggleBtn.textContent = signedIn ? "ログアウト" : "ログイン";
     if (editAuthNote) {
-      editAuthNote.textContent = signedIn
-        ? `${session.displayName} としてログイン中です。このブラウザ内だけで状態を保持しています。`
-        : "未ログインです。編集ページの開始処理はデモログイン後に有効になります。";
+      editAuthNote.textContent = "";
     }
     updateProtectedTargets();
   }

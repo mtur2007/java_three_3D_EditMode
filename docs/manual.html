@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mouse_demo Edit Manual</title>
+  <style>
+    :root {
+      --bg: #0d1524;
+      --bg-soft: #111d31;
+      --panel: rgba(15, 27, 46, 0.88);
+      --panel-strong: rgba(21, 38, 63, 0.96);
+      --line: rgba(152, 186, 235, 0.18);
+      --text: #e7f0ff;
+      --muted: #9eb4d4;
+      --accent: #74e1bd;
+      --accent-strong: #53c9f5;
+      --warn: #ffd57a;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(73, 130, 216, 0.2), transparent 28%),
+        linear-gradient(180deg, #0d1524, #09111d 68%);
+      line-height: 1.7;
+    }
+    a {
+      color: #9dd8ff;
+    }
+    .page {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 80px;
+    }
+    .hero {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(20, 35, 58, 0.96), rgba(12, 23, 39, 0.92));
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    }
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 5vw, 44px);
+      line-height: 1.15;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 860px;
+      color: var(--muted);
+    }
+    .hero-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .hero-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      text-decoration: none;
+      border: 1px solid rgba(141, 187, 245, 0.28);
+      background: rgba(20, 37, 61, 0.84);
+    }
+    .section {
+      margin-top: 28px;
+      padding: 24px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.18);
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+    }
+    .section p,
+    .section li {
+      color: var(--muted);
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .pill {
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(141, 187, 245, 0.22);
+      background: rgba(12, 22, 37, 0.86);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .tree {
+      display: grid;
+      gap: 18px;
+      margin-top: 16px;
+    }
+    .card {
+      padding: 18px;
+      border-radius: 16px;
+      background: var(--panel-strong);
+      border: 1px solid rgba(141, 187, 245, 0.14);
+    }
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: var(--text);
+    }
+    .heading-with-icon {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .manual-icon-button {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(48, 48, 52, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 18px rgba(0, 0, 0, 0.24);
+      color: #f3f3f3;
+      flex: 0 0 auto;
+    }
+    .manual-icon-button svg {
+      width: 28px;
+      height: 28px;
+      stroke: currentColor;
+      stroke-width: 1.5;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .manual-subicon-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 10px 0 4px;
+    }
+    .manual-subicon-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(12, 22, 37, 0.86);
+      border: 1px solid rgba(141, 187, 245, 0.18);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .manual-subicon-glyph {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 14px;
+      line-height: 1;
+    }
+    .manual-subicon-glyph svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.45;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .manual-action-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 10px 0 6px;
+    }
+    .manual-action-grid.tight {
+      margin-top: 6px;
+    }
+    .panel-preview {
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(244, 248, 255, 0.94);
+      color: #213249;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+      border: 1px solid rgba(170, 200, 250, 0.3);
+    }
+    .panel-preview h5 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #28466f;
+    }
+    .panel-preview .preview-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .panel-preview .preview-field {
+      display: grid;
+      gap: 4px;
+      font-size: 11px;
+      color: #34506f;
+    }
+    .panel-preview .preview-field input,
+    .panel-preview .preview-field select,
+    .panel-preview .preview-btn,
+    .panel-preview .preview-chip {
+      border-radius: 8px;
+      border: 1px solid #c7d8ee;
+      background: #f9fbff;
+      color: #22364f;
+      min-height: 34px;
+      padding: 6px 8px;
+      font-size: 11px;
+    }
+    .panel-preview .preview-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #2a84ff, #246fd9);
+      color: #fff;
+      border-color: rgba(160, 194, 252, 0.45);
+      font-weight: 700;
+    }
+    .panel-preview .preview-btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .panel-preview .preview-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .panel-preview .preview-chip.is-active {
+      background: #eaf2ff;
+      border-color: #8ebeff;
+      color: #1f5aa6;
+      font-weight: 700;
+    }
+    .panel-preview .preview-card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .panel-preview .preview-card {
+      border-radius: 10px;
+      border: 1px solid #d8e4f4;
+      background: #f7fbff;
+      padding: 8px;
+      text-align: center;
+      font-size: 10px;
+      color: #385372;
+    }
+    .panel-preview .preview-card strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #233955;
+    }
+    .panel-preview .preview-status {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(14,20,30,0.78);
+      color: #eef4ff;
+      border: 1px solid rgba(150,180,230,0.3);
+      font-size: 10px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .manual-real-panel {
+      margin-top: 12px;
+      width: 100%;
+      padding: 12px;
+      background: rgba(255,255,255,0.92);
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+      border: 1px solid rgba(170, 200, 250, 0.3);
+      color: #1a2533;
+    }
+    .manual-real-panel .panel-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .manual-real-panel .panel-grid-1 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+    .manual-real-panel .panel-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .manual-real-panel .panel-field {
+      font-size: 11px;
+      color: #2b3f57;
+    }
+    .manual-real-panel input,
+    .manual-real-panel select,
+    .manual-real-panel button {
+      font-size: 11px;
+      border-radius: 8px;
+      border: 1px solid rgba(153, 183, 231, 0.65);
+      background: #f6faff;
+      color: #203149;
+      padding: 6px 8px;
+      box-sizing: border-box;
+    }
+    .manual-real-panel .panel-primary {
+      width: 100%;
+      border: 1px solid rgba(160, 194, 252, 0.45);
+      background: linear-gradient(135deg, #2a84ff, #246fd9);
+      color: #fff;
+      cursor: default;
+      margin-top: 8px;
+    }
+    .manual-real-panel .panel-muted-status {
+      margin: 8px 0 0;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #4a5f78;
+    }
+    .manual-real-panel .panel-selection-info {
+      margin-top: 8px;
+      max-height: 180px;
+      overflow: auto;
+      padding: 6px;
+      border-radius: 6px;
+      background: rgba(14,20,30,0.78);
+      color: #eef4ff;
+      border: 1px solid rgba(150,180,230,0.3);
+      font-size: 10px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .manual-real-panel .construction-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .manual-real-panel .construction-card,
+    .manual-real-panel .rail-construction-card {
+      appearance: none;
+      border: 1px solid rgba(90, 120, 170, 0.35);
+      border-radius: 10px;
+      background: #f9fbff;
+      padding: 6px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: center;
+    }
+    .manual-real-panel .construction-card.is-selected,
+    .manual-real-panel .rail-construction-card.is-selected {
+      border-color: #2f74e2;
+      box-shadow: 0 0 0 2px rgba(47, 116, 226, 0.2) inset;
+      background: #eef5ff;
+    }
+    .manual-real-panel .construction-card img {
+      width: 100%;
+      height: 56px;
+      object-fit: contain;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #f2f7ff, #f8fbff);
+      border: 1px solid rgba(130, 160, 210, 0.25);
+    }
+    .manual-real-panel .construction-card span {
+      font-size: 10px;
+      line-height: 1.2;
+      color: #2c405a;
+    }
+    .manual-real-panel .rail-construction-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .manual-real-panel .rail-construction-card img {
+      width: 100%;
+      height: 44px;
+      object-fit: contain;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #f2f7ff, #f8fbff);
+      border: 1px solid rgba(130, 160, 210, 0.25);
+    }
+    .manual-real-panel .rail-construction-card span {
+      font-size: 9px;
+      line-height: 1.2;
+      color: #2c405a;
+    }
+    .manual-real-panel .group-mode-row,
+    .manual-real-panel .difference-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .manual-real-panel .mini-button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .manual-demo-toggle {
+      margin-top: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(160, 194, 252, 0.45);
+      background: linear-gradient(135deg, #2a84ff, #246fd9);
+      color: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .manual-demo-area {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(141, 187, 245, 0.18);
+      background: rgba(8, 17, 29, 0.62);
+    }
+    .manual-demo-area[hidden] {
+      display: none;
+    }
+    .manual-demo-caption {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: #c3d5ee;
+    }
+    .manual-demo-controls {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .manual-demo-controls label {
+      display: grid;
+      gap: 4px;
+      font-size: 11px;
+      color: #c3d5ee;
+    }
+    .manual-demo-controls input,
+    .manual-demo-controls button {
+      min-height: 34px;
+      border-radius: 8px;
+      border: 1px solid rgba(122, 156, 205, 0.3);
+      background: rgba(10, 19, 31, 0.92);
+      color: #eef4ff;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .manual-demo-controls button {
+      align-self: end;
+      background: linear-gradient(135deg, #2a84ff, #246fd9);
+      border-color: rgba(160, 194, 252, 0.45);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .manual-demo-axis-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
+      gap: 6px;
+      align-items: end;
+    }
+    .manual-demo-axis-tool {
+      width: 34px;
+      min-width: 34px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.92);
+      color: #2c405a;
+    }
+    .manual-demo-axis-tool.is-active {
+      background: linear-gradient(135deg, #20a981, #17886a);
+      border-color: rgba(143, 240, 194, 0.5);
+    }
+    .manual-demo-axis-tool.is-locked {
+      background: linear-gradient(135deg, #7b8ca6, #5b6980);
+      border-color: rgba(220, 232, 248, 0.3);
+    }
+    .manual-demo-ref-note {
+      margin: 4px 0 0;
+      font-size: 10px;
+      color: #9fb7d4;
+    }
+    .manual-demo-axis-tool svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .manual-demo-help {
+      margin: 8px 0 0;
+      font-size: 11px;
+      color: #9fb7d4;
+    }
+    .manual-demo-canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(10, 19, 31, 0.96), rgba(18, 31, 49, 0.96));
+      border: 1px solid rgba(122, 156, 205, 0.24);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+    .card h4 {
+      margin: 16px 0 8px;
+      font-size: 15px;
+      color: var(--accent);
+    }
+    .path {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(116, 225, 189, 0.1);
+      color: var(--accent);
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .note {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 213, 122, 0.08);
+      border: 1px solid rgba(255, 213, 122, 0.18);
+      color: #ffe7b0;
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      align-items: start;
+    }
+    .grid.grid-wide {
+      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+    .small {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 20px, 1120px);
+        padding-top: 20px;
+      }
+      .section,
+      .hero {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <h1>Edit Mode Manual</h1>
+      <p>
+        このページは <code>edit</code> モードの全体像と、配下にある各ボタンの役割をまとめた説明書です。
+        実際の UI ツリーに合わせて、<code>rail</code>、<code>creat</code>、<code>Difference</code> の順で整理しています。
+      </p>
+      <div class="hero-links">
+        <a href="./index.html">アプリを開く</a>
+        <a href="./edit.html">edit.html を開く</a>
+      </div>
+      <div class="pill-row">
+        <div class="pill">root: see / edit</div>
+        <div class="pill">edit 配下: rail / creat</div>
+        <div class="pill">対象: ボタン操作の意味</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>最初に把握しておくこと</h2>
+      <ul>
+        <li><code>see</code> は鑑賞モード、<code>edit</code> は編集系モードの入口です。</li>
+        <li><code>edit</code> に入ると、編集対象が <code>rail</code> と <code>creat</code> に分かれます。</li>
+        <li><code>rail</code> は線路と線路由来の構造物向け、<code>creat</code> は自由配置のモデリング向けです。</li>
+        <li>ボタンを押すと配下が展開され、同時にそのモードに対応した内部処理が有効になります。</li>
+      </ul>
+      <div class="note">
+        画面上のアイコンは見た目が変わっていても、内部のモード名は <code>ui_toggle.js</code> のツリー名で動いています。
+        この manual もその名前を基準にしています。
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Edit モードの構造</h2>
+      <div class="tree">
+        <div class="card">
+          <span class="path">edit</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">🛠️</span>
+            <h3>edit</h3>
+          </div>
+          <p>編集モード全体の入口です。ここを押すと、配下の <code>rail</code> と <code>creat</code> が使える状態になります。</p>
+          <ul>
+            <li><strong>rail</strong>: 線路の制御点、線路移動、線路ベースの構造生成を行います。</li>
+            <li><strong>creat</strong>: 点を打って形状を作り、装飾や部材、Difference 系編集を行います。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>rail 系のボタン</h2>
+      <div class="grid grid-wide">
+        <div class="card">
+          <span class="path">edit &gt; rail</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">🛤️</span>
+            <h3>rail</h3>
+          </div>
+          <p>線路編集モードです。線路制御点を対象にした追加・移動・構造生成が有効になります。</p>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; rail &gt; new</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 4.5h5"></path>
+                <path d="M8.5 2v5"></path>
+                <path d="M9.5 8.5h8l0 8-8 0z"></path>
+                <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+                <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+              </svg>
+            </span>
+            <h3>new</h3>
+          </div>
+          <p>線路の制御点を追加します。直線ドラフトや新しいレールの起点づくりに使います。</p>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; rail &gt; move</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3.8v16.4"></path>
+                <path d="M3.8 12h16.4"></path>
+                <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+                <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+                <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+                <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+                <rect x="10.5" y="10.5" width="3" height="3" fill="currentColor" stroke="none"></rect>
+              </svg>
+            </span>
+            <h3>move</h3>
+          </div>
+          <p>既存の線路制御点を移動するモードです。<br>線路の形状を変更できます。</p>
+          <div class="manual-subicon-row" aria-label="rail move sub icons">
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">⤮</span>
+              <span>x_z</span>
+            </div>
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">⇡</span>
+              <span>y</span>
+            </div>
+          </div>
+          <h4>x_z</h4>
+          <p>X/Z 平面で移動します。地面に沿った位置合わせ向けです。</p>
+          <h4>y</h4>
+          <p>Y 軸方向だけ動かします。高さだけを変えたいときに使います。</p>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; rail &gt; structure</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4.5 15.5h15"></path>
+                <path d="M6.5 15.5V9.2"></path>
+                <path d="M17.5 15.5V9.2"></path>
+                <path d="M5.5 9.2h13"></path>
+                <path d="M7.3 9.2l2.5-2.7h4.4l2.5 2.7"></path>
+                <path d="M8.2 12.4h7.6"></path>
+              </svg>
+            </span>
+            <h3>structure</h3>
+          </div>
+          <p>線路に関連する構造物を扱う枝です。配置ピンを打ってからカテゴリ生成します。</p>
+          <div class="manual-action-grid">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>new</span></div>
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <path d="M8 8h8v8H8z"></path>
+                  <path d="M6 6h2v2H6z" fill="currentColor" stroke="none"></path>
+                  <path d="M16 6h2v2h-2z" fill="currentColor" stroke="none"></path>
+                  <path d="M6 16h2v2H6z" fill="currentColor" stroke="none"></path>
+                  <path d="M16 16h2v2h-2z" fill="currentColor" stroke="none"></path>
+                </svg>
+              </span>
+              <span>construction</span>
+            </div>
+          </div>
+          <h4>new</h4>
+          <p>構造物配置用のピンを追加します。橋脚や壁などを生成する際の対象区間を設定するために使用します。</p>
+          <h4>construction</h4>
+          <p>対象線路のピンで区間を指定し、構造物カテゴリを選んで生成します。</p>
+          <div class="manual-action-grid tight">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🌉</span><span>bridge</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🏙️</span><span>elevated</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▥</span><span>wall</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>floor</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">#</span><span>rib_bridge</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>tunnel_rect</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◯</span><span>tunnel_circle</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▤</span><span>platform</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">≡</span><span>group_rail</span></div>
+          </div>
+          <ul>
+            <li><strong>bridge</strong>: 橋梁系の構造を生成します。</li>
+            <li><strong>elevated</strong>: 高架系の構造を生成します。</li>
+            <li><strong>wall</strong>: 壁状の構造を生成します。</li>
+            <li><strong>floor</strong>: 床面系の構造を生成します。</li>
+            <li><strong>pillar</strong>: 柱系の構造を生成します。</li>
+            <li><strong>rib_bridge</strong>: リブ付き橋梁系の構造を生成します。</li>
+            <li><strong>tunnel_rect</strong>: 矩形断面のトンネルを生成します。</li>
+            <li><strong>tunnel_circle</strong>: 円形断面のトンネルを生成します。</li>
+            <li><strong>platform</strong>: ホーム構造を生成します。</li>
+            <li><strong>group_rail</strong>: グループ扱いの線路構造生成に使います。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>creat 系のボタン</h2>
+      <div class="grid grid-wide">
+        <div class="card">
+          <span class="path">edit &gt; creat</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <rect x="1" y="1" width="22" height="22" rx="4.2" fill="#2f9ae6" stroke="#8ff0c2" stroke-width="0.2"></rect>
+                <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke="#8ff0c2" stroke-width="0.2"></path>
+                <circle cx="12" cy="12" r="8.5" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+                <circle cx="12" cy="12" r="4.8" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+                <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke="#8ff0c2" stroke-width="0.2"></path>
+              </svg>
+            </span>
+            <h3>creat</h3>
+          </div>
+          <p>creatモード・簡易モデリングツールの入り口です。<br>
+            これは点と点を結ぶ形で構造を作成する方式のツールで、<br>
+            駅や橋など鉄骨感のある表現を簡単に再現することができます。
+          </p>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; creat &gt; view</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5z"></path>
+                <circle cx="12" cy="12" r="2.4"></circle>
+              </svg>
+            </span>
+            <h3>view</h3>
+          </div>
+          <p>クリエイト対象の表示確認用です。通常表示に戻しながら、点やコピー対象の見え方を整理します。</p>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; creat &gt; decoration</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <rect x="1" y="1" width="22" height="22" rx="4.2"></rect>
+                <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke-width="0.2"></path>
+                <circle cx="12" cy="12" r="8.5" stroke-width="0.2"></circle>
+                <circle cx="12" cy="12" r="4.8" stroke-width="0.2"></circle>
+                <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke-width="0.2"></path>
+              </svg>
+            </span>
+            <h3>decoration</h3>
+          </div>
+          <p>モデリングツールの実際の作業をまとめた枝です。<br>
+            点追加、回転、移動、コピー、グループ化、スタイル変更、削除、部材生成が並びます。</p>
+          <div class="manual-action-grid">
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 4.5h5"></path>
+                  <path d="M8.5 2v5"></path>
+                  <path d="M9.5 8.5h8l0 8-8 0z"></path>
+                  <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+                  <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+                </svg>
+              </span>
+              <span>add_point</span>
+            </div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◫</span><span>template</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⌗</span><span>guide</span></div>
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="2.6"></circle>
+                  <path d="M4.7 9.2a8.3 8.3 0 0 1 13.5-2.4"></path>
+                  <path d="M19.3 14.8a8.3 8.3 0 0 1-13.5 2.4"></path>
+                </svg>
+              </span>
+              <span>rotation</span>
+            </div>
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 5v14"></path>
+                  <path d="M6 19h13"></path>
+                  <path d="M9.3 19a9.7 9.7 0 0 0-3.3-7.3"></path>
+                </svg>
+              </span>
+              <span>search</span>
+            </div>
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 3.8v16.4"></path>
+                  <path d="M3.8 12h16.4"></path>
+                  <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+                  <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+                  <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+                  <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+                </svg>
+              </span>
+              <span>move_point</span>
+            </div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⧉</span><span>copy</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∞</span><span>group</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◰</span><span>style</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🗑</span><span>delete</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>construction</span></div>
+          </div>
+          <h4>add_point</h4>
+          <p>新しい点を打って、装飾や部材の元になる点列を作ります。</p>
+          <h4>template</h4>
+          <p>正方形など、事前に用意された形状を基に点列を作成します。</p>
+          <h4>guide</h4>
+          <p>ガイド面や補助面を扱います。点を打つ向きや作業面を整えるための枝です。</p>
+          <div class="manual-action-grid tight">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∡</span><span>change_angle</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇄</span><span>miller</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⊞</span><span>miller_add</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◎</span><span>Influence</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↔</span><span>x_z_move</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↕</span><span>y_add</span></div>
+          </div>
+          <ul>
+            <li><strong>add</strong>: ガイド面を追加します。</li>
+            <li><strong>change_angle</strong>: ガイド面の角度を調整します。</li>
+            <li><strong>miller</strong>: ミラー系の補助処理です。</li>
+            <li><strong>miller_add</strong>: ミラー補助を追加します。</li>
+            <li><strong>Influence</strong>: 影響面ベースの補助処理です。</li>
+            <li><strong>x_z_move</strong>: ガイド面を X/Z 方向へ動かします。</li>
+            <li><strong>y_add</strong>: ガイド面の高さ方向追加に使います。</li>
+          </ul>
+          <h4>rotation</h4>
+          <p>選択点群をまとめて回転します。回転パネルと連動する回転操作です。</p>
+          <h4>search</h4>
+          <p>点同士の距離や角度を測定します。</p>
+          <h4>move_point</h4>
+          <p>既存の点を直接移動します。</p>
+          <div class="manual-action-grid tight">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤮</span><span>x_z_sf</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇡</span><span>y_sf</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
+          </div>
+          <ul>
+            <li><strong>x_z_sf</strong>: X/Z 平面移動。</li>
+            <li><strong>y_sf</strong>: Y 軸移動。</li>
+            <li><strong>rotation</strong>: 指定した方向に移動。</li>
+            <li><strong>scale</strong>: 点列や対象の拡縮調整。</li>
+          </ul>
+          <h4>copy</h4>
+          <p>選択対象を複製します。</p>
+          <h4>group</h4>
+          <p>複数の構造物をグループ化します。</p>
+          <h4>style</h4>
+          <p>鉄骨などの太さなど、構造物のスタイルを変更します。</p>
+          <h4>delete</h4>
+          <p>選択対象を削除します。</p>
+          <h4>construction</h4>
+          <p>点列から部材を生成します。</p>
+          <div class="manual-action-grid tight">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>rite</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
+          </div>
+          <ul>
+            <li><strong>pillar</strong>: 柱系部材。<code>Round_bar</code> / <code>H_beam</code> / <code>T_beam</code> / <code>L_beam</code> を選べます。</li>
+            <li><strong>rite</strong>: 板・ライト系。現在のツリーでは <code>tubular</code> が使えます。</li>
+            <li><strong>tube</strong>: チューブ系部材。<code>normal</code> が使えます。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="path">edit &gt; creat &gt; Difference</span>
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <rect x="6" y="9" width="11" height="11" stroke-dasharray="2 3"></rect>
+                <path d="M19 15v-8H11" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"></path>
+              </svg>
+            </span>
+            <h3>Difference [demo] </h3>
+          </div>
+          <p>都市モデルに対し、特定の空間でくり抜きを行うモードです。<br>地下鉄、通路などの空洞部分の表現を可能にします。</p>
+          <div class="manual-action-grid">
+            <div class="manual-subicon-chip">
+              <span class="manual-subicon-glyph">
+                <svg viewBox="0 0 24 24">
+                  <path d="M5.3 8.9L14.7 8.9L14.7 18.3L5.3 18.3L5.3 8.9" stroke-dasharray="2 3"></path>
+                  <path d="M5.3 8.9L9.7 5.4L19.1 5.4L14.7 8.9" stroke-dasharray="2 3"></path>
+                  <path d="M14.7 8.9L14.7 18.3L19.1 14.8L19.1 5.4" stroke-dasharray="2 3"></path>
+                </svg>
+              </span>
+              <span>space</span>
+            </div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▶</span><span>excavation</span></div>
+          </div>
+          <h4>space</h4>
+          <p>くり抜く空間の作成・編集用の枝です。</p>
+          <div class="manual-action-grid tight">
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">✥</span><span>move</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
+            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">／</span><span>line</span></div>
+          </div>
+          <ul>
+            <li><strong>add</strong>: 何もない場所をクリック/タップで空間作成。<br>add: スペースの面をクリック/タップで拡張します。</li>
+            <li><strong>move</strong>: スペースの 面,辺,頂点 を移動します。</li>
+            <li><strong>rotation</strong>: スペースの 面,辺,頂点 回転します。</li>
+            <li><strong>scale</strong>: スペースを拡大縮小します。</li>
+            <li><strong>tube</strong>: チューブ系の空間作成に使います。</li>
+            <li><strong>line</strong>: 線路に沿った空間作成に使います。</li>
+          </ul>
+          <h4>excavation</h4>
+          <p>差分処理を実行する入口です。<br>作った空間を使って対象をくり抜く用途です。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>関連するパネルと補助 UI</h2>
+      <div class="grid grid-wide">
+        <div class="card">
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">⟳</span>
+            <h3>rotation panel</h3>
+          </div>
+          <p>回転ボタンと連動する補助パネルです。X/Y/Z の角度入力、軸参照、ロックなどを使って数値ベースで回転できます。</p>
+          <div class="manual-real-panel">
+            <div class="panel-title">Rotation</div>
+            <div class="mini-button-row">
+              <button type="button">World</button>
+              <button type="button">Grid</button>
+            </div>
+            <div class="panel-grid-1">
+              <label class="panel-field">X (deg)<input type="text" value="0"></label>
+              <label class="panel-field">Y (deg)<input type="text" value="0"></label>
+              <label class="panel-field">Y2 (deg)<input type="text" value="0"></label>
+            </div>
+            <button class="panel-primary" type="button">適用</button>
+            <div class="panel-selection-info">選択点: 2点以上で情報を表示</div>
+          </div>
+          <button class="manual-demo-toggle" type="button" data-demo-target="rotation-demo">試す</button>
+          <div class="manual-demo-area" id="rotation-demo" hidden>
+            <p class="manual-demo-caption">描画領域テスト: 四角を表示</p>
+            <canvas class="manual-demo-canvas" width="560" height="240"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3.8v16.4"></path>
+                <path d="M3.8 12h16.4"></path>
+                <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+                <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+                <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+                <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+                <rect x="10.5" y="10.5" width="3" height="3" fill="currentColor" stroke="none"></rect>
+              </svg>
+            </span>
+            <h3>move_point panel</h3>
+          </div>
+          <p><code>move_point</code> 系で使う補助パネルです。座標系切替、コピー対象、軸ごとの数値入力と参照・固定操作をまとめています。</p>
+          <div class="manual-real-panel" data-move-demo-panel>
+            <div class="panel-title">Move Point / Coordinate</div>
+            <div class="mini-button-row">
+              <button type="button">World</button>
+              <button type="button">Grid</button>
+            </div>
+            <div class="mini-button-row">
+              <button type="button">Individual</button>
+              <button type="button">Group</button>
+            </div>
+            <div class="manual-demo-controls">
+              <div class="manual-demo-axis-row">
+                <label class="panel-field">X<input type="text" inputmode="decimal" value="0" data-move-demo-input="x"></label>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-pick="x" title="X参照">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M14 4l6 6"></path>
+                    <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                  </svg>
+                </button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-lock="x" title="X固定">🔓</button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-unlink="x" title="X解除">x</button>
+              </div>
+              <div class="manual-demo-axis-row">
+                <label class="panel-field">Y<input type="text" inputmode="decimal" value="0" data-move-demo-input="y"></label>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-pick="y" title="Y参照">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M14 4l6 6"></path>
+                    <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                  </svg>
+                </button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-lock="y" title="Y固定">🔓</button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-unlink="y" title="Y解除">x</button>
+              </div>
+              <div class="manual-demo-axis-row">
+                <label class="panel-field">Y2<input type="text" inputmode="decimal" value="0" data-move-demo-input="z"></label>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-pick="z" title="Y2参照">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M14 4l6 6"></path>
+                    <path d="M7 17L3 21l4-1 9-9-3-3-6 6z"></path>
+                  </svg>
+                </button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-lock="z" title="Y2固定">🔓</button>
+                <button class="manual-demo-axis-tool" type="button" data-move-demo-unlink="z" title="Y2解除">x</button>
+              </div>
+            </div>
+            <button class="panel-primary" type="button" data-move-demo-apply>適用</button>
+            <div class="panel-selection-info" data-move-demo-ref-note>参照: なし</div>
+          </div>
+          <button class="manual-demo-toggle" type="button" data-demo-target="move-point-demo">試す</button>
+          <div class="manual-demo-area" id="move-point-demo" hidden>
+            <p class="manual-demo-caption">move_point 試験: 斜めグリッド上の赤い四角をクリック / 入力で移動</p>
+            <canvas class="manual-demo-canvas" width="560" height="240"></canvas>
+            <p class="manual-demo-help" data-move-demo-help>軽量版です。main.js の move_point / guide plane の考え方に合わせています。クリックで四角を選択し、ドラッグで移動できます。入力欄の数値は選択中の四角に適用されます。</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">▣</span>
+            <h3>construction panel</h3>
+          </div>
+          <p><code>construction</code> 系のカテゴリ選択や生成ボタンを持つパネルです。選択中の点列や対象に対して部材を生成します。</p>
+          <div class="manual-real-panel" data-construction-demo-panel>
+            <div class="panel-title">Construction Category</div>
+            <div class="construction-grid">
+              <button class="construction-card is-selected" type="button" data-construction-demo-type="round"><img alt="丸鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Ccircle cx='60' cy='36' r='20' fill='%23a3b4cf' stroke='%235a6f95' stroke-width='6'/%3E%3C/svg%3E"><span>丸鋼</span></button>
+              <button class="construction-card" type="button" data-construction-demo-type="h_beam"><img alt="H形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='20' y='14' width='80' height='12' fill='%23859bb8'/%3E%3Crect x='53' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='20' y='46' width='80' height='12' fill='%23859bb8'/%3E%3C/svg%3E"><span>H形鋼</span></button>
+              <button class="construction-card" type="button" data-construction-demo-type="t_beam"><img alt="T形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='18' y='14' width='84' height='12' fill='%23859bb8'/%3E%3Crect x='53' y='26' width='14' height='32' fill='%23859bb8'/%3E%3C/svg%3E"><span>T形鋼</span></button>
+              <button class="construction-card" type="button" data-construction-demo-type="l_beam"><img alt="L形鋼" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='14' width='14' height='44' fill='%23859bb8'/%3E%3Crect x='22' y='46' width='76' height='12' fill='%23859bb8'/%3E%3C/svg%3E"><span>L形鋼</span></button>
+              <button class="construction-card" type="button" data-construction-demo-type="square"><img alt="角柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='18' width='76' height='36' rx='4' fill='%23859bb8' stroke='%235a6f95' stroke-width='4'/%3E%3C/svg%3E"><span>角柱</span></button>
+              <button class="construction-card" type="button" data-construction-demo-type="tube"><img alt="tube" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M8 44 C26 18, 44 58, 62 32 C78 10, 96 48, 112 24' fill='none' stroke='%2388a4c2' stroke-width='12' stroke-linecap='round'/%3E%3Cpath d='M8 44 C26 18, 44 58, 62 32 C78 10, 96 48, 112 24' fill='none' stroke='%23dfeaf7' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E"><span>tube</span></button>
+            </div>
+            <button class="panel-primary" type="button" data-construction-demo-generate>選択カテゴリで生成</button>
+            <p class="panel-muted-status" data-construction-demo-status>カテゴリを選択し、点を2つ以上選択して生成します。</p>
+          </div>
+          <button class="manual-demo-toggle" type="button" data-demo-target="construction-demo">試す</button>
+          <div class="manual-demo-area" id="construction-demo" hidden>
+            <p class="manual-demo-caption">construction 試験: 点を選択してカテゴリ部材を生成</p>
+            <canvas class="manual-demo-canvas" width="560" height="240"></canvas>
+            <p class="manual-demo-help">点と点を結ぶ形で構造を作成し、駅の鉄骨感などを再現できます。</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">∞</span>
+            <h3>group mode panel</h3>
+          </div>
+          <p><code>group</code> から使う補助 UI です。既存グループ選択、グループ化、追加、等間隔配置を行います。</p>
+          <div class="manual-real-panel">
+            <div class="panel-title">Group Mode</div>
+            <div class="group-mode-row">
+              <label class="panel-field">路線<select><option>WORLD_1</option></select></label>
+            </div>
+            <div class="group-mode-row">
+              <label class="panel-field">既存グループID<select><option>group_01</option></select></label>
+            </div>
+            <button class="panel-primary" type="button">グループ化</button>
+            <button class="panel-primary" type="button">選択グループに追加</button>
+            <button class="panel-primary" type="button">等間隔配置</button>
+            <p class="panel-muted-status">構造物をクリックして選択してください。</p>
+          </div>
+          <button class="manual-demo-toggle" type="button" data-demo-target="group-demo">試す</button>
+          <div class="manual-demo-area" id="group-demo" hidden>
+            <p class="manual-demo-caption">描画領域テスト: 四角を表示</p>
+            <canvas class="manual-demo-canvas" width="560" height="240"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="heading-with-icon">
+            <span class="manual-icon-button" aria-hidden="true">🚆</span>
+            <h3>train panel / utility buttons</h3>
+          </div>
+          <p><code>edit</code> 中は右側に寄せた補助ボタン群として、夜景切替、列車設定、ground 透過が使えます。</p>
+          <div class="manual-real-panel" data-rail-demo-panel>
+            <div class="panel-title">Rail Construction Category</div>
+            <div class="rail-construction-grid">
+              <button class="rail-construction-card is-selected" type="button" data-rail-demo-type="bridge"><img alt="bridge" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M10 46 L110 46' stroke='%234b6584' stroke-width='6'/%3E%3Cpath d='M20 46 C40 20, 80 20, 100 46' fill='none' stroke='%23618ad1' stroke-width='6'/%3E%3C/svg%3E"><span>bridge</span></button>
+              <button class="rail-construction-card" type="button" data-rail-demo-type="elevated"><img alt="elevated" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='14' y='18' width='92' height='10' fill='%235d7ea8'/%3E%3Crect x='22' y='28' width='10' height='24' fill='%2388a6c9'/%3E%3Crect x='88' y='28' width='10' height='24' fill='%2388a6c9'/%3E%3C/svg%3E"><span>elevated</span></button>
+              <button class="rail-construction-card" type="button" data-rail-demo-type="wall"><img alt="wall" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='20' y='16' width='80' height='40' fill='%238ca9c9'/%3E%3Cline x1='20' y1='30' x2='100' y2='30' stroke='%236783a7'/%3E%3Cline x1='20' y1='44' x2='100' y2='44' stroke='%236783a7'/%3E%3C/svg%3E"><span>wall</span></button>
+              <button class="rail-construction-card" type="button" data-rail-demo-type="floor"><img alt="floor" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpolygon points='16,42 60,22 104,42 60,58' fill='%2388a7cb'/%3E%3C/svg%3E"><span>floor</span></button>
+            </div>
+            <div class="panel-grid-2" style="margin-bottom:8px;">
+              <label class="panel-field">線路からの横オフセット<input type="number" value="0"></label>
+              <label class="panel-field">上下オフセット(Y)<input type="number" value="0"></label>
+            </div>
+            <button class="panel-primary" type="button" data-rail-demo-generate>選択カテゴリで生成</button>
+            <p class="panel-muted-status" data-rail-demo-status>ピンを選択し、カテゴリを選んで生成します。</p>
+          </div>
+          <div class="manual-real-panel">
+            <div class="panel-title">Difference Category</div>
+            <div class="difference-row">
+              <label class="panel-field">形状<select><option>tube チューブ</option></select></label>
+            </div>
+            <div class="difference-row">
+              <label class="panel-field">経路<select><option>補完（smooth）</option></select></label>
+            </div>
+            <div class="difference-row">
+              <label class="panel-field">line<select><option>全路線</option></select></label>
+            </div>
+            <div class="panel-grid-2">
+              <label class="panel-field">line高さ<input type="number" value="2.8"></label>
+              <button type="button">適用</button>
+            </div>
+            <p class="panel-muted-status">spaceで平面を配置すると半透明プレビューを表示します。</p>
+          </div>
+          <button class="manual-demo-toggle" type="button" data-demo-target="rail-difference-demo">試す</button>
+          <div class="manual-demo-area" id="rail-difference-demo" hidden>
+            <p class="manual-demo-caption">rail 試験: 2本の線路にピンを打ち、指定して構造物を生成</p>
+            <canvas class="manual-demo-canvas" width="560" height="240"></canvas>
+            <p class="manual-demo-help">軽量版です。線路をクリックすると近い位置にピンを打ちます。打ったピンをクリックして選択し、カテゴリを選んで生成すると、そのピン列に沿って簡易構造物プレビューを出します。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>使い分けの目安</h2>
+      <ul>
+        <li>線路を編集したいときは <code>edit &gt; rail</code> を使います。</li>
+        <li>駅、柱、板、装飾物のような自由配置物は <code>edit &gt; creat</code> を使います。</li>
+        <li>物体を削るための作業は <code>edit &gt; creat &gt; Difference</code> を使います。</li>
+        <li>回転や移動は対象ごとに枝が分かれているので、<code>rail</code> と <code>creat</code> を混同しない方が安全です。</li>
+      </ul>
+      <p class="small">
+        この manual は現在の UI ツリーと既存説明文をベースにしたものです。内部ロジックが増えた場合は
+        <code>ui_toggle.js</code> の <code>uiTree</code> と合わせて更新してください。
+      </p>
+    </section>
+  </main>
+  <script type="module" src="./js/test.js"></script>
+</body>
+</html>

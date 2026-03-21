@@ -38,16 +38,31 @@
       border-style: solid;
     }
     .edit-page-note {
-      margin: 10px 0 0;
-      color: #ffcf9b;
-      font-size: 12px;
-      letter-spacing: 0.04em;
+      margin: 14px 0 0;
     }
     .edit-auth-note {
       margin: 8px 0 0;
       min-height: 1.4em;
       color: #ffc48d;
       font-size: 12px;
+    }
+    .manual-open-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      color: #ffe1bb;
+      text-decoration: none;
+      letter-spacing: 0.04em;
+      background: rgba(255, 184, 103, 0.12);
+      border: 1px dashed rgba(255, 184, 103, 0.6);
+      transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+    }
+    .manual-open-link:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 184, 103, 0.18);
+      border-color: rgba(255, 210, 155, 0.82);
     }
     @media (max-width: 920px) {
       .hero {
@@ -81,8 +96,10 @@
           編集用ワールドを管理するための専用ページです。
           下の編集枠から対象ワールドを選択して、表示を開始してください。
         </p>
-        <p class="edit-page-note">※ この入口は仮設デザインで運用中です。</p>
-        <p class="edit-auth-note" id="edit-auth-note"></p>
+        <div class="edit-page-note">
+          <a class="manual-open-link" href="./manual.html" target="_blank" rel="noopener noreferrer">操作方法を開く</a>
+        </div>
+        <!-- <p class="edit-auth-note" id="edit-auth-note"></p> -->
       </div>
 
       <div class="status-board-wrap">

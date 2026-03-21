@@ -426,6 +426,7 @@ const threeUi = document.getElementById('three-ui');
   const mapLoadStatus = document.getElementById('map-load-status');
   const toggleGroundOpacityButton = document.getElementById('toggle-ground-opacity');
   const toggleTrainPanelButton = document.getElementById('toggle-train-panel');
+  const createModeUtilityButtons = document.getElementById('create-mode-utility-buttons');
   const trainPanel = document.getElementById('train-panel');
   const trainConfigList = document.getElementById('train-config-list');
   const trainAddButton = document.getElementById('train-add-button');
@@ -467,6 +468,11 @@ const threeUi = document.getElementById('three-ui');
       mapLoadStatus.style.display = 'none';
       mapLoadStatusHideTimer = 0;
     }, Math.max(0, Number(delayMs) || 0));
+  }
+
+  function setCreateModeUtilityButtonsRightAligned(enabled) {
+    if (!createModeUtilityButtons) { return; }
+    document.body.classList.toggle('creat-mode-ui-active', Boolean(enabled));
   }
 
   function clearRailGroupRangePreview() {
@@ -11376,10 +11382,6 @@ function downloadStructureData() {
   alert('structure.json を保存しました。');
 }
 
-const saveStructureButton = document.getElementById('save-structure-data');
-if (saveStructureButton) {
-  saveStructureButton.addEventListener('click', downloadStructureData);
-}
 const saveStructureGroupButton = document.getElementById('save-structure-group-data');
 
 function resolveGroupIdForStructureSave() {
@@ -11423,9 +11425,6 @@ function downloadStructureGroupData() {
   alert(`グループ保存しました: ${groupId}`);
 }
 
-if (saveStructureGroupButton) {
-  saveStructureGroupButton.addEventListener('click', downloadStructureGroupData);
-}
 const saveButtonsContainer = document.getElementById('save-buttons');
 if (saveButtonsContainer) {
   // グローバルの mousedown / touchstart ハンドラに吸われないようにする
@@ -12446,10 +12445,6 @@ async function downloadWorldData() {
   alert('world_data.zip を保存しました。');
 }
 
-const saveCreateModeButton = document.getElementById('save-create-mode-data');
-if (saveCreateModeButton) {
-  saveCreateModeButton.addEventListener('click', downloadCreateModeData);
-}
 const saveWorldButton = document.getElementById('save-world-data');
 if (saveWorldButton) {
   saveWorldButton.addEventListener('click', downloadWorldData);
@@ -12494,10 +12489,6 @@ if (trainConfigList) {
 const undoActionButton = document.getElementById('undo-action');
 const redoActionButton = document.getElementById('redo-action');
 
-const loadMapDataButton = document.getElementById('load-map-data');
-const loadMapDataAppendButton = document.getElementById('load-map-data-append');
-const loadMapDataAppendGroupButton = document.getElementById('load-map-data-append-group');
-const loadMapDataInput = document.getElementById('load-map-data-input');
 const STRUCTURE_GROUP_FOLDER_URL = 'map_data/structure_group/';
 let structureGroupFolderAutoLoaded = false;
 if (undoActionButton) {
@@ -13854,102 +13845,6 @@ async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structur
     totalDecorations,
     remappedGroups,
   };
-}
-
-if (loadMapDataButton && loadMapDataInput) {
-  const isTouchDevice = (typeof navigator !== 'undefined')
-    && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window);
-  if (isTouchDevice) {
-    // モバイルのファイルピッカーでは拡張子/MIMEフィルタで msgpack が候補に出ない端末があるため、
-    // タッチ端末は全ファイル選択にして読み込み時に内容判定する。
-    loadMapDataInput.accept = '*/*';
-  }
-  let mapPickerOpenLock = false;
-  let mapPickerOpenedByPointer = false;
-  let mapLoadMode = 'replace';
-  const notifyMapLoadStatus = (message) => {
-    const text = String(message || '');
-    setMapLoadStatusText(text);
-    updateDifferenceStatus(text);
-    if (constructionCategoryStatus) {
-      constructionCategoryStatus.textContent = text;
-    }
-    if (railConstructionStatus) {
-      railConstructionStatus.textContent = text;
-    }
-  };
-  const openMapDataPicker = (event, mode = 'replace') => {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    mapLoadMode = mode === 'append_groups'
-      ? 'append_groups'
-      : (mode === 'append_map' ? 'append_map' : 'replace');
-    if (mapPickerOpenLock) { return; }
-    mapPickerOpenLock = true;
-    setTimeout(() => { mapPickerOpenLock = false; }, 240);
-    loadMapDataInput.value = '';
-    if (typeof loadMapDataInput.showPicker === 'function') {
-      try {
-        loadMapDataInput.showPicker();
-        return;
-      } catch (_err) {
-        // フォールバックで click() を使う。
-      }
-    }
-    loadMapDataInput.click();
-  };
-  const bindMapPickerButton = (button, mode) => {
-    if (!button) { return; }
-    button.addEventListener('pointerdown', (event) => {
-      mapPickerOpenedByPointer = true;
-      openMapDataPicker(event, mode);
-    }, { passive: false });
-    button.addEventListener('click', (event) => {
-      // pointerdown で既に開いている場合の二重発火を防止
-      if (mapPickerOpenedByPointer) {
-        mapPickerOpenedByPointer = false;
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      openMapDataPicker(event, mode);
-    });
-  };
-  bindMapPickerButton(loadMapDataButton, 'replace');
-  bindMapPickerButton(loadMapDataAppendButton, 'append_map');
-  bindMapPickerButton(loadMapDataAppendGroupButton, 'append_groups');
-  loadMapDataInput.addEventListener('change', async (event) => {
-    const file = event.target?.files?.[0];
-    if (!file) { return; }
-    try {
-      const modeLabel = mapLoadMode === 'append_groups'
-        ? 'グループ追加'
-        : (mapLoadMode === 'append_map' ? 'マップ追加' : '通常読込');
-      notifyMapLoadStatus(`map_data 読み込み中(${modeLabel}): ${file.name || 'selected file'}`);
-      const payload = await readMapDataFile(file);
-      if (mapLoadMode === 'append_groups') {
-        const sourceTag = String(file?.name || '').replace(/\.(json|msgpack|mpk)$/i, '') || 'runtime';
-        const result = appendCreateModeGroupsPayload(payload, { sourceTag });
-        notifyMapLoadStatus(`group追加完了: guide ${result.guideCount} / segment ${result.segmentCount} / decoration ${result.decorationCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
-      } else if (mapLoadMode === 'append_map') {
-        const sourceTag = String(file?.name || '').replace(/\.(json|msgpack|mpk)$/i, '') || 'runtime';
-        const result = appendCreateModePayload(payload, { sourceTag });
-        notifyMapLoadStatus(`map追加完了: guide ${result.guideCount} / segment ${result.segmentCount} / decoration ${result.decorationCount} / space ${result.spaceCount} / groupID再採番 ${result.remappedGroupCount} (${file.name || 'selected file'})`);
-      } else {
-        applyCreateModePayload(payload);
-        notifyMapLoadStatus(`map_data 読込完了: ${file.name || 'selected file'}`);
-      }
-    } catch (err) {
-      console.warn(err);
-      const rawMessage = String(err?.message || '不明なエラー');
-      const hint = /symbol\s*\.?\s*dispose/i.test(rawMessage)
-        ? ' (互換性エラーの可能性: 可能なら JSON 形式でも保存/選択してください)'
-        : '';
-      notifyMapLoadStatus(`map_data 読込失敗: ${rawMessage}${hint}`);
-    }
-  });
 }
 
 if (!IS_RUNTIME_LOCAL_VIEW) {
@@ -27856,8 +27751,10 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'edit' ){ if ( toggle === 'active' ){
     console.log( 'edit _active' )
     OperationMode = 1
+    setCreateModeUtilityButtonsRightAligned(true);
   } else {
     console.log( 'edit _inactive' )
+    setCreateModeUtilityButtonsRightAligned(false);
   }} else if ( uiID === 'rail' ){ if ( toggle === 'active' ){
     console.log( 'rail _active' +'_'+ search_object)
     move_direction_y = false
