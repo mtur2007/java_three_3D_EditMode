@@ -275,7 +275,11 @@ a {
 
 .viewer-area {
   padding: 14px;
-  display: none;
+  display: block;
+}
+
+.viewer-area[hidden] {
+  display: none !important;
 }
 
 .temp-area {
@@ -317,6 +321,32 @@ a {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.viewer-auth-locked {
+  border-style: dashed;
+  border-color: rgba(255, 214, 127, 0.72);
+  background:
+    linear-gradient(180deg, rgba(32, 22, 5, 0.35), rgba(11, 10, 7, 0.45)),
+    var(--panel);
+}
+
+.viewer-locked-panel {
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 214, 127, 0.42);
+  background: rgba(8, 13, 24, 0.5);
+}
+
+.viewer-locked-title {
+  margin: 0;
+  color: #ffeab7;
+  font-size: 18px;
+}
+
+.viewer-locked-copy {
+  margin: 10px 0 0;
+  color: #ddcda7;
+}
+
 .map-card {
   border: 1px solid rgba(154, 196, 255, 0.2);
   border-radius: 14px;
@@ -353,10 +383,21 @@ a {
     url("../textures/test_station.jpg") center / cover no-repeat;
 }
 
+.map-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 0;
+}
+
 .map-preview::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 1;
   background: radial-gradient(circle at 55% 24%, rgba(133, 234, 255, 0.28), transparent 44%);
 }
 
@@ -368,6 +409,7 @@ a {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 1;
 }
 
 .map-a .map-preview::before { background: linear-gradient(135deg, rgba(84, 213, 255, 0.18), transparent 46%); }
@@ -424,6 +466,40 @@ a {
   margin: 4px 0 0;
   font-size: 12px;
   color: #9fc3e5;
+}
+
+.viewer-list-note {
+  margin: 14px 0 0;
+  min-height: 1.4em;
+  font-size: 12px;
+  color: #a6c4e5;
+}
+
+.pagination {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pagination button {
+  min-width: 42px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 196, 255, 0.24);
+  background: rgba(5, 13, 29, 0.52);
+  color: #ddecff;
+  cursor: pointer;
+}
+
+.pagination button.is-active {
+  border-color: rgba(144, 216, 255, 0.85);
+  background: linear-gradient(135deg, rgba(84, 213, 255, 0.22), rgba(78, 142, 255, 0.24));
+}
+
+.pagination button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .map-detail {
@@ -606,6 +682,39 @@ a {
   color: #dcecff;
 }
 
+.slot-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background:
+    linear-gradient(160deg, rgba(18, 31, 54, 0.9), rgba(7, 14, 28, 0.94)),
+    radial-gradient(circle at 20% 20%, rgba(84, 213, 255, 0.2), transparent 44%);
+  border: 1px solid rgba(151, 194, 255, 0.18);
+}
+
+.slot-thumb::after {
+  content: "NO THUMB";
+  position: absolute;
+  inset: auto 10px 8px auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(210, 230, 255, 0.62);
+}
+
+.slot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.slot-thumb:has(img:not([hidden]))::after {
+  display: none;
+}
+
 .edit-slot strong {
   font-size: 17px;
 }
@@ -655,6 +764,35 @@ a {
 .edit-detail p {
   margin: 8px 0 0;
   color: #bad1e8;
+}
+
+.detail-thumbnail-panel {
+  margin-top: 12px;
+  width: min(100%, 420px);
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(152, 196, 255, 0.24);
+  background:
+    linear-gradient(180deg, rgba(8, 16, 32, 0.96), rgba(7, 13, 24, 0.96)),
+    radial-gradient(circle at 18% 18%, rgba(84, 213, 255, 0.18), transparent 38%);
+}
+
+.detail-thumbnail-panel img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.detail-thumbnail-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: rgba(213, 229, 248, 0.68);
+  letter-spacing: 0.08em;
+  font-size: 12px;
 }
 
 .detail-private {

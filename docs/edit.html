@@ -64,6 +64,26 @@
       background: rgba(255, 184, 103, 0.18);
       border-color: rgba(255, 210, 155, 0.82);
     }
+    .slot-save-meta {
+      margin: 14px 0 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px dashed rgba(255, 189, 110, 0.42);
+      background: rgba(8, 13, 24, 0.42);
+      color: #ffe6c7;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .slot-save-meta strong {
+      color: #fff0da;
+    }
+    .slot-save-meta .meta-value-empty {
+      color: rgba(255, 221, 186, 0.62);
+    }
+    .edit-slot.has-saved-zip {
+      border-color: rgba(255, 220, 152, 0.84);
+      box-shadow: 0 10px 24px rgba(255, 185, 96, 0.16);
+    }
     @media (max-width: 920px) {
       .hero {
         grid-template-columns: 1fr !important;
@@ -129,25 +149,39 @@
       </div>
     </section>
 
-    <section class="editor-lab" id="edit-lab" aria-label="編集枠">
+    <section class="viewer-auth-locked" id="editor-auth-locked">
+      <p class="auth-lock-title">EDIT LAB / SIGN-IN REQUIRED</p>
+      <p>ログインすると編集枠の保存・サムネ撮影・公開を利用できます。</p>
+    </section>
+
+    <section class="editor-lab" id="edit-lab" aria-label="編集枠" hidden>
       <div class="viewer-head">
         <p class="meta-label">EDIT LAB</p>
         <p class="meta-value">編集枠を選んで詳細を確認</p>
       </div>
       <div class="edit-grid" role="list" aria-label="編集枠一覧">
-        <button class="edit-slot is-active" type="button" role="listitem" data-slot="track">
+        <button class="edit-slot is-active" type="button" role="listitem" data-slot="slot-01">
           <span class="slot-id">SLOT 01</span>
-          <strong>WORLD_1</strong>
+          <span class="slot-thumb" aria-hidden="true">
+            <img data-slot-thumb-image alt="" hidden />
+          </span>
+          <strong data-slot-title>WORLD_1</strong>
           <span class="slot-private">private</span>
         </button>
-        <button class="edit-slot" type="button" role="listitem" data-slot="structure">
+        <button class="edit-slot" type="button" role="listitem" data-slot="slot-02">
           <span class="slot-id">SLOT 02</span>
-          <strong>WORLD_2</strong>
+          <span class="slot-thumb" aria-hidden="true">
+            <img data-slot-thumb-image alt="" hidden />
+          </span>
+          <strong data-slot-title>WORLD_2</strong>
           <span class="slot-private">private</span>
         </button>
-        <button class="edit-slot" type="button" role="listitem" data-slot="scene">
+        <button class="edit-slot" type="button" role="listitem" data-slot="slot-03">
           <span class="slot-id">SLOT 03</span>
-          <strong>WORLD_3</strong>
+          <span class="slot-thumb" aria-hidden="true">
+            <img data-slot-thumb-image alt="" hidden />
+          </span>
+          <strong data-slot-title>WORLD_3</strong>
           <span class="slot-private">private</span>
         </button>
       </div>
@@ -159,12 +193,24 @@
           <button class="icon-btn" type="button" id="detail-title-edit-btn" aria-label="タイトルを編集" title="タイトルを編集">✎</button>
         </div>
         <input class="detail-title-input" id="detail-title-input" type="text" maxlength="80" hidden />
+        <div class="detail-thumbnail-panel" aria-label="サムネイルプレビュー">
+          <img id="slot-thumbnail-preview" alt="サムネイルプレビュー" hidden />
+          <div id="slot-thumbnail-empty" class="detail-thumbnail-empty">サムネ未設定</div>
+        </div>
         <p id="detail-desc">公開前の編集ワールドです。現在の状態: <span class="detail-private">private</span></p>
+        <div class="slot-save-meta" aria-label="保存済みワールド情報">
+          <div>構造物: <strong id="slot-zip-name" class="meta-value-empty">未保存</strong></div>
+          <div>都市: <strong id="slot-city-name" class="meta-value-empty">未保存</strong></div>
+          <div>車両: <strong id="slot-train-name" class="meta-value-empty">未保存</strong></div>
+          <div>保存日時: <strong id="slot-zip-saved-at" class="meta-value-empty">未保存</strong></div>
+        </div>
         <div class="edit-action-row">
-          <a class="primary-btn start-world-btn" id="edit-detail-start-world-btn" href="./index.html" data-auth-protected>表示を開始する</a>
-          <button class="ghost-btn publish-btn" type="button" id="publish-world-btn" data-auth-protected>公開する</button>
+          <button class="ghost-btn" type="button" id="save-slot-zip-btn" data-auth-protected>保存する</button>
+          <a class="primary-btn start-world-btn" id="edit-detail-start-world-btn" href="./public_local_load.html?runtime_map=edit_upload" data-auth-protected>サムネを撮影</a>
+          <button class="ghost-btn publish-btn" type="button" id="publish-world-btn" data-auth-protected disabled>公開する</button>
         </div>
         <p class="edit-save-note" id="edit-save-note" aria-live="polite"></p>
+        <input id="slot-zip-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" hidden />
       </div>
     </section>
   </main>
@@ -180,7 +226,7 @@
       <button class="fixed-modal__close" type="button" id="auth-modal-close" aria-label="閉じる">×</button>
       <p class="detail-label">DEMO SIGN-IN</p>
       <h3 id="auth-modal-title">編集ページへログイン</h3>
-      <p>このブラウザ内だけでログイン状態を保持するデモ認証です。</p>
+      <p>Supabase Auth を利用したメールアドレス認証です。</p>
       <form class="auth-form" id="auth-form">
         <label class="auth-field">
           <span>表示名</span>
@@ -196,6 +242,7 @@
         </label>
         <div class="auth-form-actions">
           <button class="primary-btn" type="submit">ログインする</button>
+          <button class="ghost-btn" type="button" id="auth-signup-btn">新規登録</button>
           <button class="ghost-btn" type="button" data-auth-close>閉じる</button>
         </div>
       </form>

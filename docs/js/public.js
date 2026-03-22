@@ -3,11 +3,24 @@ import { createCreateModeStateCodec } from "./create_mode_state.js";
 const RUNTIME_MAP_DB_NAME = "train-editmode-runtime-map";
 const RUNTIME_MAP_STORE_NAME = "runtimeMaps";
 const RUNTIME_MAP_RECORD_KEY = "public-selected-map";
+const EDITOR_SLOT_META_STORAGE_KEY = "mouse_demo_editor_slots_v1";
+const EDITOR_ZIP_DB_NAME = "mouse-demo-editor-slot-zips";
+const EDITOR_ZIP_STORE_NAME = "slotZips";
+const EDITOR_THUMBNAIL_DB_NAME = "mouse-demo-editor-slot-thumbnails";
+const EDITOR_THUMBNAIL_STORE_NAME = "slotThumbnails";
+const SUPABASE_EDITOR_BUCKET = "world-files";
+const PUBLIC_WORLD_PAGE_SIZE = 6;
 const RUNTIME_FILE_PREFIXES = {
   st: "構造物",
   ct: "マップ",
   tr: "車両",
 };
+
+const DEFAULT_EDITOR_SLOTS = Object.freeze([
+  { slotId: "slot-01", label: "SLOT 01", title: "WORLD_1", status: "private" },
+  { slotId: "slot-02", label: "SLOT 02", title: "WORLD_2", status: "private" },
+  { slotId: "slot-03", label: "SLOT 03", title: "WORLD_3", status: "private" },
+]);
 
 async function loadMsgpackCodec() {
   const candidates = [
@@ -93,6 +106,85 @@ async function deleteRuntimeMapRecord() {
   });
 }
 
+function openEditorSlotZipDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(EDITOR_ZIP_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EDITOR_ZIP_STORE_NAME)) {
+        db.createObjectStore(EDITOR_ZIP_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  });
+}
+
+async function saveEditorSlotZipRecord(slotId, record) {
+  const db = await openEditorSlotZipDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(EDITOR_ZIP_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(EDITOR_ZIP_STORE_NAME);
+    store.put(record, slotId);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("IndexedDB write failed"));
+    };
+  });
+}
+
+async function readEditorSlotZipRecord(slotId) {
+  const db = await openEditorSlotZipDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(EDITOR_ZIP_STORE_NAME, "readonly");
+    const store = transaction.objectStore(EDITOR_ZIP_STORE_NAME);
+    const request = store.get(slotId);
+    request.onsuccess = () => {
+      db.close();
+      resolve(request.result || null);
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error || new Error("IndexedDB read failed"));
+    };
+  });
+}
+
+function openEditorSlotThumbnailDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(EDITOR_THUMBNAIL_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EDITOR_THUMBNAIL_STORE_NAME)) {
+        db.createObjectStore(EDITOR_THUMBNAIL_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  });
+}
+
+async function readEditorSlotThumbnailRecord(slotId) {
+  const db = await openEditorSlotThumbnailDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(EDITOR_THUMBNAIL_STORE_NAME, "readonly");
+    const store = transaction.objectStore(EDITOR_THUMBNAIL_STORE_NAME);
+    const request = store.get(slotId);
+    request.onsuccess = () => {
+      db.close();
+      resolve(request.result || null);
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error || new Error("IndexedDB read failed"));
+    };
+  });
+}
+
 (() => {
   const runtimeRole = String(document.body?.dataset?.authRole || "").trim().toLowerCase();
   const runtimeMapMode = runtimeRole === "editor" ? "edit_upload" : "public_upload";
@@ -131,8 +223,808 @@ async function deleteRuntimeMapRecord() {
   const localMapSelectBtn = document.getElementById("local-map-select-btn");
   const localMapStartBtn = document.getElementById("local-map-start-btn");
   const localMapComment = document.getElementById("local-map-comment");
+  const viewerAuthLocked = document.getElementById("viewer-auth-locked");
+  const viewerArea = document.getElementById("viewer-area");
+  const editorAuthLocked = document.getElementById("editor-auth-locked");
+  const editLab = document.getElementById("edit-lab");
+  const publicMapGrid = document.getElementById("public-map-grid");
+  const publicMapStatus = document.getElementById("public-map-status");
+  const publicMapPagination = document.getElementById("public-map-pagination");
+  const viewerMetaValue = document.getElementById("viewer-meta-value");
+  const editSlots = Array.from(document.querySelectorAll(".edit-slot[data-slot]"));
+  const detailTitle = document.getElementById("detail-title");
+  const detailDesc = document.getElementById("detail-desc");
+  const editSaveNote = document.getElementById("edit-save-note");
+  const saveSlotZipBtn = document.getElementById("save-slot-zip-btn");
+  const slotZipFileInput = document.getElementById("slot-zip-file-input");
+  const publishWorldBtn = document.getElementById("publish-world-btn");
+  const slotZipName = document.getElementById("slot-zip-name");
+  const slotCityName = document.getElementById("slot-city-name");
+  const slotTrainName = document.getElementById("slot-train-name");
+  const slotZipSavedAt = document.getElementById("slot-zip-saved-at");
+  const slotThumbnailPreview = document.getElementById("slot-thumbnail-preview");
+  const slotThumbnailEmpty = document.getElementById("slot-thumbnail-empty");
 
   const startLinks = [heroStartLink, mapModalStartBtn, editDetailStartLink].filter(Boolean);
+  const isPublicPage = Boolean(viewerArea && publicMapGrid);
+  const isEditorPage = editSlots.length > 0;
+  let editorSlotsState = [];
+  let activeEditorSlotId = DEFAULT_EDITOR_SLOTS[0].slotId;
+  const editorSlotThumbnailState = new Map();
+  let publicViewerPage = 1;
+  let publicViewerTotalPages = 1;
+  let publicViewerSelectedWorld = null;
+
+  function createDefaultEditorSlots() {
+    return DEFAULT_EDITOR_SLOTS.map((slot) => ({
+      ...slot,
+      fileName: "",
+      fileSize: 0,
+      cityFileName: "",
+      trainFileCount: 0,
+      savedAt: "",
+      worldId: "",
+      uploadedPath: "",
+      uploadedAt: "",
+      thumbnailCapturedAt: "",
+    }));
+  }
+
+  function loadEditorSlotsMeta() {
+    try {
+      const raw = window.localStorage.getItem(EDITOR_SLOT_META_STORAGE_KEY);
+      if (!raw) {
+        return createDefaultEditorSlots();
+      }
+      const parsed = JSON.parse(raw);
+      const slotMap = new Map(
+        Array.isArray(parsed)
+          ? parsed
+            .filter((slot) => slot && typeof slot === "object")
+            .map((slot) => [String(slot.slotId || ""), slot])
+          : []
+      );
+      return DEFAULT_EDITOR_SLOTS.map((slot) => {
+        const saved = slotMap.get(slot.slotId) || {};
+        return {
+          ...slot,
+          fileName: typeof saved.fileName === "string" ? saved.fileName : "",
+          fileSize: Number(saved.fileSize) || 0,
+          cityFileName: typeof saved.cityFileName === "string" ? saved.cityFileName : "",
+          trainFileCount: Number(saved.trainFileCount) || 0,
+          savedAt: typeof saved.savedAt === "string" ? saved.savedAt : "",
+          worldId: typeof saved.worldId === "string" ? saved.worldId : "",
+          uploadedPath: typeof saved.uploadedPath === "string" ? saved.uploadedPath : "",
+          uploadedAt: typeof saved.uploadedAt === "string" ? saved.uploadedAt : "",
+          thumbnailCapturedAt: typeof saved.thumbnailCapturedAt === "string" ? saved.thumbnailCapturedAt : "",
+        };
+      });
+    } catch (_error) {
+      return createDefaultEditorSlots();
+    }
+  }
+
+  function persistEditorSlotsMeta() {
+    window.localStorage.setItem(
+      EDITOR_SLOT_META_STORAGE_KEY,
+      JSON.stringify(editorSlotsState.map((slot) => ({
+        slotId: slot.slotId,
+        title: slot.title,
+        status: slot.status,
+        fileName: slot.fileName,
+        fileSize: slot.fileSize,
+        cityFileName: slot.cityFileName,
+        trainFileCount: slot.trainFileCount,
+        savedAt: slot.savedAt,
+        worldId: slot.worldId,
+        uploadedPath: slot.uploadedPath,
+        uploadedAt: slot.uploadedAt,
+        thumbnailCapturedAt: slot.thumbnailCapturedAt,
+      })))
+    );
+  }
+
+  function getEditorSlotById(slotId) {
+    return editorSlotsState.find((slot) => slot.slotId === slotId) || null;
+  }
+
+  function formatSavedAt(value) {
+    if (!value) {
+      return "未保存";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return new Intl.DateTimeFormat("ja-JP", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function setEditSaveNote(message, type = "info") {
+    if (!editSaveNote) {
+      return;
+    }
+    editSaveNote.textContent = message;
+    editSaveNote.dataset.type = type;
+  }
+
+  async function refreshEditorSlotThumbnails() {
+    if (!isEditorPage) {
+      return;
+    }
+    const results = await Promise.all(
+      editorSlotsState.map(async (slot) => {
+        const record = await readEditorSlotThumbnailRecord(slot.slotId).catch(() => null);
+        return [slot.slotId, record];
+      })
+    );
+    editorSlotThumbnailState.clear();
+    results.forEach(([slotId, record]) => {
+      if (record) {
+        editorSlotThumbnailState.set(slotId, record);
+      }
+    });
+    renderEditorSlots();
+  }
+
+  function syncPublishButtonState(slot) {
+    if (!publishWorldBtn) {
+      return;
+    }
+    const hasThumbnail = Boolean(editorSlotThumbnailState.get(String(slot?.slotId || "").trim())?.blob)
+      || Boolean(slot?.thumbnailCapturedAt);
+    const enabled = Boolean(slot?.fileName) && hasThumbnail;
+    publishWorldBtn.disabled = !enabled;
+    publishWorldBtn.setAttribute("aria-disabled", enabled ? "false" : "true");
+  }
+
+  function renderEditorSlots() {
+    if (!isEditorPage) {
+      return;
+    }
+    editSlots.forEach((button) => {
+      const slot = getEditorSlotById(button.dataset.slot || "");
+      if (!slot) {
+        return;
+      }
+      const titleEl = button.querySelector("[data-slot-title]");
+      const thumbImg = button.querySelector("[data-slot-thumb-image]");
+      if (titleEl) {
+        titleEl.textContent = slot.title;
+      }
+      const thumbnailRecord = editorSlotThumbnailState.get(slot.slotId) || null;
+      if (thumbImg instanceof HTMLImageElement) {
+        const dataUrl = String(thumbnailRecord?.dataUrl || "").trim();
+        if (dataUrl) {
+          thumbImg.src = dataUrl;
+          thumbImg.hidden = false;
+        } else {
+          thumbImg.removeAttribute("src");
+          thumbImg.hidden = true;
+        }
+      }
+      button.classList.toggle("is-active", slot.slotId === activeEditorSlotId);
+      button.classList.toggle("has-saved-zip", Boolean(slot.fileName));
+      const statusEl = button.querySelector(".slot-private");
+      if (statusEl) {
+        statusEl.textContent = slot.uploadedAt
+          ? "private / uploaded"
+          : slot.thumbnailCapturedAt
+            ? "private / thumbnail-ready"
+          : slot.fileName
+            ? "private / saved"
+            : slot.status;
+      }
+    });
+
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot) {
+      return;
+    }
+    if (detailTitle) {
+      detailTitle.textContent = `${activeSlot.label} / ${activeSlot.title}`;
+    }
+    if (detailDesc) {
+      detailDesc.innerHTML = activeSlot.fileName
+        ? `公開前の編集ワールドです。現在の状態: <span class="detail-private">${activeSlot.status}</span><br>構造物: ${activeSlot.fileName}${activeSlot.cityFileName ? `<br>都市: ${activeSlot.cityFileName}` : `<br>都市: 未保存`}<br>車両: ${activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存"}${activeSlot.thumbnailCapturedAt ? `<br>サムネ設定: ${formatSavedAt(activeSlot.thumbnailCapturedAt)}` : `<br>サムネ設定: 未設定`}${activeSlot.uploadedAt ? `<br>Supabase 保存先: ${activeSlot.uploadedPath}` : ""}`
+        : `公開前の編集ワールドです。現在の状態: <span class="detail-private">${activeSlot.status}</span><br>このスロットにはまだ st_*.zip が保存されていません。`;
+    }
+    if (slotZipName) {
+      slotZipName.textContent = activeSlot.fileName || "未保存";
+      slotZipName.classList.toggle("meta-value-empty", !activeSlot.fileName);
+    }
+    if (slotCityName) {
+      slotCityName.textContent = activeSlot.cityFileName || "未保存";
+      slotCityName.classList.toggle("meta-value-empty", !activeSlot.cityFileName);
+    }
+    if (slotTrainName) {
+      slotTrainName.textContent = activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存";
+      slotTrainName.classList.toggle("meta-value-empty", activeSlot.trainFileCount < 1);
+    }
+    if (slotZipSavedAt) {
+      slotZipSavedAt.textContent = formatSavedAt(activeSlot.savedAt);
+      slotZipSavedAt.classList.toggle("meta-value-empty", !activeSlot.savedAt);
+    }
+    const activeThumbnailRecord = editorSlotThumbnailState.get(activeSlot.slotId) || null;
+    const activeThumbnailDataUrl = String(activeThumbnailRecord?.dataUrl || "").trim();
+    if (slotThumbnailPreview instanceof HTMLImageElement) {
+      if (activeThumbnailDataUrl) {
+        slotThumbnailPreview.src = activeThumbnailDataUrl;
+        slotThumbnailPreview.hidden = false;
+      } else {
+        slotThumbnailPreview.removeAttribute("src");
+        slotThumbnailPreview.hidden = true;
+      }
+    }
+    if (slotThumbnailEmpty) {
+      slotThumbnailEmpty.hidden = Boolean(activeThumbnailDataUrl);
+    }
+    syncPublishButtonState(activeSlot);
+  }
+
+  function normalizeEditorSlotRuntimeRecord(record) {
+    if (record?.files && typeof record.files === "object") {
+      return {
+        st: record.files.st || null,
+        ct: record.files.ct || null,
+        tr: Array.isArray(record.files.tr) ? record.files.tr.filter(Boolean) : [],
+      };
+    }
+    if (record?.buffer && record?.name) {
+      return {
+        st: {
+          name: record.name,
+          type: record.type || "application/zip",
+          size: Number(record.size) || 0,
+          savedAt: record.savedAt || new Date().toISOString(),
+          buffer: record.buffer,
+        },
+        ct: null,
+        tr: [],
+      };
+    }
+    return { st: null, ct: null, tr: [] };
+  }
+
+  function validateSlotStructureFile(file) {
+    const name = String(file?.name || "").trim();
+    const lowerName = name.toLowerCase();
+    if (!lowerName.endsWith(".zip") || !lowerName.startsWith("st_")) {
+      throw new Error("構造物データには先頭が st_ の zip ファイルを指定してください。");
+    }
+    if ((Number(file?.size) || 0) <= 0) {
+      throw new Error("空の zip ファイルは保存できません。");
+    }
+  }
+
+  async function saveRuntimeFilesToActiveEditorSlot(files) {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot) {
+      throw new Error("保存先スロットが見つかりません。");
+    }
+    const selectedFiles = Array.from(files || []).filter(Boolean);
+    if (selectedFiles.length < 1) {
+      throw new Error("保存するファイルが選択されていません。");
+    }
+
+    const nextFiles = { st: null, ct: null, tr: [] };
+    const invalidNames = [];
+
+    for (const file of selectedFiles) {
+      const kind = classifyRuntimeFile(file?.name || "");
+      if (!kind) {
+        invalidNames.push(file?.name || "unknown");
+        continue;
+      }
+      if (kind === "st") {
+        validateSlotStructureFile(file);
+      }
+      if (kind === "ct") {
+        await validateCtRuntimeFile(file);
+      }
+      const buffer = await file.arrayBuffer();
+      const entry = {
+        name: file.name || "selected file",
+        type: file.type || "",
+        size: Number(file.size) || 0,
+        lastModified: Number(file.lastModified) || Date.now(),
+        savedAt: Date.now(),
+        buffer,
+      };
+      if (kind === "tr") {
+        nextFiles.tr.push(entry);
+      } else {
+        nextFiles[kind] = entry;
+      }
+    }
+
+    if (!nextFiles.st) {
+      const suffix = invalidNames.length > 0 ? ` 無効ファイル: ${invalidNames.join(", ")}` : "";
+      throw new Error(`構造物データ st_*.zip が必要です。${suffix}`.trim());
+    }
+
+    const savedAt = new Date().toISOString();
+    await saveEditorSlotZipRecord(activeSlot.slotId, {
+      savedAt,
+      files: nextFiles,
+    });
+    activeSlot.fileName = nextFiles.st.name;
+    activeSlot.fileSize = Number(nextFiles.st.size) || 0;
+    activeSlot.cityFileName = nextFiles.ct?.name || "";
+    activeSlot.trainFileCount = Array.isArray(nextFiles.tr) ? nextFiles.tr.length : 0;
+    activeSlot.savedAt = savedAt;
+    persistEditorSlotsMeta();
+    renderEditorSlots();
+    const saveSummary = [
+      `構造物: ${nextFiles.st.name}`,
+      nextFiles.ct?.name ? `都市: ${nextFiles.ct.name}` : "都市: なし",
+      nextFiles.tr?.length ? `車両: ${nextFiles.tr.length}件` : "車両: なし",
+    ];
+    setEditSaveNote(`${activeSlot.label} に保存しました。${saveSummary.join(" / ")}`, "success");
+  }
+
+  async function openThumbnailCaptureWorldForActiveSlot(event) {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot?.fileName) {
+      if (event) {
+        event.preventDefault();
+      }
+      setEditSaveNote("先に st_*.zip を保存してください。", "error");
+      return;
+    }
+    const slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId));
+    if (!slotRecord?.st?.buffer) {
+      if (event) {
+        event.preventDefault();
+      }
+      setEditSaveNote("保存済み zip が見つかりません。もう一度保存してください。", "error");
+      return;
+    }
+
+    await saveRuntimeMapRecord({
+      version: 2,
+      savedAt: Date.now(),
+      files: {
+        st: slotRecord.st,
+        ct: slotRecord.ct || null,
+        tr: Array.isArray(slotRecord.tr) ? slotRecord.tr : [],
+      },
+    });
+
+    const nextUrl = `./public_local_load.html?runtime_map=edit_upload&thumbnail_mode=1&slot=${encodeURIComponent(activeSlot.slotId)}`;
+    if (event?.currentTarget instanceof HTMLAnchorElement) {
+      event.currentTarget.href = nextUrl;
+    }
+    window.location.href = nextUrl;
+  }
+
+  async function uploadActiveEditorSlotZipToSupabase() {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot?.fileName) {
+      throw new Error("先に st_*.zip を保存してください。");
+    }
+    const thumbnailRecord = editorSlotThumbnailState.get(activeSlot.slotId) || await readEditorSlotThumbnailRecord(activeSlot.slotId);
+    if (!thumbnailRecord?.blob) {
+      throw new Error("先にサムネを撮影して保存してください。");
+    }
+
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      throw new Error("Supabase 認証の初期化が完了していません。");
+    }
+
+    const session = await supabaseBridge.getSession();
+    const userId = String(session?.user?.id || "").trim();
+    if (!userId) {
+      throw new Error("ログイン状態を確認できませんでした。");
+    }
+
+    const slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId));
+    const zipRecord = slotRecord.st;
+    if (!zipRecord?.buffer) {
+      throw new Error("保存済み zip が見つかりません。もう一度保存してください。");
+    }
+
+    const fileName = String(zipRecord.name || activeSlot.fileName || "").trim();
+    const uploadPath = `worlds/${userId}/${activeSlot.slotId}/${fileName}`;
+    const thumbnailPath = `worlds/${userId}/${activeSlot.slotId}/thumbnail.webp`;
+    const zipBlob = new Blob(
+      [zipRecord.buffer],
+      { type: zipRecord.type || "application/zip" }
+    );
+    const thumbnailBlob = thumbnailRecord.blob instanceof Blob
+      ? thumbnailRecord.blob
+      : new Blob([thumbnailRecord.blob], { type: thumbnailRecord.mimeType || "image/webp" });
+    const previousUploadedPath = String(activeSlot.uploadedPath || "").trim();
+    const removedPreviousFile = previousUploadedPath && previousUploadedPath !== uploadPath;
+
+    if (removedPreviousFile) {
+      const { error: removeError } = await supabaseClient.storage
+        .from(SUPABASE_EDITOR_BUCKET)
+        .remove([previousUploadedPath]);
+      if (removeError) {
+        throw new Error(`古い zip の削除に失敗しました: ${removeError.message || removeError}`);
+      }
+    }
+
+    const { error } = await supabaseClient.storage
+      .from(SUPABASE_EDITOR_BUCKET)
+      .upload(uploadPath, zipBlob, {
+        upsert: true,
+        contentType: zipRecord.type || "application/zip",
+      });
+
+    if (error) {
+      throw new Error(error.message || "Supabase へのアップロードに失敗しました。");
+    }
+
+    const { error: thumbnailUploadError } = await supabaseClient.storage
+      .from(SUPABASE_EDITOR_BUCKET)
+      .upload(thumbnailPath, thumbnailBlob, {
+        upsert: true,
+        contentType: thumbnailRecord.mimeType || "image/webp",
+      });
+
+    if (thumbnailUploadError) {
+      await supabaseClient.storage
+        .from(SUPABASE_EDITOR_BUCKET)
+        .remove([uploadPath]);
+      throw new Error(thumbnailUploadError.message || "サムネイルのアップロードに失敗しました。");
+    }
+
+    const description = `${activeSlot.label} uploaded from editor-lab`;
+    const rpcName = activeSlot.worldId ? "update_world_with_quota" : "create_world_with_quota";
+    const rpcArgs = activeSlot.worldId
+      ? {
+        p_world_id: activeSlot.worldId,
+        p_title: activeSlot.title,
+        p_description: description,
+        p_status: "draft",
+        p_world_zip_path: uploadPath,
+        p_world_zip_bytes: Number(zipRecord.size) || 0,
+        p_thumbnail_path: thumbnailPath,
+        p_thumbnail_bytes: 0,
+      }
+      : {
+        p_title: activeSlot.title,
+        p_description: description,
+        p_status: "draft",
+        p_world_zip_path: uploadPath,
+        p_world_zip_bytes: Number(zipRecord.size) || 0,
+        p_thumbnail_path: thumbnailPath,
+        p_thumbnail_bytes: 0,
+      };
+
+    const { data: worldData, error: rpcError } = await supabaseClient.rpc(rpcName, rpcArgs);
+    if (rpcError) {
+      await supabaseClient.storage
+        .from(SUPABASE_EDITOR_BUCKET)
+        .remove([uploadPath, thumbnailPath]);
+      if (removedPreviousFile) {
+        // The previous file was already removed before upload. Keep metadata untouched and surface the DB error.
+        activeSlot.uploadedPath = "";
+        activeSlot.uploadedAt = "";
+      }
+      persistEditorSlotsMeta();
+      renderEditorSlots();
+      throw new Error(rpcError.message || "ワールド情報の保存に失敗しました。");
+    }
+
+    const nextWorldId = String(worldData?.id || activeSlot.worldId || "").trim();
+    if (!nextWorldId) {
+      throw new Error("保存したワールドIDを取得できませんでした。");
+    }
+
+    const { data: publishedWorld, error: publishError } = await supabaseClient.rpc("publish_world", {
+      p_world_id: nextWorldId,
+    });
+    if (publishError) {
+      throw new Error(publishError.message || "ワールドの公開に失敗しました。");
+    }
+
+    activeSlot.uploadedPath = uploadPath;
+    activeSlot.uploadedAt = new Date().toISOString();
+    activeSlot.worldId = String(publishedWorld?.id || nextWorldId).trim();
+    persistEditorSlotsMeta();
+    renderEditorSlots();
+    setEditSaveNote(`${activeSlot.label} の zip とサムネを公開しました。public.html の一覧に反映されます。`, "success");
+  }
+
+  function getPublicViewerPageFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const page = Number.parseInt(params.get("page") || "1", 10);
+    return Number.isFinite(page) && page > 0 ? page : 1;
+  }
+
+  function setPublicViewerPageInUrl(page) {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", String(page));
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }
+
+  function setPublicViewerStatus(message) {
+    if (publicMapStatus) {
+      publicMapStatus.textContent = message;
+    }
+  }
+
+  function setPublicViewerVisibility({ signedIn }) {
+    if (!isPublicPage) {
+      return;
+    }
+    if (viewerAuthLocked) {
+      viewerAuthLocked.hidden = signedIn;
+    }
+    if (viewerArea) {
+      viewerArea.hidden = !signedIn;
+    }
+  }
+
+  function setEditorLabVisibility({ signedIn }) {
+    if (!isEditorPage) {
+      return;
+    }
+    if (editorAuthLocked) {
+      editorAuthLocked.hidden = signedIn;
+    }
+    if (editLab) {
+      editLab.hidden = !signedIn;
+    }
+  }
+
+  function openPublicMapModalFromRecord(record) {
+    if (!record) {
+      return;
+    }
+    publicViewerSelectedWorld = record;
+    if (mapModalTitle) {
+      mapModalTitle.textContent = record.title;
+    }
+    if (mapModalDesc) {
+      mapModalDesc.textContent = record.description || "公開済みワールドです。";
+    }
+    if (mapModalStartBtn) {
+      mapModalStartBtn.setAttribute("href", "#");
+      mapModalStartBtn.setAttribute("aria-disabled", "true");
+      mapModalStartBtn.classList.add("is-disabled");
+    }
+    openMapModal();
+  }
+
+  async function downloadSelectedPublicWorld() {
+    const record = publicViewerSelectedWorld;
+    if (!record?.worldZipPath) {
+      throw new Error("ダウンロード対象のワールドデータが見つかりません。");
+    }
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      throw new Error("Supabase 接続が初期化されていません。");
+    }
+
+    const { data, error } = await supabaseClient.storage
+      .from(SUPABASE_EDITOR_BUCKET)
+      .createSignedUrl(record.worldZipPath, 60);
+
+    if (error || !data?.signedUrl) {
+      throw new Error(error?.message || "ダウンロードURLの発行に失敗しました。");
+    }
+
+    const link = document.createElement("a");
+    link.href = data.signedUrl;
+    link.download = record.fileName || "world_data.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function getSignedStorageUrl(path, expiresInSeconds = 60) {
+    const normalizedPath = String(path || "").trim();
+    if (!normalizedPath) {
+      return "";
+    }
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      return "";
+    }
+    const { data, error } = await supabaseClient.storage
+      .from(SUPABASE_EDITOR_BUCKET)
+      .createSignedUrl(normalizedPath, expiresInSeconds);
+    if (error || !data?.signedUrl) {
+      return "";
+    }
+    return data.signedUrl;
+  }
+
+  function renderPublicViewerPagination() {
+    if (!publicMapPagination) {
+      return;
+    }
+    publicMapPagination.innerHTML = "";
+    if (publicViewerTotalPages <= 1) {
+      return;
+    }
+
+    const buttons = [];
+    buttons.push({ label: "前へ", page: Math.max(1, publicViewerPage - 1), disabled: publicViewerPage <= 1 });
+    for (let page = 1; page <= publicViewerTotalPages; page += 1) {
+      buttons.push({ label: String(page), page, active: page === publicViewerPage, disabled: false });
+    }
+    buttons.push({
+      label: "次へ",
+      page: Math.min(publicViewerTotalPages, publicViewerPage + 1),
+      disabled: publicViewerPage >= publicViewerTotalPages,
+    });
+
+    buttons.forEach((config) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = config.label;
+      if (config.active) {
+        button.classList.add("is-active");
+      }
+      button.disabled = Boolean(config.disabled);
+      button.addEventListener("click", () => {
+        if (config.disabled || config.page === publicViewerPage) {
+          return;
+        }
+        publicViewerPage = config.page;
+        setPublicViewerPageInUrl(publicViewerPage);
+        void fetchAndRenderPublicWorlds();
+      });
+      publicMapPagination.appendChild(button);
+    });
+  }
+
+  function renderPublicViewerCards(items) {
+    if (!publicMapGrid) {
+      return;
+    }
+    publicMapGrid.innerHTML = "";
+
+    items.forEach((item, index) => {
+      const article = document.createElement("article");
+      article.className = `map-card map-${String.fromCharCode(97 + (index % 5))}`;
+      article.setAttribute("role", "button");
+      article.setAttribute("tabindex", "0");
+      article.setAttribute("aria-label", item.title);
+
+      const preview = document.createElement("div");
+      preview.className = "map-preview";
+      if (item.thumbnailUrl) {
+        const image = document.createElement("img");
+        image.src = item.thumbnailUrl;
+        image.alt = `${item.title} のサムネイル`;
+        preview.appendChild(image);
+      }
+
+      const overlay = document.createElement("div");
+      overlay.className = "viewer-overlay";
+      overlay.innerHTML = `
+        <p class="overlay-head">${item.title}</p>
+        <p class="overlay-sub">${item.description || "公開済みワールド"}</p>
+      `;
+      preview.appendChild(overlay);
+
+      const meta = document.createElement("div");
+      meta.className = "map-meta";
+      meta.innerHTML = `
+        <p class="map-title">${item.title}</p>
+        <p class="map-tags">${item.tags}</p>
+      `;
+
+      article.appendChild(preview);
+      article.appendChild(meta);
+      article.addEventListener("click", () => openPublicMapModalFromRecord(item));
+      article.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openPublicMapModalFromRecord(item);
+        }
+      });
+      publicMapGrid.appendChild(article);
+    });
+  }
+
+  async function fetchAndRenderPublicWorlds() {
+    if (!isPublicPage) {
+      return;
+    }
+
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      setPublicViewerVisibility({ signedIn: false });
+      return;
+    }
+
+    const session = await supabaseBridge.getSession();
+    const signedIn = Boolean(session?.user);
+    setPublicViewerVisibility({ signedIn });
+    if (!signedIn) {
+      if (publicMapGrid) {
+        publicMapGrid.innerHTML = "";
+      }
+      if (publicMapPagination) {
+        publicMapPagination.innerHTML = "";
+      }
+      if (viewerMetaValue) {
+        viewerMetaValue.textContent = "ログインすると公開済みワールド一覧を表示します";
+      }
+      setPublicViewerStatus("ログイン後に公開ワールドを取得します。");
+      return;
+    }
+
+    setPublicViewerStatus("公開ワールドを読み込み中です...");
+    const from = (publicViewerPage - 1) * PUBLIC_WORLD_PAGE_SIZE;
+    const to = from + PUBLIC_WORLD_PAGE_SIZE - 1;
+
+    const { data, error, count } = await supabaseClient
+      .from("worlds")
+      .select("id, title, description, published_at, world_zip_path, thumbnail_path", { count: "exact" })
+      .eq("status", "published")
+      .order("published_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+
+    if (error) {
+      if (publicMapGrid) {
+        publicMapGrid.innerHTML = "";
+      }
+      if (publicMapPagination) {
+        publicMapPagination.innerHTML = "";
+      }
+      setPublicViewerStatus(`公開ワールドの取得に失敗しました: ${error.message || error}`);
+      return;
+    }
+
+    const totalCount = Number(count) || 0;
+    publicViewerTotalPages = Math.max(1, Math.ceil(totalCount / PUBLIC_WORLD_PAGE_SIZE));
+    if (publicViewerPage > publicViewerTotalPages) {
+      publicViewerPage = publicViewerTotalPages;
+      setPublicViewerPageInUrl(publicViewerPage);
+    }
+
+    const items = Array.isArray(data)
+      ? await Promise.all(data.map(async (record) => {
+        const publishedAt = record?.published_at ? formatSavedAt(record.published_at) : "日時未設定";
+        const thumbnailPath = String(record?.thumbnail_path || "").trim();
+        const thumbnailUrl = thumbnailPath
+          ? await getSignedStorageUrl(thumbnailPath, 60 * 10)
+          : "";
+        return {
+          id: String(record?.id || "").trim(),
+          title: String(record?.title || "Untitled World").trim(),
+          description: String(record?.description || "").trim(),
+          worldZipPath: String(record?.world_zip_path || "").trim(),
+          thumbnailPath,
+          thumbnailUrl,
+          fileName: String(record?.world_zip_path || "").split("/").filter(Boolean).pop() || "world_data.zip",
+          tags: `published ・ ${publishedAt}`,
+        };
+      }))
+      : [];
+
+    renderPublicViewerCards(items);
+    renderPublicViewerPagination();
+
+    if (viewerMetaValue) {
+      viewerMetaValue.textContent = `${totalCount}件の公開ワールド / ${PUBLIC_WORLD_PAGE_SIZE}件ずつ表示`;
+    }
+    if (items.length < 1) {
+      setPublicViewerStatus("公開済みワールドはまだありません。");
+      return;
+    }
+    setPublicViewerStatus(`${totalCount}件中 ${from + 1} - ${Math.min(totalCount, from + items.length)}件を表示しています。`);
+  }
 
   function setLocalMapComment(message, type = "info", visible = true) {
     if (!localMapComment) {
@@ -508,6 +1400,27 @@ async function deleteRuntimeMapRecord() {
   restoreCachedRuntimeMap().finally(() => {
     detectFallbackMapData();
   });
+  if (isPublicPage) {
+    publicViewerPage = getPublicViewerPageFromUrl();
+    setPublicViewerPageInUrl(publicViewerPage);
+    setPublicViewerVisibility({ signedIn: false });
+    setPublicViewerStatus("ログイン後に公開ワールドを取得します。");
+  }
+  if (isEditorPage) {
+    setEditorLabVisibility({ signedIn: false });
+    editorSlotsState = loadEditorSlotsMeta();
+    const requestedSlotId = String(new URLSearchParams(window.location.search).get("slot") || "").trim();
+    const activeButton = document.querySelector(".edit-slot.is-active[data-slot]");
+    const activeSlotId = String(activeButton?.getAttribute("data-slot") || "").trim();
+    if (requestedSlotId && getEditorSlotById(requestedSlotId)) {
+      activeEditorSlotId = requestedSlotId;
+    } else if (activeSlotId && getEditorSlotById(activeSlotId)) {
+      activeEditorSlotId = activeSlotId;
+    }
+    renderEditorSlots();
+    setEditSaveNote("保存する から st_*.zip を選択してください。", "info");
+    void refreshEditorSlotThumbnails();
+  }
   syncFeaturesGuideButtonLabel();
 
   scrollButtons.forEach((button) => {
@@ -547,6 +1460,16 @@ async function deleteRuntimeMapRecord() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeMapModal();
+    }
+  });
+
+  window.addEventListener("mouse-demo-auth-change", (event) => {
+    const session = event?.detail?.session || null;
+    if (isPublicPage) {
+      void fetchAndRenderPublicWorlds();
+    }
+    if (isEditorPage) {
+      setEditorLabVisibility({ signedIn: Boolean(session?.user) });
     }
   });
 
@@ -591,15 +1514,82 @@ async function deleteRuntimeMapRecord() {
     });
   }
 
+  editSlots.forEach((button) => {
+    button.addEventListener("click", () => {
+      const slotId = String(button.dataset.slot || "").trim();
+      if (!slotId || slotId === activeEditorSlotId) {
+        return;
+      }
+      activeEditorSlotId = slotId;
+      renderEditorSlots();
+      setEditSaveNote(`${button.querySelector(".slot-id")?.textContent || "選択中の枠"} を選択しました。`, "info");
+    });
+  });
+
+  if (saveSlotZipBtn && slotZipFileInput) {
+    saveSlotZipBtn.addEventListener("click", () => {
+      slotZipFileInput.click();
+    });
+  }
+
+  if (slotZipFileInput) {
+    slotZipFileInput.addEventListener("change", async (event) => {
+      const files = Array.from(event.target?.files || []);
+      if (files.length < 1) {
+        return;
+      }
+      setEditSaveNote(`保存中: ${files.map((file) => file.name).join(", ")}`, "info");
+      try {
+        await saveRuntimeFilesToActiveEditorSlot(files);
+      } catch (error) {
+        setEditSaveNote(`保存に失敗しました: ${error?.message || error}`, "error");
+      } finally {
+        slotZipFileInput.value = "";
+      }
+    });
+  }
+
+  if (publishWorldBtn) {
+    publishWorldBtn.addEventListener("click", async () => {
+      setEditSaveNote("Supabase に保存中です...", "info");
+      try {
+        await uploadActiveEditorSlotZipToSupabase();
+      } catch (error) {
+        setEditSaveNote(`Supabase 保存に失敗しました: ${error?.message || error}`, "error");
+      }
+    });
+  }
+
+  if (editDetailStartLink && isEditorPage) {
+    editDetailStartLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await openThumbnailCaptureWorldForActiveSlot(event);
+      } catch (error) {
+        setEditSaveNote(`サムネ撮影用ワールドの起動に失敗しました: ${error?.message || error}`, "error");
+      }
+    });
+  }
+
   startLinks.forEach((link) => {
+    if (link === editDetailStartLink && isEditorPage) {
+      return;
+    }
     link.addEventListener("click", handleStartNavigation);
   });
 
   if (mapModalDownloadBtn) {
-    mapModalDownloadBtn.addEventListener("click", () => {
-      setLocalMapComment("ダウンロード機能はまだ未実装です。手元のファイルを読み込んで表示を開始してください。", "info");
-      closeMapModal();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+    mapModalDownloadBtn.addEventListener("click", async () => {
+      try {
+        await downloadSelectedPublicWorld();
+        closeMapModal();
+      } catch (error) {
+        setPublicViewerStatus(`ダウンロードに失敗しました: ${error?.message || error}`);
+      }
     });
+  }
+
+  if (isPublicPage) {
+    void fetchAndRenderPublicWorlds();
   }
 })();

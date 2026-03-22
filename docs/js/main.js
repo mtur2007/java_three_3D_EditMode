@@ -245,7 +245,12 @@ function applyConstructionFixedEnvMapToMaterial(mat) {
 }
 
 const canvas = document.getElementById('three-canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const THUMBNAIL_CAPTURE_MODE = String(new URLSearchParams(window.location.search).get('thumbnail_mode') || '').trim() === '1';
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  preserveDrawingBuffer: THUMBNAIL_CAPTURE_MODE,
+});
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
 const loadingBarFill = document.getElementById('loading-bar-fill');

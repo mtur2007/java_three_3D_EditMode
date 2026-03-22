@@ -47,6 +47,130 @@
       font-size: 12px;
       color: #c7ddff;
     }
+
+    .thumbnail-app[hidden] {
+      display: none !important;
+    }
+
+    .thumbnail-app {
+      position: fixed;
+      inset: 0;
+      background: #08111d;
+    }
+
+    .thumbnail-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: #08111d;
+    }
+
+    .thumbnail-toolbar {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 40;
+    }
+
+    .thumbnail-camera-btn,
+    .thumbnail-secondary-btn,
+    .thumbnail-primary-btn {
+      border: 1px solid rgba(156, 205, 255, 0.34);
+      color: #eaf4ff;
+      background: rgba(8, 20, 38, 0.88);
+      cursor: pointer;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
+      backdrop-filter: blur(8px);
+    }
+
+    .thumbnail-camera-btn {
+      width: 72px;
+      height: 72px;
+      border-radius: 999px;
+      font-size: 30px;
+    }
+
+    .thumbnail-secondary-btn,
+    .thumbnail-primary-btn {
+      min-height: 42px;
+      padding: 0 16px;
+      border-radius: 999px;
+      font-size: 14px;
+    }
+
+    .thumbnail-modal[hidden] {
+      display: none !important;
+    }
+
+    .thumbnail-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      display: grid;
+      place-items: center;
+      background: rgba(5, 10, 18, 0.76);
+      backdrop-filter: blur(4px);
+      padding: 24px;
+      box-sizing: border-box;
+    }
+
+    .thumbnail-modal-panel {
+      width: min(92vw, 760px);
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(154, 198, 255, 0.36);
+      background: rgba(12, 22, 39, 0.96);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+    }
+
+    .thumbnail-modal-panel h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+
+    .thumbnail-modal-panel p {
+      margin: 0;
+      color: #c7ddff;
+      font-size: 13px;
+    }
+
+    .thumbnail-preview-image {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(154, 198, 255, 0.26);
+      background: #09111d;
+    }
+
+    .thumbnail-modal-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .thumbnail-status {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      z-index: 40;
+      max-width: min(56vw, 520px);
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(154, 198, 255, 0.24);
+      background: rgba(8, 20, 38, 0.88);
+      color: #dcecff;
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
+      backdrop-filter: blur(8px);
+    }
   </style>
 </head>
 <body>
@@ -54,6 +178,26 @@
     <div class="boot-panel">
       <p class="boot-title">LOCAL RUNTIME VIEWER</p>
       <p class="boot-text">index.html を読み込んでいます。</p>
+    </div>
+  </div>
+
+  <div class="thumbnail-app" id="thumbnail-app" hidden>
+    <iframe class="thumbnail-frame" id="thumbnail-frame" title="Thumbnail Capture World"></iframe>
+    <div class="thumbnail-status" id="thumbnail-status">ワールドを読み込んでいます。</div>
+    <div class="thumbnail-toolbar">
+      <button class="thumbnail-secondary-btn" type="button" id="thumbnail-back-btn">編集ページへ戻る</button>
+      <button class="thumbnail-camera-btn" type="button" id="thumbnail-capture-btn" aria-label="写真を撮る" title="写真を撮る">📷</button>
+    </div>
+    <div class="thumbnail-modal" id="thumbnail-modal" hidden>
+      <div class="thumbnail-modal-panel">
+        <h2>サムネプレビュー</h2>
+        <p>この画像をスロットのサムネイルとして保存します。</p>
+        <img class="thumbnail-preview-image" id="thumbnail-preview-image" alt="サムネプレビュー" />
+        <div class="thumbnail-modal-actions">
+          <button class="thumbnail-secondary-btn" type="button" id="thumbnail-retake-btn">撮り直す</button>
+          <button class="thumbnail-primary-btn" type="button" id="thumbnail-apply-btn">サムネに設定する</button>
+        </div>
+      </div>
     </div>
   </div>
 
