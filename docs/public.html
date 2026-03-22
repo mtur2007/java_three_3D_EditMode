@@ -14,6 +14,7 @@
     <p class="brand">TOKYO DIORAMA / <span class="brand-glow-green">PUBLIC</span> VIEW</p>
     <div class="top-bar-actions">
       <span class="auth-chip" id="auth-chip">GUEST MODE</span>
+      <a class="ghost-btn" href="./assets.html">モデル配布へ</a>
       <a class="ghost-btn" href="./edit.html" data-auth-requires-login="true">編集ページへ</a>
       <button class="ghost-btn" type="button" id="auth-toggle-btn">ログイン</button>
     </div>
@@ -30,6 +31,7 @@
         </p>
         <div class="hero-actions">
           <a class="primary-btn" id="hero-start-link" href="./index.html">表示を開始する</a>
+          <a class="ghost-btn" href="./assets.html">都市 / 車両モデルを見る</a>
           <button class="ghost-btn" type="button" id="show-features-btn">公開ワールドの閲覧方法</button>
         </div>
       </div>
@@ -118,8 +120,15 @@
     <section class="fixed-modal__panel" role="dialog" aria-modal="true" aria-labelledby="map-modal-title">
       <button class="fixed-modal__close" type="button" id="map-modal-close" aria-label="閉じる">×</button>
       <p class="detail-label">選択中マップ</p>
-      <h3 id="map-modal-title">臨時 SAMPLE MAP / 渋谷</h3>
-      <p id="map-modal-desc">臨時公開用のサンプルマップです。検証用のためステータスは private sample です。</p>
+      <div class="modal-preview-panel">
+        <img class="modal-preview-image" id="map-modal-thumbnail" alt="選択中マップのサムネイル" hidden />
+        <div class="modal-preview-empty" id="map-modal-thumbnail-empty">NO THUMBNAIL</div>
+      </div>
+      <div class="modal-copy">
+        <h3 id="map-modal-title">臨時 SAMPLE MAP / 渋谷</h3>
+        <p class="modal-meta-line" id="map-modal-meta">published</p>
+        <p id="map-modal-desc">臨時公開用のサンプルマップです。検証用のためステータスは private sample です。</p>
+      </div>
       <div class="modal-action-row">
         <a class="primary-btn start-world-btn" id="map-modal-start-btn" href="./index.html?map=sample_shibuya">表示を開始する</a>
         <button class="ghost-btn download-world-btn" type="button" id="map-modal-download-btn">ダウンロードする</button>

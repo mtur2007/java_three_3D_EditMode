@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>都市を走る鉄道模型 | Model Library</title>
+  <meta name="description" content="都市モデルと列車モデルを読み込むための配布ページUIです。" />
+  <link rel="stylesheet" href="./css/public.css" />
+</head>
+<body data-auth-role="assets">
+  <div class="bg-noise" aria-hidden="true"></div>
+
+  <header class="top-bar">
+    <p class="brand">TOKYO DIORAMA / <span class="brand-glow-green">MODEL</span> LIBRARY</p>
+    <div class="top-bar-actions">
+      <span class="auth-chip" id="auth-chip">GUEST MODE</span>
+      <a class="ghost-btn" href="./public.html">公開ページへ</a>
+      <a class="ghost-btn" href="./edit.html">編集ページへ</a>
+      <button class="ghost-btn" type="button" id="auth-toggle-btn">ログイン</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero asset-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">MODEL DOWNLOAD & LOCAL LOAD</p>
+        <h1>都市モデル / 列車モデル</h1>
+        <p class="lead">
+          ワールドに追加する都市モデルと列車モデルを探して、ローカル環境へ読み込むための配布ページです。<br>
+          ログインすると、Supabase に保存された都市モデルと列車モデルを制限付きでダウンロードできます。
+        </p>
+        <div class="hero-actions">
+          <button class="primary-btn" type="button" id="asset-scroll-city-btn">都市モデルを見る</button>
+          <button class="ghost-btn" type="button" id="asset-scroll-train-btn">列車モデルを見る</button>
+        </div>
+      </div>
+
+      <aside class="status-board asset-status-board" aria-label="本日のダウンロード残量">
+        <p class="status-title">TODAY'S QUOTA</p>
+        <div class="quota-panel quota-panel-shared">
+          <p class="quota-label">都市 / 車両 共用</p>
+          <p class="quota-value" id="asset-shared-quota-value">-- <span>/ --</span></p>
+          <p class="quota-note" id="asset-shared-quota-note">都市モデルと列車モデルは同じ日次容量を共有します。</p>
+        </div>
+        <div class="quota-panel quota-panel-structure">
+          <p class="quota-label">構造物 ダウンロード</p>
+          <p class="quota-value" id="asset-structure-quota-value">400 KB <span>/ 400 KB</span></p>
+          <p class="quota-note">構造物素材は将来別ページで扱う想定です。</p>
+        </div>
+        <div class="status-row">
+          <span>現在の状態</span>
+          <strong class="on" id="asset-library-status">READY</strong>
+        </div>
+      </aside>
+    </section>
+
+    <section class="asset-library" aria-label="モデル一覧">
+      <div class="viewer-head">
+        <p class="meta-label">MODEL CATALOG</p>
+        <p class="meta-value">都市モデルと列車モデルの配布候補を一覧表示します</p>
+      </div>
+
+      <div class="asset-toolbar">
+        <div class="asset-filter-group" role="tablist" aria-label="モデル種別">
+          <button class="asset-filter-chip is-active" type="button" aria-pressed="true" data-asset-filter="all">すべて</button>
+          <button class="asset-filter-chip" type="button" aria-pressed="false" data-asset-filter="ct">都市モデル</button>
+          <button class="asset-filter-chip" type="button" aria-pressed="false" data-asset-filter="tr">列車モデル</button>
+        </div>
+        <div class="asset-filter-group" role="group" aria-label="ソート">
+          <button class="asset-filter-chip is-muted is-active" type="button" data-asset-sort="newest">新着順</button>
+          <button class="asset-filter-chip is-muted" type="button" data-asset-sort="size">容量順</button>
+        </div>
+      </div>
+
+      <p class="viewer-list-note" id="asset-list-message" aria-live="polite"></p>
+      <div class="asset-layout">
+        <section class="asset-grid" aria-label="モデルカード一覧" id="asset-grid">
+        </section>
+
+        <aside class="asset-detail-panel" aria-label="選択中モデルの詳細">
+          <p class="detail-label">選択中モデル</p>
+          <div class="asset-detail-hero">
+            <div class="asset-detail-preview">
+              <img id="asset-detail-thumbnail" alt="選択中モデルのサムネイル" hidden />
+              <div class="asset-detail-preview-empty" id="asset-detail-thumbnail-empty">NO THUMBNAIL</div>
+            </div>
+            <div>
+              <h2 id="asset-detail-title">モデルを選択してください</h2>
+              <p class="asset-detail-kind" id="asset-detail-kind">都市モデル / ct</p>
+            </div>
+          </div>
+          <p class="asset-detail-copy" id="asset-detail-description">左の一覧からモデルを選ぶと、詳細とダウンロード情報をここに表示します。</p>
+          <div class="asset-detail-stats">
+            <div><span>形式</span><strong id="asset-detail-format">--</strong></div>
+            <div><span>容量</span><strong id="asset-detail-size">--</strong></div>
+            <div><span>カテゴリ</span><strong id="asset-detail-category">--</strong></div>
+          </div>
+          <div class="asset-detail-callout">
+            <p class="asset-detail-callout-title">読み込みの流れ</p>
+            <p id="asset-detail-guide">1. ダウンロード  2. `public.html` または `edit.html` のローカル読込へ追加  3. ワールドを起動</p>
+          </div>
+          <div class="modal-action-row">
+            <button class="primary-btn download-world-btn" type="button" id="asset-download-btn" data-auth-protected>ダウンロードする</button>
+            <button class="ghost-btn start-world-btn" type="button" id="asset-guide-btn">読み込み手順を見る</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="features" aria-label="導入ガイド">
+      <article class="feature-card">
+        <p class="card-num">01</p>
+        <h2>モデルを選ぶ</h2>
+        <p>都市モデルと列車モデルをカテゴリごとに見比べて、読み込みたい素材を選択します。</p>
+      </article>
+      <article class="feature-card">
+        <p class="card-num">02</p>
+        <h2>容量を確認する</h2>
+        <p>都市 / 車両は 1日 100MB を共有、構造物は別枠 400KB の設計を前提に残量を表示します。</p>
+      </article>
+      <article class="feature-card">
+        <p class="card-num">03</p>
+        <h2>ローカルへ読み込む</h2>
+        <p>ダウンロードした素材を既存のローカルマップローダーへ渡して、ワールド上に反映する想定です。</p>
+      </article>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Train_EditMode_demo / Model Library UI Preview</p>
+  </footer>
+
+  <div class="fixed-modal auth-modal" id="auth-modal" aria-hidden="true">
+    <div class="fixed-modal__backdrop" data-auth-close></div>
+    <section class="fixed-modal__panel auth-modal__panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <button class="fixed-modal__close" type="button" id="auth-modal-close" aria-label="閉じる">×</button>
+      <p class="detail-label">DEMO SIGN-IN</p>
+      <h3 id="auth-modal-title">ログイン</h3>
+      <p>Supabase Auth を利用したメールアドレス認証です。</p>
+      <form class="auth-form" id="auth-form">
+        <label class="auth-field">
+          <span>表示名</span>
+          <input id="auth-display-name" name="displayName" type="text" placeholder="demo_editor" maxlength="40" />
+        </label>
+        <label class="auth-field">
+          <span>メールアドレス</span>
+          <input id="auth-email" name="email" type="email" placeholder="editor@example.com" required />
+        </label>
+        <label class="auth-field">
+          <span>パスワード</span>
+          <input id="auth-password" name="password" type="password" placeholder="password" autocomplete="current-password" required />
+        </label>
+        <div class="auth-form-actions">
+          <button class="primary-btn" type="submit">ログインする</button>
+          <button class="ghost-btn" type="button" id="auth-signup-btn">新規登録</button>
+          <button class="ghost-btn" type="button" data-auth-close>閉じる</button>
+        </div>
+      </form>
+      <p class="auth-message" id="auth-message" hidden></p>
+    </section>
+  </div>
+
+  <script type="module" src="./js/mock_auth.js"></script>
+  <script type="module" src="./js/assets.js"></script>
+</body>
+</html>

@@ -204,7 +204,10 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const mapCards = document.querySelectorAll(".map-card[data-map-key]");
   const mapModal = document.getElementById("map-modal");
   const mapModalTitle = document.getElementById("map-modal-title");
+  const mapModalMeta = document.getElementById("map-modal-meta");
   const mapModalDesc = document.getElementById("map-modal-desc");
+  const mapModalThumbnail = document.getElementById("map-modal-thumbnail");
+  const mapModalThumbnailEmpty = document.getElementById("map-modal-thumbnail-empty");
   const mapModalStartBtn = document.getElementById("map-modal-start-btn");
   const mapModalClose = document.getElementById("map-modal-close");
   const mapModalDownloadBtn = document.getElementById("map-modal-download-btn");
@@ -788,8 +791,23 @@ async function readEditorSlotThumbnailRecord(slotId) {
     if (mapModalTitle) {
       mapModalTitle.textContent = record.title;
     }
+    if (mapModalMeta) {
+      mapModalMeta.textContent = record.tags || "published";
+    }
     if (mapModalDesc) {
       mapModalDesc.textContent = record.description || "公開済みワールドです。";
+    }
+    if (mapModalThumbnail instanceof HTMLImageElement) {
+      if (record.thumbnailUrl) {
+        mapModalThumbnail.src = record.thumbnailUrl;
+        mapModalThumbnail.hidden = false;
+      } else {
+        mapModalThumbnail.removeAttribute("src");
+        mapModalThumbnail.hidden = true;
+      }
+    }
+    if (mapModalThumbnailEmpty) {
+      mapModalThumbnailEmpty.hidden = Boolean(record.thumbnailUrl);
     }
     if (mapModalStartBtn) {
       mapModalStartBtn.setAttribute("href", "#");
@@ -818,6 +836,8 @@ async function readEditorSlotThumbnailRecord(slotId) {
       throw new Error(error?.message || "ダウンロードURLの発行に失敗しました。");
     }
 
+    await incrementPublicWorldDownloadCount(record.id);
+
     const link = document.createElement("a");
     link.href = data.signedUrl;
     link.download = record.fileName || "world_data.zip";
@@ -843,6 +863,47 @@ async function readEditorSlotThumbnailRecord(slotId) {
       return "";
     }
     return data.signedUrl;
+  }
+
+  async function incrementPublicWorldDownloadCount(worldId) {
+    const normalizedWorldId = String(worldId || "").trim();
+    if (!normalizedWorldId) {
+      return;
+    }
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      return;
+    }
+    const { data, error } = await supabaseClient.rpc("increment_world_download_count", {
+      p_world_id: normalizedWorldId,
+    });
+    if (error) {
+      console.warn("[public] download count increment failed", error);
+      return;
+    }
+    const nextCount = Number(data?.download_count);
+    if (!Number.isFinite(nextCount)) {
+      return;
+    }
+    if (publicViewerSelectedWorld?.id === normalizedWorldId) {
+      publicViewerSelectedWorld.downloadCount = nextCount;
+      publicViewerSelectedWorld.tags = buildPublicWorldTags({
+        publishedAtLabel: publicViewerSelectedWorld.publishedAtLabel,
+        downloadCount: nextCount,
+      });
+    }
+  }
+
+  function buildPublicWorldTags({ publishedAtLabel, downloadCount }) {
+    const tags = ["published"];
+    if (publishedAtLabel) {
+      tags.push(publishedAtLabel);
+    }
+    if (Number.isFinite(downloadCount)) {
+      tags.push(`DL ${downloadCount}`);
+    }
+    return tags.join(" ・ ");
   }
 
   function renderPublicViewerPagination() {
@@ -968,12 +1029,23 @@ async function readEditorSlotThumbnailRecord(slotId) {
     const from = (publicViewerPage - 1) * PUBLIC_WORLD_PAGE_SIZE;
     const to = from + PUBLIC_WORLD_PAGE_SIZE - 1;
 
-    const { data, error, count } = await supabaseClient
+    let worldsQuery = await supabaseClient
       .from("worlds")
-      .select("id, title, description, published_at, world_zip_path, thumbnail_path", { count: "exact" })
+      .select("id, title, description, published_at, world_zip_path, thumbnail_path, download_count", { count: "exact" })
       .eq("status", "published")
       .order("published_at", { ascending: false, nullsFirst: false })
       .range(from, to);
+
+    if (worldsQuery.error && /download_count/i.test(String(worldsQuery.error.message || ""))) {
+      worldsQuery = await supabaseClient
+        .from("worlds")
+        .select("id, title, description, published_at, world_zip_path, thumbnail_path", { count: "exact" })
+        .eq("status", "published")
+        .order("published_at", { ascending: false, nullsFirst: false })
+        .range(from, to);
+    }
+
+    const { data, error, count } = worldsQuery;
 
     if (error) {
       if (publicMapGrid) {
@@ -1007,8 +1079,13 @@ async function readEditorSlotThumbnailRecord(slotId) {
           worldZipPath: String(record?.world_zip_path || "").trim(),
           thumbnailPath,
           thumbnailUrl,
+          publishedAtLabel: publishedAt,
+          downloadCount: Number(record?.download_count),
           fileName: String(record?.world_zip_path || "").split("/").filter(Boolean).pop() || "world_data.zip",
-          tags: `published ・ ${publishedAt}`,
+          tags: buildPublicWorldTags({
+            publishedAtLabel: publishedAt,
+            downloadCount: Number(record?.download_count),
+          }),
         };
       }))
       : [];
