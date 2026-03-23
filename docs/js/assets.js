@@ -101,7 +101,7 @@ async function loadQuotaStatus() {
       sharedQuotaValue.innerHTML = `-- <span>/ 100 MB</span>`;
     }
     if (sharedQuotaNote) {
-      sharedQuotaNote.textContent = "ログインすると本日の残量を表示します。";
+      sharedQuotaNote.textContent = "ログインすると今週の残量を表示します。";
     }
     return;
   }
@@ -136,7 +136,7 @@ async function loadQuotaStatus() {
     sharedQuotaValue.innerHTML = `${formatBytes(remaining)} <span>/ ${formatBytes(currentQuotaLimit || 104857600)}</span>`;
   }
   if (sharedQuotaNote) {
-    sharedQuotaNote.textContent = `本日使用量 ${formatBytes(currentQuotaUsed)} / 残り ${formatBytes(remaining)}`;
+    sharedQuotaNote.textContent = `今週の使用量 ${formatBytes(currentQuotaUsed)} / 残り ${formatBytes(remaining)}`;
   }
 }
 
