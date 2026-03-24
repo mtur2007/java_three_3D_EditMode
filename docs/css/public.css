@@ -764,6 +764,10 @@ a {
   font-weight: 700;
 }
 
+.edit-slot .slot-private.is-published {
+  color: #86efac;
+}
+
 .edit-slot .slot-id {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -833,6 +837,10 @@ a {
 .detail-private {
   color: #ff6b6b;
   font-weight: 700;
+}
+
+.detail-private.is-published {
+  color: #86efac;
 }
 
 .start-world-btn {

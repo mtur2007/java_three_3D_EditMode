@@ -558,6 +558,62 @@
       border: 1px solid rgba(255, 213, 122, 0.18);
       color: #ffe7b0;
     }
+    .note-save-preview {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      width: min(100%, 460px);
+      margin: 10px 0 14px;
+      padding: 4px 6px 4px 16px;
+      border-top: 1px solid rgba(96, 103, 113, 0.72);
+      border-bottom: 1px solid rgba(96, 103, 113, 0.72);
+      border-radius: 0;
+      background: rgba(22, 22, 24, 0.92);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+      overflow: hidden;
+    }
+    .note-save-preview .control-square-button {
+      min-width: auto;
+      height: 38px;
+      padding: 0 18px;
+      border: none;
+      border-right: 1px solid rgba(78, 82, 90, 0.9);
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      color: #f1f1f1;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+    .note-save-preview .control-square-button:disabled {
+      color: rgba(241, 241, 241, 0.38);
+      cursor: default;
+    }
+    .note-save-preview #manual-save-world-data {
+      margin-left: auto;
+      border-right: none;
+      border-left: 1px solid rgba(78, 82, 90, 0.9);
+      border-radius: 8px;
+      background: rgba(48, 48, 52, 0.96);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      color: #fbfbfb;
+      font-weight: 600;
+      gap: 8px;
+    }
+    .note-save-preview #manual-save-world-data svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+    }
     .grid {
       display: grid;
       gap: 16px;
@@ -615,8 +671,28 @@
         <li>ボタンを押すと配下が展開され、同時にそのモードに対応した内部処理が有効になります。</li>
       </ul>
       <div class="note">
-        画面上のアイコンは見た目が変わっていても、内部のモード名は <code>ui_toggle.js</code> のツリー名で動いています。
-        この manual もその名前を基準にしています。
+        [ 重要 : 編集内容の保存について ]<br> 
+        /// 編集内容が消失するのを防ぐため、必ずご確認ください。///<br><br> 
+
+        編集内容の保存は右上の「ワールド保存」ボタンから行うことができます。<br>
+        <span class="note-save-preview" aria-label="save-world-data ボタンを含む保存バーの見本">
+          <button class="control-square-button" type="button" disabled aria-label="元に戻す">↩︎</button>
+          <button class="control-square-button" type="button" disabled aria-label="やり直し">↪︎</button>
+          <button class="control-square-button" id="manual-save-world-data" type="button" aria-label="ワールド保存">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v10"></path>
+              <path d="M8.5 9.5 12 13l3.5-3.5"></path>
+              <path d="M5 15.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5"></path>
+            </svg>
+            <span>ワールド保存</span>
+          </button>
+        </span><br>
+        ボタンが押されると、編集内容が保存された zip ( 構造物 [ st_~ ] ) ファイルとなり、<br>
+        お使いのタブレットやPCにダウンロードされ保存されます。<br><br>
+
+        現在は、自動保存や、サービス内で保存するような機能はありません。<br>
+        (公開する際はサービス内で保存されます。)<br>
+        編集内容が消失するのを防ぐため、こまめな保存を推奨します。
       </div>
     </section>
 

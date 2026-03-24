@@ -236,6 +236,8 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const viewerMetaValue = document.getElementById("viewer-meta-value");
   const editSlots = Array.from(document.querySelectorAll(".edit-slot[data-slot]"));
   const detailTitle = document.getElementById("detail-title");
+  const detailTitleEditBtn = document.getElementById("detail-title-edit-btn");
+  const detailTitleInput = document.getElementById("detail-title-input");
   const detailDesc = document.getElementById("detail-desc");
   const editSaveNote = document.getElementById("edit-save-note");
   const saveSlotZipBtn = document.getElementById("save-slot-zip-btn");
@@ -254,6 +256,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   let editorSlotsState = [];
   let activeEditorSlotId = DEFAULT_EDITOR_SLOTS[0].slotId;
   const editorSlotThumbnailState = new Map();
+  let isEditingEditorSlotTitle = false;
   let publicViewerPage = 1;
   let publicViewerTotalPages = 1;
   let publicViewerSelectedWorld = null;
@@ -270,6 +273,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
       uploadedPath: "",
       uploadedAt: "",
       thumbnailCapturedAt: "",
+      remoteWorldId: "",
+      remoteTitle: "",
+      remoteStatus: "",
+      remoteThumbnailPath: "",
+      remoteThumbnailUrl: "",
+      remoteUpdatedAt: "",
     }));
   }
 
@@ -291,6 +300,8 @@ async function readEditorSlotThumbnailRecord(slotId) {
         const saved = slotMap.get(slot.slotId) || {};
         return {
           ...slot,
+          title: typeof saved.title === "string" && saved.title.trim() ? saved.title : slot.title,
+          status: typeof saved.status === "string" && saved.status.trim() ? saved.status : slot.status,
           fileName: typeof saved.fileName === "string" ? saved.fileName : "",
           fileSize: Number(saved.fileSize) || 0,
           cityFileName: typeof saved.cityFileName === "string" ? saved.cityFileName : "",
@@ -300,6 +311,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
           uploadedPath: typeof saved.uploadedPath === "string" ? saved.uploadedPath : "",
           uploadedAt: typeof saved.uploadedAt === "string" ? saved.uploadedAt : "",
           thumbnailCapturedAt: typeof saved.thumbnailCapturedAt === "string" ? saved.thumbnailCapturedAt : "",
+          remoteWorldId: "",
+          remoteTitle: "",
+          remoteStatus: "",
+          remoteThumbnailPath: "",
+          remoteThumbnailUrl: "",
+          remoteUpdatedAt: "",
         };
       });
     } catch (_error) {
@@ -329,6 +346,35 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
   function getEditorSlotById(slotId) {
     return editorSlotsState.find((slot) => slot.slotId === slotId) || null;
+  }
+
+  function getEditorSlotDisplayTitle(slot) {
+    return String(slot?.title || slot?.remoteTitle || "").trim() || "Untitled World";
+  }
+
+  function getEditorSlotDisplayStatus(slot) {
+    return String(slot?.remoteStatus || slot?.status || "private").trim() || "private";
+  }
+
+  function getEditorSlotThumbnailData(slot) {
+    const localRecord = editorSlotThumbnailState.get(String(slot?.slotId || "").trim()) || null;
+    const localDataUrl = String(localRecord?.dataUrl || "").trim();
+    if (localDataUrl) {
+      return { src: localDataUrl, isRemote: false };
+    }
+    const remoteUrl = String(slot?.remoteThumbnailUrl || "").trim();
+    if (remoteUrl) {
+      return { src: remoteUrl, isRemote: true };
+    }
+    return { src: "", isRemote: false };
+  }
+
+  function hasAvailableThumbnail(slot) {
+    const slotId = String(slot?.slotId || "").trim();
+    return Boolean(editorSlotThumbnailState.get(slotId)?.blob)
+      || Boolean(slot?.thumbnailCapturedAt)
+      || Boolean(String(slot?.remoteThumbnailPath || "").trim())
+      || Boolean(String(slot?.remoteThumbnailUrl || "").trim());
   }
 
   function formatSavedAt(value) {
@@ -375,15 +421,133 @@ async function readEditorSlotThumbnailRecord(slotId) {
     renderEditorSlots();
   }
 
+  async function fetchAndBindOwnWorldSummaries() {
+    if (!isEditorPage) {
+      return;
+    }
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    if (!supabaseClient) {
+      return;
+    }
+    const session = await supabaseBridge.getSession();
+    const userId = String(session?.user?.id || "").trim();
+    if (!userId) {
+      editorSlotsState.forEach((slot) => {
+        slot.remoteWorldId = "";
+        slot.remoteTitle = "";
+        slot.remoteStatus = "";
+        slot.remoteThumbnailPath = "";
+        slot.remoteThumbnailUrl = "";
+        slot.remoteUpdatedAt = "";
+      });
+      renderEditorSlots();
+      return;
+    }
+
+    const { data, error } = await supabaseClient
+      .from("worlds")
+      .select("id, title, status, thumbnail_path, updated_at")
+      .eq("owner_id", userId)
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(DEFAULT_EDITOR_SLOTS.length);
+
+    if (error) {
+      setEditSaveNote(`自分の投稿情報の取得に失敗しました: ${error.message || error}`, "error");
+      return;
+    }
+
+    const remoteItems = Array.isArray(data)
+      ? await Promise.all(data.map(async (record) => {
+        const thumbnailPath = String(record?.thumbnail_path || "").trim();
+        return {
+          id: String(record?.id || "").trim(),
+          title: String(record?.title || "").trim(),
+          status: String(record?.status || "").trim(),
+          updatedAt: String(record?.updated_at || "").trim(),
+          thumbnailPath,
+          thumbnailUrl: thumbnailPath ? await getSignedStorageUrl(thumbnailPath, 60 * 10) : "",
+        };
+      }))
+      : [];
+
+    editorSlotsState.forEach((slot, index) => {
+      const remote = remoteItems[index] || null;
+      slot.remoteWorldId = String(remote?.id || "").trim();
+      slot.remoteTitle = String(remote?.title || "").trim();
+      slot.remoteStatus = String(remote?.status || "").trim();
+      slot.remoteThumbnailPath = String(remote?.thumbnailPath || "").trim();
+      slot.remoteThumbnailUrl = String(remote?.thumbnailUrl || "").trim();
+      slot.remoteUpdatedAt = String(remote?.updatedAt || "").trim();
+    });
+    renderEditorSlots();
+  }
+
   function syncPublishButtonState(slot) {
     if (!publishWorldBtn) {
       return;
     }
-    const hasThumbnail = Boolean(editorSlotThumbnailState.get(String(slot?.slotId || "").trim())?.blob)
-      || Boolean(slot?.thumbnailCapturedAt);
+    const hasThumbnail = hasAvailableThumbnail(slot);
     const enabled = Boolean(slot?.fileName) && hasThumbnail;
     publishWorldBtn.disabled = !enabled;
     publishWorldBtn.setAttribute("aria-disabled", enabled ? "false" : "true");
+  }
+
+  function setEditorTitleEditingState(editing) {
+    isEditingEditorSlotTitle = Boolean(editing && detailTitleInput && detailTitle);
+    if (detailTitle) {
+      detailTitle.hidden = isEditingEditorSlotTitle;
+    }
+    if (detailTitleInput) {
+      detailTitleInput.hidden = !isEditingEditorSlotTitle;
+    }
+    if (detailTitleEditBtn) {
+      detailTitleEditBtn.setAttribute("aria-pressed", isEditingEditorSlotTitle ? "true" : "false");
+      detailTitleEditBtn.setAttribute("aria-label", isEditingEditorSlotTitle ? "タイトル編集を確定" : "タイトルを編集");
+      detailTitleEditBtn.title = isEditingEditorSlotTitle ? "タイトル編集を確定" : "タイトルを編集";
+    }
+  }
+
+  function startEditingActiveEditorSlotTitle() {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot || !detailTitleInput) {
+      return;
+    }
+    detailTitleInput.value = String(activeSlot.title || activeSlot.remoteTitle || "").trim();
+    setEditorTitleEditingState(true);
+    window.setTimeout(() => {
+      detailTitleInput.focus();
+      detailTitleInput.select();
+    }, 0);
+  }
+
+  function commitActiveEditorSlotTitle() {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot || !detailTitleInput) {
+      setEditorTitleEditingState(false);
+      renderEditorSlots();
+      return;
+    }
+    const fallbackTitle = String(activeSlot.remoteTitle || "").trim() || `WORLD_${String(activeSlot.slotId || "").split("-").pop() || "1"}`;
+    const nextTitle = String(detailTitleInput.value || "").trim() || fallbackTitle;
+    const changed = nextTitle !== String(activeSlot.title || "").trim();
+    activeSlot.title = nextTitle;
+    setEditorTitleEditingState(false);
+    if (changed) {
+      persistEditorSlotsMeta();
+      renderEditorSlots();
+      setEditSaveNote(`${activeSlot.label} のタイトルを「${nextTitle}」に更新しました。`, "success");
+      return;
+    }
+    renderEditorSlots();
+  }
+
+  function cancelActiveEditorSlotTitleEdit() {
+    if (!isEditingEditorSlotTitle) {
+      return;
+    }
+    setEditorTitleEditingState(false);
+    renderEditorSlots();
   }
 
   function renderEditorSlots() {
@@ -398,13 +562,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
       const titleEl = button.querySelector("[data-slot-title]");
       const thumbImg = button.querySelector("[data-slot-thumb-image]");
       if (titleEl) {
-        titleEl.textContent = slot.title;
+        titleEl.textContent = getEditorSlotDisplayTitle(slot);
       }
-      const thumbnailRecord = editorSlotThumbnailState.get(slot.slotId) || null;
+      const thumbnailData = getEditorSlotThumbnailData(slot);
       if (thumbImg instanceof HTMLImageElement) {
-        const dataUrl = String(thumbnailRecord?.dataUrl || "").trim();
-        if (dataUrl) {
-          thumbImg.src = dataUrl;
+        if (thumbnailData.src) {
+          thumbImg.src = thumbnailData.src;
           thumbImg.hidden = false;
         } else {
           thumbImg.removeAttribute("src");
@@ -415,13 +578,17 @@ async function readEditorSlotThumbnailRecord(slotId) {
       button.classList.toggle("has-saved-zip", Boolean(slot.fileName));
       const statusEl = button.querySelector(".slot-private");
       if (statusEl) {
-        statusEl.textContent = slot.uploadedAt
+        const slotStatusText = slot.remoteWorldId
+          ? getEditorSlotDisplayStatus(slot)
+          : slot.uploadedAt
           ? "private / uploaded"
           : slot.thumbnailCapturedAt
             ? "private / thumbnail-ready"
           : slot.fileName
             ? "private / saved"
             : slot.status;
+        statusEl.textContent = slotStatusText;
+        statusEl.classList.toggle("is-published", /published/i.test(String(slotStatusText || "")));
       }
     });
 
@@ -430,12 +597,29 @@ async function readEditorSlotThumbnailRecord(slotId) {
       return;
     }
     if (detailTitle) {
-      detailTitle.textContent = `${activeSlot.label} / ${activeSlot.title}`;
+      detailTitle.textContent = `${activeSlot.label} / ${getEditorSlotDisplayTitle(activeSlot)}`;
+    }
+    if (detailTitleInput && !isEditingEditorSlotTitle) {
+      detailTitleInput.value = getEditorSlotDisplayTitle(activeSlot);
     }
     if (detailDesc) {
+      const statusLabel = getEditorSlotDisplayStatus(activeSlot);
+      const detailStatusClass = /published/i.test(String(statusLabel || "")) ? "detail-private is-published" : "detail-private";
+      const localTitle = String(activeSlot.title || "").trim();
+      const remoteTitle = String(activeSlot.remoteTitle || "").trim();
+      const titleInfo = activeSlot.remoteWorldId
+        ? remoteTitle && remoteTitle !== localTitle
+          ? `<br>公開中タイトル: ${remoteTitle}<br>次回公開タイトル: ${getEditorSlotDisplayTitle(activeSlot)}`
+          : `<br>投稿タイトル: ${getEditorSlotDisplayTitle(activeSlot)}`
+        : "";
+      const remoteInfo = activeSlot.remoteWorldId
+        ? `${titleInfo}<br>公開情報: ${statusLabel}${activeSlot.remoteUpdatedAt ? `<br>最終更新: ${formatSavedAt(activeSlot.remoteUpdatedAt)}` : ""}`
+        : "";
       detailDesc.innerHTML = activeSlot.fileName
-        ? `公開前の編集ワールドです。現在の状態: <span class="detail-private">${activeSlot.status}</span><br>構造物: ${activeSlot.fileName}${activeSlot.cityFileName ? `<br>都市: ${activeSlot.cityFileName}` : `<br>都市: 未保存`}<br>車両: ${activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存"}${activeSlot.thumbnailCapturedAt ? `<br>サムネ設定: ${formatSavedAt(activeSlot.thumbnailCapturedAt)}` : `<br>サムネ設定: 未設定`}${activeSlot.uploadedAt ? `<br>Supabase 保存先: ${activeSlot.uploadedPath}` : ""}`
-        : `公開前の編集ワールドです。現在の状態: <span class="detail-private">${activeSlot.status}</span><br>このスロットにはまだ st_*.zip が保存されていません。`;
+        ? `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}<br>構造物: ${activeSlot.fileName}${activeSlot.cityFileName ? `<br>都市: ${activeSlot.cityFileName}` : `<br>都市: 未保存`}<br>車両: ${activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存"}${activeSlot.thumbnailCapturedAt ? `<br>サムネ設定: ${formatSavedAt(activeSlot.thumbnailCapturedAt)}` : String(activeSlot.remoteThumbnailPath || "").trim() ? `<br>サムネ設定: Supabase 保存済み` : `<br>サムネ設定: 未設定`}${activeSlot.uploadedAt ? `<br>Supabase 保存先: ${activeSlot.uploadedPath}` : ""}`
+        : activeSlot.remoteWorldId
+          ? `自分の投稿情報を読み込みました。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}<br>このスロットにローカルの st_*.zip はまだ保存されていません。`
+          : `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span><br>このスロットにはまだ st_*.zip が保存されていません。`;
     }
     if (slotZipName) {
       slotZipName.textContent = activeSlot.fileName || "未保存";
@@ -453,11 +637,10 @@ async function readEditorSlotThumbnailRecord(slotId) {
       slotZipSavedAt.textContent = formatSavedAt(activeSlot.savedAt);
       slotZipSavedAt.classList.toggle("meta-value-empty", !activeSlot.savedAt);
     }
-    const activeThumbnailRecord = editorSlotThumbnailState.get(activeSlot.slotId) || null;
-    const activeThumbnailDataUrl = String(activeThumbnailRecord?.dataUrl || "").trim();
+    const activeThumbnailData = getEditorSlotThumbnailData(activeSlot);
     if (slotThumbnailPreview instanceof HTMLImageElement) {
-      if (activeThumbnailDataUrl) {
-        slotThumbnailPreview.src = activeThumbnailDataUrl;
+      if (activeThumbnailData.src) {
+        slotThumbnailPreview.src = activeThumbnailData.src;
         slotThumbnailPreview.hidden = false;
       } else {
         slotThumbnailPreview.removeAttribute("src");
@@ -465,7 +648,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       }
     }
     if (slotThumbnailEmpty) {
-      slotThumbnailEmpty.hidden = Boolean(activeThumbnailDataUrl);
+      slotThumbnailEmpty.hidden = Boolean(activeThumbnailData.src);
     }
     syncPublishButtonState(activeSlot);
   }
@@ -612,7 +795,9 @@ async function readEditorSlotThumbnailRecord(slotId) {
       throw new Error("先に st_*.zip を保存してください。");
     }
     const thumbnailRecord = editorSlotThumbnailState.get(activeSlot.slotId) || await readEditorSlotThumbnailRecord(activeSlot.slotId);
-    if (!thumbnailRecord?.blob) {
+    const existingThumbnailPath = String(activeSlot.remoteThumbnailPath || "").trim();
+    const hasLocalThumbnailBlob = Boolean(thumbnailRecord?.blob);
+    if (!hasLocalThumbnailBlob && !existingThumbnailPath) {
       throw new Error("先にサムネを撮影して保存してください。");
     }
 
@@ -636,14 +821,18 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
     const fileName = String(zipRecord.name || activeSlot.fileName || "").trim();
     const uploadPath = `worlds/${userId}/${activeSlot.slotId}/${fileName}`;
-    const thumbnailPath = `worlds/${userId}/${activeSlot.slotId}/thumbnail.webp`;
+    const thumbnailPath = hasLocalThumbnailBlob
+      ? `worlds/${userId}/${activeSlot.slotId}/thumbnail.webp`
+      : existingThumbnailPath;
     const zipBlob = new Blob(
       [zipRecord.buffer],
       { type: zipRecord.type || "application/zip" }
     );
-    const thumbnailBlob = thumbnailRecord.blob instanceof Blob
-      ? thumbnailRecord.blob
-      : new Blob([thumbnailRecord.blob], { type: thumbnailRecord.mimeType || "image/webp" });
+    const thumbnailBlob = hasLocalThumbnailBlob
+      ? (thumbnailRecord.blob instanceof Blob
+        ? thumbnailRecord.blob
+        : new Blob([thumbnailRecord.blob], { type: thumbnailRecord.mimeType || "image/webp" }))
+      : null;
     const previousUploadedPath = String(activeSlot.uploadedPath || "").trim();
     const removedPreviousFile = previousUploadedPath && previousUploadedPath !== uploadPath;
 
@@ -667,18 +856,20 @@ async function readEditorSlotThumbnailRecord(slotId) {
       throw new Error(error.message || "Supabase へのアップロードに失敗しました。");
     }
 
-    const { error: thumbnailUploadError } = await supabaseClient.storage
-      .from(SUPABASE_EDITOR_BUCKET)
-      .upload(thumbnailPath, thumbnailBlob, {
-        upsert: true,
-        contentType: thumbnailRecord.mimeType || "image/webp",
-      });
-
-    if (thumbnailUploadError) {
-      await supabaseClient.storage
+    if (thumbnailBlob) {
+      const { error: thumbnailUploadError } = await supabaseClient.storage
         .from(SUPABASE_EDITOR_BUCKET)
-        .remove([uploadPath]);
-      throw new Error(thumbnailUploadError.message || "サムネイルのアップロードに失敗しました。");
+        .upload(thumbnailPath, thumbnailBlob, {
+          upsert: true,
+          contentType: thumbnailRecord.mimeType || "image/webp",
+        });
+
+      if (thumbnailUploadError) {
+        await supabaseClient.storage
+          .from(SUPABASE_EDITOR_BUCKET)
+          .remove([uploadPath]);
+        throw new Error(thumbnailUploadError.message || "サムネイルのアップロードに失敗しました。");
+      }
     }
 
     const description = `${activeSlot.label} uploaded from editor-lab`;
@@ -706,9 +897,10 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
     const { data: worldData, error: rpcError } = await supabaseClient.rpc(rpcName, rpcArgs);
     if (rpcError) {
+      const cleanupPaths = thumbnailBlob ? [uploadPath, thumbnailPath] : [uploadPath];
       await supabaseClient.storage
         .from(SUPABASE_EDITOR_BUCKET)
-        .remove([uploadPath, thumbnailPath]);
+        .remove(cleanupPaths);
       if (removedPreviousFile) {
         // The previous file was already removed before upload. Keep metadata untouched and surface the DB error.
         activeSlot.uploadedPath = "";
@@ -1497,6 +1689,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     renderEditorSlots();
     setEditSaveNote("保存する から st_*.zip を選択してください。", "info");
     void refreshEditorSlotThumbnails();
+    void fetchAndBindOwnWorldSummaries();
   }
   syncFeaturesGuideButtonLabel();
 
@@ -1547,6 +1740,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     }
     if (isEditorPage) {
       setEditorLabVisibility({ signedIn: Boolean(session?.user) });
+      void fetchAndBindOwnWorldSummaries();
     }
   });
 
@@ -1597,6 +1791,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       if (!slotId || slotId === activeEditorSlotId) {
         return;
       }
+      cancelActiveEditorSlotTitleEdit();
       activeEditorSlotId = slotId;
       renderEditorSlots();
       setEditSaveNote(`${button.querySelector(".slot-id")?.textContent || "選択中の枠"} を選択しました。`, "info");
@@ -1634,6 +1829,36 @@ async function readEditorSlotThumbnailRecord(slotId) {
       } catch (error) {
         setEditSaveNote(`Supabase 保存に失敗しました: ${error?.message || error}`, "error");
       }
+    });
+  }
+
+  if (detailTitleEditBtn) {
+    detailTitleEditBtn.addEventListener("click", () => {
+      if (isEditingEditorSlotTitle) {
+        commitActiveEditorSlotTitle();
+        return;
+      }
+      startEditingActiveEditorSlotTitle();
+    });
+  }
+
+  if (detailTitleInput) {
+    detailTitleInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitActiveEditorSlotTitle();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelActiveEditorSlotTitleEdit();
+      }
+    });
+    detailTitleInput.addEventListener("blur", () => {
+      if (!isEditingEditorSlotTitle) {
+        return;
+      }
+      commitActiveEditorSlotTitle();
     });
   }
 
