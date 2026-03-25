@@ -12,9 +12,9 @@ create table if not exists public.downloadable_assets (
   status text not null default 'draft',
   created_at timestamptz not null default now(),
   constraint downloadable_assets_kind_check
-    check (kind in ('ct', 'tr')),
+    check (kind in ('st', 'ct', 'tr')),
   constraint downloadable_assets_quota_group_check
-    check (quota_group = 'asset_shared'),
+    check (quota_group in ('asset_shared', 'structure_download')),
   constraint downloadable_assets_status_check
     check (status in ('draft', 'published', 'archived')),
   constraint downloadable_assets_file_size_nonnegative
@@ -30,23 +30,22 @@ create table if not exists public.download_quota_policies (
     check (daily_limit_bytes >= 0)
 );
 
-create table if not exists public.asset_download_logs (
+create table if not exists public.downloaded_bytes_log (
   id bigint generated always as identity primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  asset_id uuid not null references public.downloadable_assets(id) on delete cascade,
-  quota_group text not null,
-  downloaded_bytes bigint not null,
-  constraint asset_download_logs_group_check
-    check (quota_group in ('asset_shared', 'structure_download')),
-  constraint asset_download_logs_bytes_nonnegative
-    check (downloaded_bytes >= 0)
+  user_id uuid not null unique references auth.users(id) on delete cascade,
+  asset_downloaded_bytes bigint not null default 0,
+  structure_downloaded_bytes bigint not null default 0,
+  constraint downloaded_bytes_log_asset_nonnegative
+    check (asset_downloaded_bytes >= 0),
+  constraint downloaded_bytes_log_structure_nonnegative
+    check (structure_downloaded_bytes >= 0)
 );
 
 create index if not exists downloadable_assets_created_at_idx
   on public.downloadable_assets(created_at desc);
 
-create index if not exists asset_download_logs_user_group_idx
-  on public.asset_download_logs(user_id, quota_group);
+create index if not exists downloaded_bytes_log_user_id_idx
+  on public.downloaded_bytes_log(user_id);
 
 insert into public.download_quota_policies (quota_group, daily_limit_bytes)
 values
@@ -57,7 +56,7 @@ set daily_limit_bytes = excluded.daily_limit_bytes;
 
 alter table public.downloadable_assets enable row level security;
 alter table public.download_quota_policies enable row level security;
-alter table public.asset_download_logs enable row level security;
+alter table public.downloaded_bytes_log enable row level security;
 
 drop policy if exists "downloadable_assets_select_authenticated" on public.downloadable_assets;
 create policy "downloadable_assets_select_authenticated"
@@ -88,9 +87,9 @@ for select
 to authenticated
 using (true);
 
-drop policy if exists "asset_download_logs_select_own" on public.asset_download_logs;
-create policy "asset_download_logs_select_own"
-on public.asset_download_logs
+drop policy if exists "downloaded_bytes_log_select_own" on public.downloaded_bytes_log;
+create policy "downloaded_bytes_log_select_own"
+on public.downloaded_bytes_log
 for select
 to authenticated
 using (user_id = auth.uid());
@@ -110,7 +109,7 @@ to authenticated
 using (
   bucket_id = 'asset-files'
   and (storage.foldername(name))[1] = 'assets'
-  and (storage.foldername(name))[2] in ('ct', 'tr')
+  and (storage.foldername(name))[2] in ('st', 'ct', 'tr')
 );
 
 create policy "asset_files_insert_authenticated"
@@ -120,7 +119,7 @@ to authenticated
 with check (
   bucket_id = 'asset-files'
   and (storage.foldername(name))[1] = 'assets'
-  and (storage.foldername(name))[2] in ('ct', 'tr')
+  and (storage.foldername(name))[2] in ('st', 'ct', 'tr')
 );
 
 create policy "asset_files_update_authenticated"
@@ -130,12 +129,12 @@ to authenticated
 using (
   bucket_id = 'asset-files'
   and (storage.foldername(name))[1] = 'assets'
-  and (storage.foldername(name))[2] in ('ct', 'tr')
+  and (storage.foldername(name))[2] in ('st', 'ct', 'tr')
 )
 with check (
   bucket_id = 'asset-files'
   and (storage.foldername(name))[1] = 'assets'
-  and (storage.foldername(name))[2] in ('ct', 'tr')
+  and (storage.foldername(name))[2] in ('st', 'ct', 'tr')
 );
 
 create or replace function public.reserve_asset_download(
@@ -159,6 +158,7 @@ declare
   v_asset public.downloadable_assets%rowtype;
   v_daily_limit_bytes bigint;
   v_used_bytes bigint;
+  v_remaining_bytes bigint;
 begin
   v_uid := auth.uid();
   if v_uid is null then
@@ -185,28 +185,42 @@ begin
     raise exception 'quota policy not found';
   end if;
 
-  select coalesce(sum(downloaded_bytes), 0)
-  into v_used_bytes
-  from public.asset_download_logs
-  where user_id = v_uid
-    and quota_group = v_asset.quota_group;
+  insert into public.downloaded_bytes_log (user_id)
+  values (v_uid)
+  on conflict (user_id) do nothing;
+
+  if v_asset.quota_group = 'structure_download' then
+    select dbl.structure_downloaded_bytes
+    into v_used_bytes
+    from public.downloaded_bytes_log as dbl
+    where dbl.user_id = v_uid
+    for update;
+  else
+    select dbl.asset_downloaded_bytes
+    into v_used_bytes
+    from public.downloaded_bytes_log as dbl
+    where dbl.user_id = v_uid
+    for update;
+  end if;
+
+  v_used_bytes := coalesce(v_used_bytes, 0);
 
   if v_used_bytes + v_asset.file_size_bytes > v_daily_limit_bytes then
     raise exception 'daily download quota exceeded';
   end if;
 
-  insert into public.asset_download_logs (
-    user_id,
-    asset_id,
-    quota_group,
-    downloaded_bytes
-  )
-  values (
-    v_uid,
-    v_asset.id,
-    v_asset.quota_group,
-    v_asset.file_size_bytes
-  );
+  if v_asset.quota_group = 'structure_download' then
+    update public.downloaded_bytes_log
+    set structure_downloaded_bytes = structure_downloaded_bytes + v_asset.file_size_bytes
+    where user_id = v_uid;
+  else
+    update public.downloaded_bytes_log
+    set asset_downloaded_bytes = asset_downloaded_bytes + v_asset.file_size_bytes
+    where user_id = v_uid;
+  end if;
+
+  v_used_bytes := v_used_bytes + v_asset.file_size_bytes;
+  v_remaining_bytes := greatest(0, v_daily_limit_bytes - v_used_bytes);
 
   return query
   select
@@ -215,18 +229,125 @@ begin
     v_asset.file_size_bytes,
     v_asset.quota_group,
     v_daily_limit_bytes,
-    v_used_bytes + v_asset.file_size_bytes,
-    greatest(0, v_daily_limit_bytes - (v_used_bytes + v_asset.file_size_bytes));
+    v_used_bytes,
+    v_remaining_bytes;
 end;
 $$;
 
 grant execute on function public.reserve_asset_download(uuid) to authenticated;
 
-create or replace function public.reset_asset_download_logs()
+create or replace function public.reserve_world_download(
+  p_world_id uuid
+)
+returns table (
+  world_id uuid,
+  world_zip_path text,
+  world_zip_bytes bigint,
+  daily_limit_bytes bigint,
+  used_bytes bigint,
+  remaining_bytes bigint
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid;
+  v_world public.worlds%rowtype;
+  v_daily_limit_bytes bigint;
+  v_used_bytes bigint;
+  v_remaining_bytes bigint;
+begin
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select w.*
+  into v_world
+  from public.worlds as w
+  where w.id = p_world_id
+    and w.status = 'published';
+
+  if not found then
+    raise exception 'world not found or not published';
+  end if;
+
+  select dqp.daily_limit_bytes
+  into v_daily_limit_bytes
+  from public.download_quota_policies as dqp
+  where dqp.quota_group = 'structure_download';
+
+  if v_daily_limit_bytes is null then
+    raise exception 'quota policy not found';
+  end if;
+
+  insert into public.downloaded_bytes_log (user_id)
+  values (v_uid)
+  on conflict (user_id) do nothing;
+
+  select dbl.structure_downloaded_bytes
+  into v_used_bytes
+  from public.downloaded_bytes_log as dbl
+  where dbl.user_id = v_uid
+  for update;
+
+  v_used_bytes := coalesce(v_used_bytes, 0);
+
+  if v_used_bytes + coalesce(v_world.world_zip_bytes, 0) > v_daily_limit_bytes then
+    raise exception 'structure download quota exceeded';
+  end if;
+
+  update public.downloaded_bytes_log
+  set structure_downloaded_bytes = structure_downloaded_bytes + coalesce(v_world.world_zip_bytes, 0)
+  where user_id = v_uid;
+
+  v_used_bytes := v_used_bytes + coalesce(v_world.world_zip_bytes, 0);
+  v_remaining_bytes := greatest(0, v_daily_limit_bytes - v_used_bytes);
+
+  return query
+  select
+    v_world.id,
+    v_world.world_zip_path,
+    coalesce(v_world.world_zip_bytes, 0),
+    v_daily_limit_bytes,
+    v_used_bytes,
+    v_remaining_bytes;
+end;
+$$;
+
+grant execute on function public.reserve_world_download(uuid) to authenticated;
+
+create or replace function public.reset_asset_downloaded_bytes_log()
 returns void
 language sql
 security definer
 set search_path = public
 as $$
-  truncate table public.asset_download_logs;
+  update public.downloaded_bytes_log
+  set
+    asset_downloaded_bytes = 0;
+$$;
+
+create or replace function public.reset_structure_downloaded_bytes_log()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.downloaded_bytes_log
+  set
+    structure_downloaded_bytes = 0;
+$$;
+
+create or replace function public.reset_downloaded_bytes_log()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.downloaded_bytes_log
+  set
+    asset_downloaded_bytes = 0,
+    structure_downloaded_bytes = 0;
 $$;

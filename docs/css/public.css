@@ -947,11 +947,19 @@ h2 {
   gap: 12px;
 }
 
+.asset-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .quota-panel {
   padding: 14px;
   border-radius: 14px;
   border: 1px solid rgba(154, 196, 255, 0.2);
   background: rgba(6, 15, 31, 0.66);
+  opacity: 0.42;
+  transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .quota-panel-shared {
@@ -964,6 +972,12 @@ h2 {
   background:
     radial-gradient(circle at 12% 18%, rgba(255, 205, 112, 0.14), transparent 38%),
     rgba(25, 15, 8, 0.58);
+}
+
+.quota-panel.is-active {
+  opacity: 1;
+  border-color: rgba(144, 216, 255, 0.65);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.2);
 }
 
 .quota-label {
@@ -1021,11 +1035,24 @@ h2 {
   background: rgba(5, 13, 29, 0.52);
   color: #ddecff;
   cursor: pointer;
+  transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 
 .asset-filter-chip.is-active {
   border-color: rgba(144, 216, 255, 0.85);
   background: linear-gradient(135deg, rgba(84, 213, 255, 0.22), rgba(78, 142, 255, 0.24));
+}
+
+.asset-filter-chip[data-library-asset] {
+  opacity: 0.48;
+}
+
+.asset-filter-chip[data-library-asset]:hover {
+  opacity: 0.78;
+}
+
+.asset-filter-chip[data-library-asset].is-active {
+  opacity: 1;
 }
 
 .asset-filter-chip.is-muted {
@@ -1414,6 +1441,7 @@ h2 {
 
   .asset-hero,
   .asset-layout,
+  .asset-quota-grid,
   .admin-hero,
   .admin-layout {
     grid-template-columns: 1fr;

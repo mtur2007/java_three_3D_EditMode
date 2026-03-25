@@ -10,6 +10,8 @@ const EDITOR_THUMBNAIL_DB_NAME = "mouse-demo-editor-slot-thumbnails";
 const EDITOR_THUMBNAIL_STORE_NAME = "slotThumbnails";
 const SUPABASE_EDITOR_BUCKET = "world-files";
 const PUBLIC_WORLD_PAGE_SIZE = 6;
+const QUOTA_GROUP_STRUCTURE = "structure_download";
+const PUBLIC_LIBRARY_ASSET_VALUES = new Set(["st", "ct", "tr"]);
 const RUNTIME_FILE_PREFIXES = {
   st: "構造物",
   ct: "マップ",
@@ -226,8 +228,15 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const localMapSelectBtn = document.getElementById("local-map-select-btn");
   const localMapStartBtn = document.getElementById("local-map-start-btn");
   const localMapComment = document.getElementById("local-map-comment");
+  const publicStructureQuotaValue = document.getElementById("public-structure-quota-value");
+  const publicStructureQuotaNote = document.getElementById("public-structure-quota-note");
+  const publicStructureQuotaPanel = document.getElementById("public-structure-quota-panel");
+  const publicSharedQuotaPanel = document.getElementById("public-shared-quota-panel");
   const viewerAuthLocked = document.getElementById("viewer-auth-locked");
   const viewerArea = document.getElementById("viewer-area");
+  const modelLibrarySection = document.getElementById("model-library");
+  const modelLibraryBody = document.getElementById("model-library-body");
+  const publicLibraryAssetButtons = Array.from(document.querySelectorAll("[data-library-asset]"));
   const editorAuthLocked = document.getElementById("editor-auth-locked");
   const editLab = document.getElementById("edit-lab");
   const publicMapGrid = document.getElementById("public-map-grid");
@@ -260,6 +269,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   let publicViewerPage = 1;
   let publicViewerTotalPages = 1;
   let publicViewerSelectedWorld = null;
+  let currentPublicLibraryAsset = "st";
 
   function createDefaultEditorSlots() {
     return DEFAULT_EDITOR_SLOTS.map((slot) => ({
@@ -937,12 +947,63 @@ async function readEditorSlotThumbnailRecord(slotId) {
     return Number.isFinite(page) && page > 0 ? page : 1;
   }
 
+  function getPublicLibraryAssetFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const asset = String(params.get("asset") || "st").trim().toLowerCase();
+    return PUBLIC_LIBRARY_ASSET_VALUES.has(asset) ? asset : "st";
+  }
+
   function setPublicViewerPageInUrl(page) {
     const params = new URLSearchParams(window.location.search);
     params.set("page", String(page));
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
+  }
+
+  function setPublicLibraryStateInUrl(asset, page = 1) {
+    const params = new URLSearchParams(window.location.search);
+    params.set("asset", asset);
+    params.set("page", String(page));
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }
+
+  function syncPublicLibraryButtons() {
+    publicLibraryAssetButtons.forEach((button) => {
+      const asset = String(button.dataset.libraryAsset || "").trim();
+      const active = asset === currentPublicLibraryAsset;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function syncPublicQuotaPanels() {
+    if (publicStructureQuotaPanel) {
+      publicStructureQuotaPanel.classList.toggle("is-active", currentPublicLibraryAsset === "st");
+    }
+    if (publicSharedQuotaPanel) {
+      publicSharedQuotaPanel.classList.toggle("is-active", currentPublicLibraryAsset === "ct" || currentPublicLibraryAsset === "tr");
+    }
+  }
+
+  function syncPublicLibrarySectionVisibility() {
+    const showingStructure = currentPublicLibraryAsset === "st";
+    if (viewerAuthLocked) {
+      viewerAuthLocked.hidden = !showingStructure;
+    }
+    if (viewerArea) {
+      viewerArea.hidden = !showingStructure;
+    }
+    if (modelLibrarySection) {
+      modelLibrarySection.hidden = false;
+    }
+    if (modelLibraryBody) {
+      modelLibraryBody.hidden = showingStructure;
+    }
+    syncPublicLibraryButtons();
+    syncPublicQuotaPanels();
   }
 
   function setPublicViewerStatus(message) {
@@ -955,11 +1016,18 @@ async function readEditorSlotThumbnailRecord(slotId) {
     if (!isPublicPage) {
       return;
     }
+    const showingStructure = currentPublicLibraryAsset === "st";
     if (viewerAuthLocked) {
-      viewerAuthLocked.hidden = signedIn;
+      viewerAuthLocked.hidden = !showingStructure || signedIn;
     }
     if (viewerArea) {
-      viewerArea.hidden = !signedIn;
+      viewerArea.hidden = !showingStructure || !signedIn;
+    }
+    if (modelLibrarySection) {
+      modelLibrarySection.hidden = false;
+    }
+    if (modelLibraryBody) {
+      modelLibraryBody.hidden = showingStructure;
     }
   }
 
@@ -1020,14 +1088,28 @@ async function readEditorSlotThumbnailRecord(slotId) {
       throw new Error("Supabase 接続が初期化されていません。");
     }
 
+    const { data: reserveData, error: reserveError } = await supabaseClient.rpc("reserve_world_download", {
+      p_world_id: record.id,
+    });
+    if (reserveError) {
+      throw new Error(reserveError.message || "構造物ダウンロード容量の確認に失敗しました。");
+    }
+
+    const reserved = Array.isArray(reserveData) ? reserveData[0] : reserveData;
+    const reservedPath = String(reserved?.world_zip_path || record.worldZipPath || "").trim();
+    if (!reservedPath) {
+      throw new Error("ダウンロード対象のワールドパスが見つかりません。");
+    }
+
     const { data, error } = await supabaseClient.storage
       .from(SUPABASE_EDITOR_BUCKET)
-      .createSignedUrl(record.worldZipPath, 60);
+      .createSignedUrl(reservedPath, 60);
 
     if (error || !data?.signedUrl) {
       throw new Error(error?.message || "ダウンロードURLの発行に失敗しました。");
     }
 
+    await loadPublicStructureQuotaStatus();
     await incrementPublicWorldDownloadCount(record.id);
 
     const link = document.createElement("a");
@@ -1085,6 +1167,58 @@ async function readEditorSlotThumbnailRecord(slotId) {
         downloadCount: nextCount,
       });
     }
+  }
+
+  function formatQuotaBytes(bytes) {
+    const size = Number(bytes) || 0;
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  async function loadPublicStructureQuotaStatus() {
+    if (!(publicStructureQuotaValue && publicStructureQuotaNote)) {
+      return;
+    }
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    const session = await supabaseBridge?.getSession?.();
+    if (!supabaseClient || !session?.user) {
+      publicStructureQuotaValue.innerHTML = `-- <span>/ 400 KB</span>`;
+      publicStructureQuotaNote.textContent = "ログインすると構造物ダウンロードの残量を表示します。";
+      return;
+    }
+
+    const [
+      { data: policyData, error: policyError },
+      { data: logData, error: logError },
+    ] = await Promise.all([
+      supabaseClient
+        .from("download_quota_policies")
+        .select("daily_limit_bytes")
+        .eq("quota_group", QUOTA_GROUP_STRUCTURE)
+        .maybeSingle(),
+      supabaseClient
+        .from("downloaded_bytes_log")
+        .select("structure_downloaded_bytes")
+        .eq("user_id", session.user.id)
+        .maybeSingle(),
+    ]);
+
+    if (policyError || logError) {
+      publicStructureQuotaNote.textContent = "残量の取得に失敗しました。";
+      return;
+    }
+
+    const limit = Number(policyData?.daily_limit_bytes) || 409600;
+    const used = Number(logData?.structure_downloaded_bytes) || 0;
+    const remaining = Math.max(0, limit - used);
+    publicStructureQuotaValue.innerHTML = `${formatQuotaBytes(remaining)} <span>/ ${formatQuotaBytes(limit)}</span>`;
+    publicStructureQuotaNote.textContent = `今週の使用量 ${formatQuotaBytes(used)} / 残り ${formatQuotaBytes(remaining)}`;
   }
 
   function buildPublicWorldTags({ publishedAtLabel, downloadCount }) {
@@ -1203,6 +1337,9 @@ async function readEditorSlotThumbnailRecord(slotId) {
     const session = await supabaseBridge.getSession();
     const signedIn = Boolean(session?.user);
     setPublicViewerVisibility({ signedIn });
+    if (currentPublicLibraryAsset !== "st") {
+      return;
+    }
     if (!signedIn) {
       if (publicMapGrid) {
         publicMapGrid.innerHTML = "";
@@ -1669,9 +1806,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
   restoreCachedRuntimeMap().finally(() => {
     detectFallbackMapData();
   });
+  void loadPublicStructureQuotaStatus();
   if (isPublicPage) {
+    currentPublicLibraryAsset = getPublicLibraryAssetFromUrl();
     publicViewerPage = getPublicViewerPageFromUrl();
-    setPublicViewerPageInUrl(publicViewerPage);
+    setPublicLibraryStateInUrl(currentPublicLibraryAsset, publicViewerPage);
+    syncPublicLibrarySectionVisibility();
     setPublicViewerVisibility({ signedIn: false });
     setPublicViewerStatus("ログイン後に公開ワールドを取得します。");
   }
@@ -1737,12 +1877,37 @@ async function readEditorSlotThumbnailRecord(slotId) {
     const session = event?.detail?.session || null;
     if (isPublicPage) {
       void fetchAndRenderPublicWorlds();
+      void loadPublicStructureQuotaStatus();
     }
     if (isEditorPage) {
       setEditorLabVisibility({ signedIn: Boolean(session?.user) });
       void fetchAndBindOwnWorldSummaries();
     }
   });
+
+  if (publicLibraryAssetButtons.length > 0) {
+    publicLibraryAssetButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextAsset = String(button.dataset.libraryAsset || "").trim().toLowerCase();
+        if (!PUBLIC_LIBRARY_ASSET_VALUES.has(nextAsset) || nextAsset === currentPublicLibraryAsset) {
+          return;
+        }
+        currentPublicLibraryAsset = nextAsset;
+        publicViewerPage = 1;
+        setPublicLibraryStateInUrl(currentPublicLibraryAsset, publicViewerPage);
+        syncPublicLibrarySectionVisibility();
+        if (nextAsset === "st") {
+          void fetchAndRenderPublicWorlds();
+        }
+        window.dispatchEvent(new CustomEvent("mouse-demo-public-asset-change", {
+          detail: {
+            asset: currentPublicLibraryAsset,
+            page: publicViewerPage,
+          },
+        }));
+      });
+    });
+  }
 
   if (mapCards.length > 0) {
     const preselected = document.querySelector(".map-card.is-active[data-map-key]");

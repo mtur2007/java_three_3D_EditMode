@@ -259,6 +259,9 @@ let loadingReady = false;
 let renderedFramesSinceReady = 0;
 let loadingReadyAt = 0;
 let publicRuntimeMapCleanupPending = false;
+let runtimeMapLoadedUiStatePending = false;
+let runtimeMapStructurePostProcessReady = false;
+let runtimeMapStructurePostProcessRequired = false;
 const LOADING_STABLE_FRAMES = 20;
 const LOADING_MIN_WAIT_MS = 450;
 
@@ -272,6 +275,45 @@ async function cleanupPublicRuntimeMapRecordOnLoadComplete() {
   } catch (err) {
     console.warn('runtime map cleanup failed', err);
   }
+}
+
+function flushRuntimeMapLoadedUiState() {
+  const structurePostProcessSettled = !runtimeMapStructurePostProcessRequired || runtimeMapStructurePostProcessReady;
+  if (!runtimeMapLoadedUiStatePending || !structurePostProcessSettled) {
+    return;
+  }
+  console.info('[runtime][load-complete] flushRuntimeMapLoadedUiState', {
+    loadingDone,
+    loadingReady,
+    renderedFramesSinceReady,
+    loadingReadyAt,
+    runtimeMapStructurePostProcessReady,
+    runtimeMapStructurePostProcessRequired,
+  });
+  runtimeMapLoadedUiStatePending = false;
+  runtimeMapStructurePostProcessRequired = false;
+  applyRuntimeMapLoadedUiState();
+}
+
+function markRuntimeMapStructurePostProcessReady(reason = 'unknown') {
+  if (!runtimeMapStructurePostProcessRequired) {
+    console.info('[runtime][load-complete] structure post process ready ignored', {
+      reason,
+      runtimeMapLoadedUiStatePending,
+      runtimeMapStructurePostProcessRequired,
+    });
+    return;
+  }
+  runtimeMapStructurePostProcessReady = true;
+  console.info('[runtime][load-complete] structure post process ready', {
+    reason,
+    loadingDone,
+    loadingReady,
+    structureGenerationReplayPending,
+    structureLinkRebuildTimerActive: Boolean(structureLinkRebuildTimer),
+    runtimeMapStructurePostProcessRequired,
+  });
+  flushRuntimeMapLoadedUiState();
 }
 
 function positionLoadingOverlayToCanvas() {
@@ -309,18 +351,52 @@ function setLoadingProgress(loaded, total, url = '') {
   }
 }
 
-function hideLoadingOverlay() {
-  if (!loadingOverlay || loadingDone) { return; }
+function restartLoadingOverlay(message = '読み込み中...') {
+  if (!loadingOverlay) { return; }
+  loadingDone = false;
+  loadingReady = false;
+  renderedFramesSinceReady = 0;
+  loadingReadyAt = 0;
+  loadingOverlay.classList.remove('is-hidden');
+  if (loadingBarFill) {
+    loadingBarFill.style.width = '0%';
+  }
+  if (loadingText) {
+    loadingText.textContent = message;
+  }
+  positionLoadingOverlayToCanvas();
+}
+
+function hideLoadingOverlayElement() {
+  if (!loadingOverlay) { return; }
+  requestAnimationFrame(() => {
+    loadingOverlay.classList.add('is-hidden');
+  });
+}
+
+function completeLoadingOverlayState(message = '読み込み完了') {
   loadingDone = true;
   if (loadingBarFill) {
     loadingBarFill.style.width = '100%';
   }
   if (loadingText) {
-    loadingText.textContent = '読み込み完了';
+    loadingText.textContent = message;
   }
-  requestAnimationFrame(() => {
-    loadingOverlay.classList.add('is-hidden');
+}
+
+function hideLoadingOverlay() {
+  if (!loadingOverlay || loadingDone) { return; }
+  console.info('[runtime][load-complete] hideLoadingOverlay', {
+    loadingReady,
+    renderedFramesSinceReady,
+    loadingReadyAt,
+    elapsedMs: loadingReadyAt > 0 ? Math.round(performance.now() - loadingReadyAt) : 0,
   });
+  completeLoadingOverlayState('読み込み完了');
+  if (!runtimeMapLoadedUiStatePending) {
+    hideLoadingOverlayElement();
+  }
+  flushRuntimeMapLoadedUiState();
   void cleanupPublicRuntimeMapRecordOnLoadComplete();
 }
 
@@ -328,17 +404,38 @@ function tryFinishLoadingOverlay() {
   if (loadingDone) { return; }
   if (!loadingReady) { return; }
   const elapsed = loadingReadyAt > 0 ? (performance.now() - loadingReadyAt) : 0;
-  if (renderedFramesSinceReady < LOADING_STABLE_FRAMES || elapsed < LOADING_MIN_WAIT_MS) {
+  const stableRenderReady = renderedFramesSinceReady >= LOADING_STABLE_FRAMES && elapsed >= LOADING_MIN_WAIT_MS;
+  const structurePostProcessReady = !runtimeMapLoadedUiStatePending || runtimeMapStructurePostProcessReady;
+  console.info('[runtime][load-complete] tryFinishLoadingOverlay', {
+    renderedFramesSinceReady,
+    requiredFrames: LOADING_STABLE_FRAMES,
+    elapsedMs: Math.round(elapsed),
+    requiredMs: LOADING_MIN_WAIT_MS,
+    stableRenderReady,
+    structurePostProcessReady,
+    canFinish: stableRenderReady && structurePostProcessReady,
+  });
+  if (!stableRenderReady) {
     if (loadingText) {
       loadingText.textContent = `描画準備中... (${Math.min(renderedFramesSinceReady, LOADING_STABLE_FRAMES)}/${LOADING_STABLE_FRAMES})`;
     }
     return;
   }
-  hideLoadingOverlay();
+  if (!structurePostProcessReady) {
+    if (loadingText) {
+      loadingText.textContent = '構造物の読込仕上げ中...';
+    }
+    return;
+  }
+  if (runtimeMapLoadedUiStatePending) {
+    flushRuntimeMapLoadedUiState();
+    return;
+  }
 }
 
 function markLoadingReady() {
   if (loadingReady) { return; }
+  console.info('[runtime][load-complete] markLoadingReady');
   loadingReady = true;
   loadingReadyAt = performance.now();
   renderedFramesSinceReady = 0;
@@ -1761,7 +1858,10 @@ let differenceSpaceTransformMode = 'none';
       .filter((pin) => Array.isArray(pin?.userData?.linkedStructureObjectIds))
       .filter((pin) => pin.userData.linkedStructureObjectIds.length > 0)
       .filter((pin) => !pin?.userData?.structureLinkedRestored);
-    if (pins.length < 1) { return true; }
+    if (pins.length < 1) {
+      markRuntimeMapStructurePostProcessReady('linked-objects-none');
+      return true;
+    }
 
     const templateMap = collectStructureTemplatesByObjectId();
     let missing = false;
@@ -1813,6 +1913,7 @@ let differenceSpaceTransformMode = 'none';
       scheduleRebuildStructureLinkedObjects();
       return false;
     }
+    markRuntimeMapStructurePostProcessReady(missing ? 'linked-objects-max-retry' : 'linked-objects-complete');
     return true;
   }
 
@@ -8144,15 +8245,20 @@ function forEachNodeMaterial(node, callback) {
 
 function toTrainBasicMaterial(mat) {
   if (!mat) { return mat; }
-  if (mat.isMeshBasicMaterial) { return mat.clone ? mat.clone() : mat; }
-  const next = new THREE.MeshBasicMaterial({
-    map: mat.map || null,
-    color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
-    transparent: Boolean(mat.transparent),
-    opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
-    side: mat.side,
-    alphaTest: typeof mat.alphaTest === 'number' ? mat.alphaTest : 0,
-  });
+  const next = mat.isMeshBasicMaterial
+    ? (mat.clone ? mat.clone() : mat)
+    : new THREE.MeshBasicMaterial({
+      map: mat.map || null,
+      color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
+      transparent: Boolean(mat.transparent),
+      opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
+      side: mat.side,
+      alphaTest: typeof mat.alphaTest === 'number' ? mat.alphaTest : 0,
+    });
+  next.transparent = false;
+  next.depthTest = true;
+  next.depthWrite = true;
+  next.alphaTest = Math.max(typeof next.alphaTest === 'number' ? next.alphaTest : 0, 0.05);
   next.needsUpdate = true;
   return next;
 }
@@ -8590,6 +8696,11 @@ if (previewStartBtn) {
     await triggerRuntimeMapLoadFromStartButton();
   });
 }
+
+if (IS_RUNTIME_LOCAL_VIEW) {
+  void triggerRuntimeMapLoadFromStartButton();
+}
+
 // リンクからインナー（プレビュー）に戻す処理
 const showIntroLink = document.getElementById('show-intro-link');
 async function restorePreview() {
@@ -11006,6 +11117,10 @@ function applyStructureDataPayload(data) {
     });
     return false;
   }
+  if (runtimeMapLoadedUiStatePending) {
+    runtimeMapStructurePostProcessRequired = true;
+    runtimeMapStructurePostProcessReady = false;
+  }
   clearStructurePinnedPins();
   const loadedRuns = Array.isArray(data.generationRuns)
     ? data.generationRuns.map((run) => ({
@@ -11124,6 +11239,7 @@ function replayStructureGenerationRunsFromStructureData() {
     }
     if (pendingRunCount < 1 || !hasRemainingRuns) {
       structureGenerationReplayPending = false;
+      markRuntimeMapStructurePostProcessReady('pins-replay-complete');
       return true;
     }
     structureGenerationReplayPending = false;
@@ -12792,11 +12908,26 @@ function activatePublicRuntimeObjectViewMode() {
   updateStructurePinnedVisibility();
 }
 
+function applyRuntimeMapLoadedUiState() {
+  completeLoadingOverlayState('読み込み完了');
+  clearCreateHistory();
+  clearDifferenceHistory();
+  UIevent('rail', 'inactive');
+  UIevent('structure', 'inactive');
+  UIevent('edit', 'inactive');
+  UIevent('see', 'active');
+  hideLoadingOverlayElement();
+}
+
 async function loadRuntimeMapFromPublicUpload() {
   const searchParams = new URLSearchParams(window.location.search);
   if (!IS_RUNTIME_LOCAL_VIEW) {
     return false;
   }
+  restartLoadingOverlay('runtime map 読み込み中...');
+  runtimeMapLoadedUiStatePending = true;
+  runtimeMapStructurePostProcessReady = false;
+  runtimeMapStructurePostProcessRequired = false;
 
   const loadRuntimeMapFallbackFromFolder = async () => {
     const manifestUrl = '../map_data/manifest.json';
@@ -13171,6 +13302,12 @@ async function loadRuntimeMapFromPublicUpload() {
 
   const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit object' : 'public object';
   const statusText = `${runtimeLabel} 読込完了: ${loadedNames.join(', ')}`;
+  console.info('[runtime][load-complete] loadRuntimeMapFromPublicUpload finished restore phase', {
+    runtimeLabel,
+    loadedNames,
+    loadingDone,
+    loadingReady,
+  });
   setMapLoadStatusText(statusText);
   if (railConstructionStatus) { railConstructionStatus.textContent = statusText; }
   updateDifferenceStatus(statusText);
@@ -13179,6 +13316,10 @@ async function loadRuntimeMapFromPublicUpload() {
     activatePublicRuntimeObjectViewMode();
     publicRuntimeMapCleanupPending = true;
   }
+  if (!runtimeMapStructurePostProcessRequired) {
+    markRuntimeMapStructurePostProcessReady('runtime-load-no-async-postprocess');
+  }
+  markLoadingReady();
   return true;
 }
 
@@ -27733,6 +27874,10 @@ export function UIevent (uiID, toggle){
   scheduleClampUiPanels();
   if ( uiID === 'see' ){ if ( toggle === 'active' ){
     console.log( 'see _active' )
+    UIevent('rail', 'inactive');
+    UIevent('structure', 'inactive');
+    UIevent('edit', 'inactive');
+
     OperationMode = 0
     search_object = false
     choice_object = false

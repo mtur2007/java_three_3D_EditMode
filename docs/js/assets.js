@@ -1,12 +1,14 @@
 const ASSET_BUCKET = "asset-files";
 const QUOTA_GROUP_SHARED = "asset_shared";
 const QUOTA_GROUP_STRUCTURE = "structure_download";
+const ASSET_PAGE_SIZE = 6;
 
 const sharedQuotaValue = document.getElementById("asset-shared-quota-value");
 const sharedQuotaNote = document.getElementById("asset-shared-quota-note");
 const libraryStatus = document.getElementById("asset-library-status");
 const listMessage = document.getElementById("asset-list-message");
 const assetGrid = document.getElementById("asset-grid");
+const assetPagination = document.getElementById("asset-pagination");
 const filterButtons = Array.from(document.querySelectorAll("[data-asset-filter]"));
 const sortButtons = Array.from(document.querySelectorAll("[data-asset-sort]"));
 const scrollCityBtn = document.getElementById("asset-scroll-city-btn");
@@ -29,6 +31,33 @@ let currentFilter = "all";
 let currentSort = "newest";
 let currentQuotaLimit = 0;
 let currentQuotaUsed = 0;
+let currentPage = 1;
+
+function getAssetPageFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const page = Number.parseInt(params.get("page") || "1", 10);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+function getAssetFilterFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const asset = String(params.get("asset") || "").trim().toLowerCase();
+  if (asset === "ct" || asset === "tr") {
+    return asset;
+  }
+  return "all";
+}
+
+function setAssetPageInUrl(page) {
+  const params = new URLSearchParams(window.location.search);
+  params.set("page", String(page));
+  if (currentFilter === "ct" || currentFilter === "tr") {
+    params.set("asset", currentFilter);
+  }
+  const nextQuery = params.toString();
+  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+  window.history.replaceState({}, "", nextUrl);
+}
 
 function getSupabaseClient() {
   return window.mouseDemoSupabase?.client || null;
@@ -87,10 +116,19 @@ async function createSignedUrl(path, expiresInSeconds = 60 * 10) {
   if (!supabase || !normalizedPath) {
     return "";
   }
-  const { data } = await supabase.storage
-    .from(ASSET_BUCKET)
-    .createSignedUrl(normalizedPath, expiresInSeconds);
-  return String(data?.signedUrl || "");
+  try {
+    const { data, error } = await supabase.storage
+      .from(ASSET_BUCKET)
+      .createSignedUrl(normalizedPath, expiresInSeconds);
+    if (error) {
+      console.warn("[assets] thumbnail signed url failed", normalizedPath, error);
+      return "";
+    }
+    return String(data?.signedUrl || "");
+  } catch (error) {
+    console.warn("[assets] thumbnail signed url threw", normalizedPath, error);
+    return "";
+  }
 }
 
 async function loadQuotaStatus() {
@@ -106,30 +144,31 @@ async function loadQuotaStatus() {
     return;
   }
 
-  const [{ data: policyData, error: policyError }, { data: logData, error: logError }] = await Promise.all([
+  const [
+    { data: sharedPolicyData, error: sharedPolicyError },
+    { data: logData, error: logError },
+  ] = await Promise.all([
     supabase
       .from("download_quota_policies")
       .select("quota_group, daily_limit_bytes")
       .eq("quota_group", QUOTA_GROUP_SHARED)
       .maybeSingle(),
     supabase
-      .from("asset_download_logs")
-      .select("downloaded_bytes, quota_group")
+      .from("downloaded_bytes_log")
+      .select("asset_downloaded_bytes")
       .eq("user_id", session.user.id)
-      .eq("quota_group", QUOTA_GROUP_SHARED),
+      .maybeSingle(),
   ]);
 
-  if (policyError || logError) {
+  if (sharedPolicyError || logError) {
     if (sharedQuotaNote) {
       sharedQuotaNote.textContent = "残量の取得に失敗しました。";
     }
     return;
   }
 
-  currentQuotaLimit = Number(policyData?.daily_limit_bytes) || 0;
-  currentQuotaUsed = Array.isArray(logData)
-    ? logData.reduce((sum, row) => sum + (Number(row?.downloaded_bytes) || 0), 0)
-    : 0;
+  currentQuotaLimit = Number(sharedPolicyData?.daily_limit_bytes) || 0;
+  currentQuotaUsed = Number(logData?.asset_downloaded_bytes) || 0;
   const remaining = Math.max(0, currentQuotaLimit - currentQuotaUsed);
 
   if (sharedQuotaValue) {
@@ -172,7 +211,7 @@ async function fetchAssets() {
     return;
   }
 
-  assets = await Promise.all((data || []).map(async (row) => ({
+  assets = (data || []).map((row) => ({
     id: String(row.id || "").trim(),
     kind: String(row.kind || "").trim(),
     title: String(row.title || "Untitled Asset").trim(),
@@ -180,14 +219,27 @@ async function fetchAssets() {
     filePath: String(row.file_path || "").trim(),
     fileSizeBytes: Number(row.file_size_bytes) || 0,
     thumbnailPath: String(row.thumbnail_path || "").trim(),
-    thumbnailUrl: await createSignedUrl(String(row.thumbnail_path || "").trim()),
+    thumbnailUrl: "",
     createdAt: String(row.created_at || "").trim(),
-  })));
+  }));
 
   if (!selectedAssetId && assets.length > 0) {
     selectedAssetId = assets[0].id;
   }
   setLibraryStatus("READY", true);
+  renderAssets();
+  void hydrateAssetThumbnails();
+}
+
+async function hydrateAssetThumbnails() {
+  if (!assets.length) {
+    return;
+  }
+  const updatedAssets = await Promise.all(assets.map(async (asset) => ({
+    ...asset,
+    thumbnailUrl: asset.thumbnailPath ? await createSignedUrl(asset.thumbnailPath) : "",
+  })));
+  assets = updatedAssets;
   renderAssets();
 }
 
@@ -204,21 +256,72 @@ function applyFiltersAndSort() {
   return items;
 }
 
+function renderPagination(totalItems) {
+  if (!assetPagination) {
+    return;
+  }
+  assetPagination.innerHTML = "";
+  const totalPages = Math.max(1, Math.ceil(totalItems / ASSET_PAGE_SIZE));
+  if (currentPage > totalPages) {
+    currentPage = totalPages;
+  }
+  if (totalPages <= 1) {
+    return;
+  }
+
+  const buttons = [];
+  buttons.push({ label: "前へ", page: Math.max(1, currentPage - 1), disabled: currentPage <= 1 });
+  for (let page = 1; page <= totalPages; page += 1) {
+    buttons.push({ label: String(page), page, active: page === currentPage, disabled: false });
+  }
+  buttons.push({ label: "次へ", page: Math.min(totalPages, currentPage + 1), disabled: currentPage >= totalPages });
+
+  buttons.forEach((config) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = config.label;
+    button.disabled = Boolean(config.disabled);
+    if (config.active) {
+      button.classList.add("is-active");
+    }
+      button.addEventListener("click", () => {
+        if (config.disabled || config.page === currentPage) {
+          return;
+        }
+        currentPage = config.page;
+        setAssetPageInUrl(currentPage);
+        renderAssets();
+        assetGrid?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    assetPagination.appendChild(button);
+  });
+}
+
 function renderAssets() {
   if (!assetGrid) {
     return;
   }
   assetGrid.innerHTML = "";
-  const items = applyFiltersAndSort();
-  if (items.length < 1) {
+  const allItems = applyFiltersAndSort();
+  if (allItems.length < 1) {
+    if (assetPagination) {
+      assetPagination.innerHTML = "";
+    }
     setListMessage("表示できるモデルがありません。");
     renderDetail(null);
     return;
   }
 
-  if (!items.some((asset) => asset.id === selectedAssetId)) {
-    selectedAssetId = items[0].id;
+  if (!allItems.some((asset) => asset.id === selectedAssetId)) {
+    selectedAssetId = allItems[0].id;
   }
+
+  const totalPages = Math.max(1, Math.ceil(allItems.length / ASSET_PAGE_SIZE));
+  if (currentPage > totalPages) {
+    currentPage = totalPages;
+  }
+  const pageFrom = (currentPage - 1) * ASSET_PAGE_SIZE;
+  const items = allItems.slice(pageFrom, pageFrom + ASSET_PAGE_SIZE);
 
   items.forEach((asset, index) => {
     const article = document.createElement("article");
@@ -232,7 +335,9 @@ function renderAssets() {
     if (asset.kind === "tr") {
       preview.classList.add(index % 2 === 0 ? "asset-card-preview-train" : "asset-card-preview-train-alt");
     } else {
-      preview.classList.add(index % 2 === 0 ? "asset-card-preview-alt" : "");
+      if (index % 2 === 0) {
+        preview.classList.add("asset-card-preview-alt");
+      }
     }
     if (asset.thumbnailUrl) {
       const img = document.createElement("img");
@@ -273,9 +378,10 @@ function renderAssets() {
     assetGrid.appendChild(article);
   });
 
-  const selected = items.find((asset) => asset.id === selectedAssetId) || items[0];
+  const selected = allItems.find((asset) => asset.id === selectedAssetId) || allItems[0];
   renderDetail(selected);
-  setListMessage(`${items.length}件のモデルを表示しています。`);
+  renderPagination(allItems.length);
+  setListMessage(`${allItems.length}件中 ${pageFrom + 1} - ${Math.min(allItems.length, pageFrom + items.length)}件を表示しています。`);
 }
 
 function renderDetail(asset) {
@@ -370,6 +476,8 @@ async function downloadSelectedAsset() {
 if (scrollCityBtn) {
   scrollCityBtn.addEventListener("click", () => {
     currentFilter = "ct";
+    currentPage = 1;
+    setAssetPageInUrl(currentPage);
     filterButtons.forEach((button) => {
       const active = String(button.dataset.assetFilter || "") === "ct";
       button.classList.toggle("is-active", active);
@@ -383,6 +491,8 @@ if (scrollCityBtn) {
 if (scrollTrainBtn) {
   scrollTrainBtn.addEventListener("click", () => {
     currentFilter = "tr";
+    currentPage = 1;
+    setAssetPageInUrl(currentPage);
     filterButtons.forEach((button) => {
       const active = String(button.dataset.assetFilter || "") === "tr";
       button.classList.toggle("is-active", active);
@@ -396,6 +506,8 @@ if (scrollTrainBtn) {
 filterButtons.forEach((button) => {
   button.addEventListener("click", () => {
     currentFilter = String(button.dataset.assetFilter || "all").trim();
+    currentPage = 1;
+    setAssetPageInUrl(currentPage);
     filterButtons.forEach((target) => {
       const active = target === button;
       target.classList.toggle("is-active", active);
@@ -405,9 +517,20 @@ filterButtons.forEach((button) => {
   });
 });
 
+window.addEventListener("mouse-demo-public-asset-change", (event) => {
+  const nextAsset = String(event?.detail?.asset || "").trim().toLowerCase();
+  if (nextAsset !== "ct" && nextAsset !== "tr") {
+    return;
+  }
+  currentFilter = nextAsset;
+  currentPage = Number(event?.detail?.page) > 0 ? Number(event.detail.page) : 1;
+  renderAssets();
+});
+
 sortButtons.forEach((button) => {
   button.addEventListener("click", () => {
     currentSort = String(button.dataset.assetSort || "newest").trim();
+    currentPage = 1;
     sortButtons.forEach((target) => {
       target.classList.toggle("is-active", target === button);
     });
@@ -437,5 +560,7 @@ window.addEventListener("mouse-demo-auth-change", async () => {
   await fetchAssets();
 });
 
+currentFilter = getAssetFilterFromUrl();
+currentPage = getAssetPageFromUrl();
 await loadQuotaStatus();
 await fetchAssets();

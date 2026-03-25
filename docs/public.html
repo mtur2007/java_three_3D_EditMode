@@ -14,7 +14,6 @@
     <p class="brand">TOKYO DIORAMA / <span class="brand-glow-green">PUBLIC</span> VIEW</p>
     <div class="top-bar-actions">
       <span class="auth-chip" id="auth-chip">GUEST MODE</span>
-      <a class="ghost-btn" href="./assets.html">モデル配布へ</a>
       <a class="ghost-btn" href="./edit.html" data-auth-requires-login="true">編集ページへ</a>
       <button class="ghost-btn" type="button" id="auth-toggle-btn">ログイン</button>
     </div>
@@ -27,10 +26,10 @@
         <h1>都市を走る鉄道模型</h1>
         <p class="lead">
           ユーザによる編集が行われたワールドが公開されています。<br>
-          データをダウンロードしてお試しください。
+          構造物データのダウンロードと、都市 / 車両モデルの取得をこのページから行えます。
         </p>
         <div class="hero-actions">
-          <a class="ghost-btn" href="./assets.html">都市 / 車両モデルを見る</a>
+          <button class="ghost-btn" type="button" data-scroll-target="#model-library">都市 / 車両モデルを見る</button>
           <button class="ghost-btn" type="button" id="show-features-btn">公開ワールドの閲覧方法</button>
         </div>
       </div>
@@ -59,7 +58,32 @@
             </div>
             <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
           </div>
+
         </aside>
+      </div>
+    </section>
+
+    <section class="asset-library" aria-label="配布データ切替">
+      <div class="viewer-head">
+        <p class="meta-label">DOWNLOAD CATALOG</p>
+        <p class="meta-value">構造物 / 都市 / 車両 を切り替えて閲覧します</p>
+      </div>
+      <div class="asset-filter-group" role="tablist" aria-label="配布データ種別">
+        <button class="asset-filter-chip is-active" type="button" data-library-asset="st">構造物 [ st_ ]</button>
+        <button class="asset-filter-chip" type="button" data-library-asset="ct">都市 [ ct_ ]</button>
+        <button class="asset-filter-chip" type="button" data-library-asset="tr">車両 [ tr_ ]</button>
+      </div>
+      <div class="asset-quota-grid" aria-label="ダウンロード残量">
+        <div class="quota-panel quota-panel-shared" id="public-shared-quota-panel">
+          <p class="quota-label">都市 / 車両 共用</p>
+          <p class="quota-value" id="asset-shared-quota-value">-- <span>/ --</span></p>
+          <p class="quota-note" id="asset-shared-quota-note">都市モデルと列車モデルは同じ容量を共有します。</p>
+        </div>
+        <div class="quota-panel quota-panel-structure" id="public-structure-quota-panel" aria-label="構造物ダウンロード残量">
+          <p class="quota-label">構造物 ダウンロード</p>
+          <p class="quota-value" id="public-structure-quota-value">-- <span>/ 400 KB</span></p>
+          <p class="quota-note" id="public-structure-quota-note">ログインすると構造物ダウンロードの残量を表示します。</p>
+        </div>
       </div>
     </section>
 
@@ -67,7 +91,7 @@
       <article class="feature-card">
         <p class="card-num">01</p>
         <h2>都市・車両モデルをダウンロード</h2>
-        <p><a href="http://127.0.0.1:5501/mouse_demo/docs/assets.html" target="_blank" rel="noopener noreferrer">こちら</a>から都市と車両のデータをダウンロードしてください。<br>都市 [ ct_~ ]、車両 [ tr_~ ]</p>
+        <p>このページ下部のモデル一覧から都市と車両のデータをダウンロードしてください。<br>都市 [ ct_~ ]、車両 [ tr_~ ]</p>
       </article>
       <article class="feature-card">
         <p class="card-num">02</p>
@@ -102,6 +126,63 @@
       <div class="map-grid" id="public-map-grid" role="list" aria-label="公開マップ"></div>
       <p class="viewer-list-note" id="public-map-status" aria-live="polite"></p>
       <div class="pagination" id="public-map-pagination" aria-label="公開マップのページ送り"></div>
+    </section>
+
+    <section class="asset-library" id="model-library" aria-label="モデル一覧">
+      <div class="viewer-head">
+        <p class="meta-label">MODEL CATALOG</p>
+        <p class="meta-value">都市モデルと列車モデルをこのページから配布します</p>
+      </div>
+
+      <div id="model-library-body">
+        <div class="asset-toolbar">
+          <div class="asset-filter-group" role="group" aria-label="ソート">
+            <button class="asset-filter-chip is-muted is-active" type="button" data-asset-sort="newest">新着順</button>
+            <button class="asset-filter-chip is-muted" type="button" data-asset-sort="size">容量順</button>
+          </div>
+        </div>
+
+        <p class="viewer-list-note" id="asset-list-message" aria-live="polite"></p>
+        <div class="asset-layout">
+          <section class="asset-grid" aria-label="モデルカード一覧" id="asset-grid"></section>
+
+          <aside class="asset-detail-panel" aria-label="選択中モデルの詳細">
+            <p class="detail-label">選択中モデル</p>
+            <div class="asset-detail-hero">
+              <div class="asset-detail-preview">
+                <img id="asset-detail-thumbnail" alt="選択中モデルのサムネイル" hidden />
+                <div class="asset-detail-preview-empty" id="asset-detail-thumbnail-empty">NO THUMBNAIL</div>
+              </div>
+              <div>
+                <h2 id="asset-detail-title">モデルを選択してください</h2>
+                <p class="asset-detail-kind" id="asset-detail-kind">都市モデル / ct</p>
+              </div>
+            </div>
+            <p class="asset-detail-copy" id="asset-detail-description">左の一覧からモデルを選ぶと、詳細とダウンロード情報をここに表示します。</p>
+            <div class="asset-detail-stats">
+              <div><span>形式</span><strong id="asset-detail-format">--</strong></div>
+              <div><span>容量</span><strong id="asset-detail-size">--</strong></div>
+              <div><span>カテゴリ</span><strong id="asset-detail-category">--</strong></div>
+            </div>
+            <div class="asset-detail-callout">
+              <p class="asset-detail-callout-title">読み込みの流れ</p>
+              <p id="asset-detail-guide">1. ダウンロード  2. public.html または edit.html のローカル読込へ追加  3. ワールドを起動</p>
+            </div>
+            <div class="modal-action-row">
+              <button class="primary-btn download-world-btn" type="button" id="asset-download-btn" data-auth-protected>ダウンロードする</button>
+              <button class="ghost-btn start-world-btn" type="button" id="asset-guide-btn">読み込み手順を見る</button>
+            </div>
+          </aside>
+        </div>
+        <div class="pagination" id="asset-pagination" aria-label="モデル一覧ページ切替"></div>
+      </div>
+      <aside class="status-board asset-status-board" aria-label="都市 / 車両ダウンロード残量">
+        <p class="status-title">MODEL DOWNLOAD QUOTA</p>
+        <div class="status-row">
+          <span>現在の状態</span>
+          <strong class="on" id="asset-library-status">READY</strong>
+        </div>
+      </aside>
     </section>
 
   </main>
@@ -167,5 +248,6 @@
 
   <script type="module" src="./js/public.js"></script>
   <script type="module" src="./js/mock_auth.js"></script>
+  <script type="module" src="./js/assets.js"></script>
 </body>
 </html>

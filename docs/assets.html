@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>都市を走る鉄道模型 | Model Library</title>
-  <meta name="description" content="都市モデルと列車モデルを読み込むための配布ページUIです。" />
+  <meta name="description" content="都市モデルと列車モデルを読み込むための配布ページです。" />
   <link rel="stylesheet" href="./css/public.css" />
 </head>
 <body data-auth-role="assets">
@@ -27,7 +27,7 @@
         <h1>都市モデル / 列車モデル</h1>
         <p class="lead">
           ワールドに追加する都市モデルと列車モデルを探して、ローカル環境へ読み込むための配布ページです。<br>
-          ログインすると、Supabase に保存された都市モデルと列車モデルを制限付きでダウンロードできます。
+          ログインすると、Supabase に保存された配布物を容量制限付きでダウンロードできます。
         </p>
         <div class="hero-actions">
           <button class="primary-btn" type="button" id="asset-scroll-city-btn">都市モデルを見る</button>
@@ -41,11 +41,6 @@
           <p class="quota-label">都市 / 車両 共用</p>
           <p class="quota-value" id="asset-shared-quota-value">-- <span>/ --</span></p>
           <p class="quota-note" id="asset-shared-quota-note">都市モデルと列車モデルは同じ容量を共有します。</p>
-        </div>
-        <div class="quota-panel quota-panel-structure">
-          <p class="quota-label">構造物 ダウンロード</p>
-          <p class="quota-value" id="asset-structure-quota-value">400 KB <span>/ 400 KB</span></p>
-          <p class="quota-note">構造物素材は将来別ページで扱う想定です。</p>
         </div>
         <div class="status-row">
           <span>現在の状態</span>
@@ -105,6 +100,7 @@
           </div>
         </aside>
       </div>
+      <div class="pagination" id="asset-pagination" aria-label="モデル一覧ページ切替"></div>
     </section>
 
     <section class="features" aria-label="導入ガイド">
