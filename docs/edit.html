@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="./css/public.css" />
   <style>
     .hero {
-      grid-template-columns: 1.2fr 0.8fr;
+      grid-template-columns: 1fr;
       border: none !important;
       background: transparent !important;
       box-shadow: none !important;
@@ -36,6 +36,61 @@
     }
     .hero .status-board {
       border-style: solid;
+    }
+    .detail-media-row {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .detail-media-row .detail-thumbnail-panel {
+      margin-top: 0;
+      width: 100%;
+      min-width: 0;
+    }
+    .detail-media-row .status-board {
+      min-width: 0;
+      padding: 16px;
+      border-style: solid;
+    }
+    .detail-media-row .local-map-panel {
+      margin-top: 12px;
+    }
+    .structure-load-panel {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(150, 190, 255, 0.16);
+      display: grid;
+      gap: 10px;
+    }
+    .structure-load-label {
+      font-size: 12px;
+      color: #dbe8f7;
+      letter-spacing: 0.04em;
+    }
+    .structure-load-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .structure-load-input {
+      flex: 1 1 220px;
+      min-width: 0;
+      min-height: 42px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(154, 196, 255, 0.24);
+      background: rgba(6, 14, 28, 0.82);
+      color: #eff7ff;
+      font: inherit;
+    }
+    .structure-load-note {
+      margin: 0;
+      color: #8db5de;
+      font-size: 12px;
+      line-height: 1.5;
     }
     .edit-page-note {
       margin: 14px 0 0;
@@ -80,6 +135,10 @@
     .slot-save-meta .meta-value-empty {
       color: rgba(255, 221, 186, 0.62);
     }
+    .edit-detail .asset-quota-grid {
+      grid-template-columns: 1fr;
+      margin-top: 12px;
+    }
     .edit-slot.has-saved-zip {
       border-color: rgba(255, 220, 152, 0.84);
       box-shadow: 0 10px 24px rgba(255, 185, 96, 0.16);
@@ -87,6 +146,9 @@
     @media (max-width: 920px) {
       .hero {
         grid-template-columns: 1fr !important;
+      }
+      .detail-media-row {
+        grid-template-columns: 1fr;
       }
       .hero .status-board {
         margin-top: 0;
@@ -120,32 +182,6 @@
           <a class="manual-open-link" href="./manual.html" target="_blank" rel="noopener noreferrer">操作方法を開く</a>
         </div>
         <!-- <p class="edit-auth-note" id="edit-auth-note"></p> -->
-      </div>
-
-      <div class="status-board-wrap">
-        <aside class="status-board" aria-label="編集ページローカルマップローダー">
-          <p class="status-title">LOCAL MAP LOADER</p>
-          <div class="status-row">
-            <span>構造物</span>
-            <strong id="local-structure-file-value">未読込</strong>
-          </div>
-          <div class="status-row">
-            <span>都市</span>
-            <strong id="local-map-file-value">未読込</strong>
-          </div>
-          <div class="status-row">
-            <span>車両</span>
-            <strong id="local-train-file-value">未読込</strong>
-          </div>
-          <div class="local-map-panel" aria-label="ローカルマップファイル読込">
-            <input id="local-map-file-input" class="local-map-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" />
-            <div class="local-map-action-row">
-              <button class="ghost-btn local-map-action-btn" type="button" id="local-map-select-btn">読み込む</button>
-              <button class="primary-btn local-map-action-btn local-map-start-btn" type="button" id="local-map-start-btn" aria-disabled="true" data-auth-protected>表示を開始する</button>
-            </div>
-            <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
-          </div>
-        </aside>
       </div>
     </section>
 
@@ -193,9 +229,42 @@
           <button class="icon-btn" type="button" id="detail-title-edit-btn" aria-label="タイトルを編集" title="タイトルを編集">✎</button>
         </div>
         <input class="detail-title-input" id="detail-title-input" type="text" maxlength="80" hidden />
-        <div class="detail-thumbnail-panel" aria-label="サムネイルプレビュー">
-          <img id="slot-thumbnail-preview" alt="サムネイルプレビュー" hidden />
-          <div id="slot-thumbnail-empty" class="detail-thumbnail-empty">サムネ未設定</div>
+        <div class="detail-media-row">
+          <div class="detail-thumbnail-panel" aria-label="サムネイルプレビュー">
+            <img id="slot-thumbnail-preview" alt="サムネイルプレビュー" hidden />
+            <div id="slot-thumbnail-empty" class="detail-thumbnail-empty">サムネ未設定</div>
+          </div>
+          <aside class="status-board" aria-label="編集ページローカルマップローダー">
+            <p class="status-title">LOCAL MAP LOADER</p>
+            <div class="status-row">
+              <span>構造物</span>
+              <strong id="local-structure-file-value">未読込</strong>
+            </div>
+            <div class="structure-load-panel" aria-label="構造物ワールド読込">
+              <label class="structure-load-label" for="structure-world-id-input">構造物ワールドID</label>
+              <div class="structure-load-row">
+                <input class="structure-load-input" id="structure-world-id-input" type="text" placeholder="Supabase の world_id を入力" inputmode="text" />
+                <button class="ghost-btn local-map-action-btn" type="button" id="load-structure-world-btn" data-auth-protected>取得する</button>
+              </div>
+              <p class="structure-load-note">構造物 `st` は world_id 指定で Supabase から取得します。都市 / 車両は下のローカル読込を使います。元ワールドの著作権保護のため、構造物の編集再開はサーバー経由で行います。ご了承ください。</p>
+            </div>
+            <div class="status-row">
+              <span>都市</span>
+              <strong id="local-map-file-value">未読込</strong>
+            </div>
+            <div class="status-row">
+              <span>車両</span>
+              <strong id="local-train-file-value">未読込</strong>
+            </div>
+            <div class="local-map-panel" aria-label="ローカルマップファイル読込">
+              <input id="local-map-file-input" class="local-map-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" />
+              <div class="local-map-action-row">
+                <button class="ghost-btn local-map-action-btn" type="button" id="local-map-select-btn">読み込む</button>
+                <button class="primary-btn local-map-action-btn local-map-start-btn" type="button" id="local-map-start-btn" aria-disabled="true" data-auth-protected>表示を開始する</button>
+              </div>
+              <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
+            </div>
+          </aside>
         </div>
         <p id="detail-desc">公開前の編集ワールドです。現在の状態: <span class="detail-private">private</span></p>
         <div class="slot-save-meta" aria-label="保存済みワールド情報">
@@ -204,9 +273,18 @@
           <div>車両: <strong id="slot-train-name" class="meta-value-empty">未保存</strong></div>
           <div>保存日時: <strong id="slot-zip-saved-at" class="meta-value-empty">未保存</strong></div>
         </div>
+        <div class="asset-quota-grid" aria-label="構造物ダウンロード残量">
+          <div class="quota-panel quota-panel-structure is-active" id="edit-structure-quota-panel">
+            <p class="quota-label">構造物 ダウンロード</p>
+            <p class="quota-value" id="edit-structure-quota-value">-- <span>/ 400 KB</span></p>
+            <p class="quota-note" id="edit-structure-quota-note">ログインすると構造物ダウンロードの残量を表示します。</p>
+          </div>
+        </div>
+        <p class="edit-save-note" data-type="info">編集モードでの再読み込みは、構造物ダウンロード容量へ 50% 分だけ加算されます。</p>
         <div class="edit-action-row">
-          <button class="ghost-btn" type="button" id="save-slot-zip-btn" data-auth-protected>保存する</button>
-          <a class="primary-btn start-world-btn" id="edit-detail-start-world-btn" href="./public_local_load.html?runtime_map=edit_upload" data-auth-protected>サムネを撮影</a>
+          <button class="primary-btn" type="button" id="save-slot-zip-btn" data-auth-protected>保存する</button>
+          <button class="ghost-btn" type="button" id="resume-world-btn" data-auth-protected hidden>編集を再開</button>
+          <a class="ghost-btn start-world-btn" id="edit-detail-start-world-btn" href="./public_local_load.html?runtime_map=edit_upload" data-auth-protected>サムネを撮影</a>
           <button class="ghost-btn publish-btn" type="button" id="publish-world-btn" data-auth-protected disabled>公開する</button>
         </div>
         <p class="edit-save-note" id="edit-save-note" aria-live="polite"></p>

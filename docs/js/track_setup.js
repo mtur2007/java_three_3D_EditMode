@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 import { BASE_WORLD_SCALE, LEGACY_TRACK_SOURCE_SCALE } from './scale_config.js';
 
 const TRACK_DATA_URL = 'map_data/track_points.json';

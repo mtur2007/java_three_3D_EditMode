@@ -123,10 +123,10 @@ log_hidden.addEventListener("touchstart", () => {
   logwindow.hidden = !logwindow.hidden
 });
 
-import * as THREE from 'three';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 import { mergeGeometries, mergeVertices } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
-import { Brush, Evaluator, HOLLOW_SUBTRACTION, ADDITION } from 'three-bvh-csg';
+import { Brush, Evaluator, HOLLOW_SUBTRACTION, ADDITION } from 'https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.16/build/index.module.js';
 import { rebuildMirrorFromStatesRuntime, rebuildMirrorStateOnLoadRuntime } from './mirror_load.js';
 import { UI_STATE_STORAGE_KEY, createCreateModeStateCodec } from './create_mode_state.js';
 import { createPointActions } from './features/create/point_actions.js';
@@ -168,6 +168,9 @@ const IS_RUNTIME_LOCAL_VIEW = IS_PUBLIC_RUNTIME_LOCAL_VIEW || IS_EDIT_RUNTIME_LO
 const RUNTIME_MAP_DB_NAME = 'train-editmode-runtime-map';
 const RUNTIME_MAP_STORE_NAME = 'runtimeMaps';
 const RUNTIME_MAP_RECORD_KEY = 'public-selected-map';
+const RUNTIME_WORLD_BUCKET = 'world-files';
+let runtimeMapRecordMeta = {};
+const RUNTIME_STRUCTURE_FILE_NAME = 'st_world_data.zip';
 
 function openRuntimeMapDb() {
   return new Promise((resolve, reject) => {
@@ -264,6 +267,7 @@ let runtimeMapStructurePostProcessReady = false;
 let runtimeMapStructurePostProcessRequired = false;
 const LOADING_STABLE_FRAMES = 20;
 const LOADING_MIN_WAIT_MS = 450;
+const LOADING_FORCE_FINISH_MS = 1800;
 
 async function cleanupPublicRuntimeMapRecordOnLoadComplete() {
   if (!publicRuntimeMapCleanupPending || !IS_PUBLIC_RUNTIME_LOCAL_VIEW) {
@@ -404,15 +408,24 @@ function tryFinishLoadingOverlay() {
   if (loadingDone) { return; }
   if (!loadingReady) { return; }
   const elapsed = loadingReadyAt > 0 ? (performance.now() - loadingReadyAt) : 0;
-  const stableRenderReady = renderedFramesSinceReady >= LOADING_STABLE_FRAMES && elapsed >= LOADING_MIN_WAIT_MS;
-  const structurePostProcessReady = !runtimeMapLoadedUiStatePending || runtimeMapStructurePostProcessReady;
+  const stableRenderReady =
+    (renderedFramesSinceReady >= LOADING_STABLE_FRAMES && elapsed >= LOADING_MIN_WAIT_MS)
+    || elapsed >= LOADING_FORCE_FINISH_MS;
+  const structurePostProcessReady = !runtimeMapLoadedUiStatePending
+    || !runtimeMapStructurePostProcessRequired
+    || runtimeMapStructurePostProcessReady;
   console.info('[runtime][load-complete] tryFinishLoadingOverlay', {
     renderedFramesSinceReady,
     requiredFrames: LOADING_STABLE_FRAMES,
     elapsedMs: Math.round(elapsed),
     requiredMs: LOADING_MIN_WAIT_MS,
+    forceFinishMs: LOADING_FORCE_FINISH_MS,
     stableRenderReady,
     structurePostProcessReady,
+    runtimeMapLoadedUiStatePending,
+    runtimeMapStructurePostProcessRequired,
+    runtimeMapStructurePostProcessReady,
+    loadingDone,
     canFinish: stableRenderReady && structurePostProcessReady,
   });
   if (!stableRenderReady) {
@@ -431,6 +444,7 @@ function tryFinishLoadingOverlay() {
     flushRuntimeMapLoadedUiState();
     return;
   }
+  hideLoadingOverlay();
 }
 
 function markLoadingReady() {
@@ -573,8 +587,8 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setCreateModeUtilityButtonsRightAligned(enabled) {
-    if (!createModeUtilityButtons) { return; }
-    document.body.classList.toggle('creat-mode-ui-active', Boolean(enabled));
+    // if (!createModeUtilityButtons) { return; }
+    // document.body.classList.toggle('creat-mode-ui-active', Boolean(enabled));
   }
 
   function clearRailGroupRangePreview() {
@@ -889,6 +903,7 @@ const DEFAULT_TRAIN_RUN_CONFIG = {
   enabled: false,
 };
 let trainRunConfigs = [structuredClone(DEFAULT_TRAIN_RUN_CONFIG)];
+const usedTrainConfigIds = new Set();
 const configuredTrainRuntimes = new Map();
 let trainConfigIdSeq = 1;
 const CONFIGURED_COMMUTER_TRAIN_MAX_SPEED = 0.006;
@@ -1435,6 +1450,29 @@ let differenceSpaceTransformMode = 'none';
     });
   }
 
+  function applyLinkedObjectIdsToPins(pinMeshes, linkedIds, mode = 'add') {
+    const pins = Array.isArray(pinMeshes) ? pinMeshes.filter((pin) => pin?.userData) : [];
+    if (pins.length < 1) { return; }
+    const ids = Array.from(new Set(
+      (Array.isArray(linkedIds) ? linkedIds : [])
+        .map((id) => String(id || '').trim())
+        .filter((id) => id.length > 0)
+    ));
+    if (ids.length < 1) { return; }
+    pins.forEach((pin) => {
+      const prev = Array.isArray(pin?.userData?.linkedStructureObjectIds)
+        ? pin.userData.linkedStructureObjectIds.map((v) => String(v || '').trim()).filter(Boolean)
+        : [];
+      const next = mode === 'remove'
+        ? prev.filter((id) => !ids.includes(id))
+        : Array.from(new Set(prev.concat(ids)));
+      pin.userData = {
+        ...(pin.userData || {}),
+        linkedStructureObjectIds: next,
+      };
+    });
+  }
+
   function normalizePinsPayload(pinsPayload) {
     if (!Array.isArray(pinsPayload)) { return []; }
     return pinsPayload
@@ -1513,8 +1551,18 @@ let differenceSpaceTransformMode = 'none';
     };
     const nextKey = buildGenerationRunDedupKey(nextRun);
     const hasSame = structureGenerationRuns.some((run) => buildGenerationRunDedupKey(run) === nextKey);
-    if (hasSame) { return; }
+    if (hasSame) { return null; }
     structureGenerationRuns.push(nextRun);
+    return nextRun;
+  }
+
+  function removeStructureGenerationRun(runLike) {
+    const targetKey = buildGenerationRunDedupKey(runLike);
+    if (!targetKey) { return false; }
+    const index = structureGenerationRuns.findIndex((run) => buildGenerationRunDedupKey(run) === targetKey);
+    if (index < 0) { return false; }
+    structureGenerationRuns.splice(index, 1);
+    return true;
   }
 
   function normalizeStructureGroupSourceTag(raw) {
@@ -3433,11 +3481,13 @@ let differenceSpaceTransformMode = 'none';
       }
       return false;
     }
-    pushCreateHistory({
+    const historyAction = {
       type: 'copy_items',
       pointItems,
       objectItems,
-    });
+      groupRailConstruction: true,
+    };
+    pushCreateHistory(historyAction);
     if (pointItems.length > 0) {
       drawingObject(pointItems.map((item) => item.mesh));
     }
@@ -3502,10 +3552,15 @@ let differenceSpaceTransformMode = 'none';
       const created = lastRailConstructionCreatedObjects.length > 0
         ? lastRailConstructionCreatedObjects.slice()
         : collectNewStructureObjectsSince(beforeIds);
+      const createdObjectIds = Array.from(new Set(
+        created
+          .map((mesh) => ensureStructureObjectId(mesh))
+          .filter((id) => String(id || '').trim().length > 0)
+      ));
       appendLinkedObjectIdsToPins(pinsForLink, created);
       const groupSourceInfo = structureGroupSourceById.get(targetGroupId) || null;
       const range = buildGroupRailRangeSummary(pins);
-      recordStructureGenerationRun({
+      const generationRun = recordStructureGenerationRun({
         category: kind,
         pins,
         params: {
@@ -3521,6 +3576,14 @@ let differenceSpaceTransformMode = 'none';
           spacing: Number.isFinite(Number(options?.spacing)) ? Number(options.spacing) : Number(railConstructionSpacingInput?.value || 0),
         },
       });
+      const latestHistoryAction = createUndoStack[createUndoStack.length - 1];
+      if (latestHistoryAction?.type === 'copy_items' && latestHistoryAction?.groupRailConstruction) {
+        latestHistoryAction.pinLinkState = {
+          pins: Array.isArray(pinsForLink) ? pinsForLink.filter((pin) => pin?.userData) : [],
+          linkedObjectIds: createdObjectIds,
+        };
+        latestHistoryAction.generationRun = generationRun || null;
+      }
       return true;
     }
     if (kind === 'bridge') {
@@ -8186,7 +8249,7 @@ console.log('WorldCreat')
 
 import { WorldCreat } from './world_creat.js';
 import { BASE_WORLD_SCALE } from './scale_config.js';
-const WORLD_SCALE = 0.42;
+const WORLD_SCALE = 0.35;
 let LoadModels = [null, null, null];
 if (!IS_RUNTIME_LOCAL_VIEW) {
   LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
@@ -11156,6 +11219,11 @@ function applyStructureDataPayload(data) {
     structureViewActive = true;
   }
   updateStructurePinnedVisibility();
+  if (data.pins.length < 1 && structureGenerationRuns.length < 1) {
+    console.info('[public_upload][pins] empty structure payload, no async post process required');
+    markRuntimeMapStructurePostProcessReady('structure-payload-empty');
+    return true;
+  }
   structureGenerationReplayPending = structureGenerationRuns.length > 0;
   if (structureGenerationReplayPending) {
     console.info('[public_upload][pins] schedule generation replay', {
@@ -12466,6 +12534,90 @@ function collectWorldSaveExcludedGroupIds(groupPayload, manualCopyPayload, orbit
   };
 }
 
+async function saveWorldZipToSupabaseForEditRuntime(zipBlob) {
+  const bridge = window.mouseDemoSupabase;
+  const supabaseClient = bridge?.client || null;
+  if (!supabaseClient) {
+    throw new Error('Supabase 接続が初期化されていません。');
+  }
+
+  const session = await bridge.getSession?.();
+  const userId = String(session?.user?.id || '').trim();
+  if (!userId) {
+    throw new Error('ログイン状態を確認できませんでした。');
+  }
+
+  const slotId = String(runtimeMapRecordMeta?.slotId || 'slot-runtime').trim() || 'slot-runtime';
+  const slotMatch = slotId.match(/slot-(\d+)/i);
+  const slotNumber = slotMatch ? Number.parseInt(slotMatch[1], 10) : NaN;
+  const worldId = String(runtimeMapRecordMeta?.worldId || '').trim();
+  const originId = String(runtimeMapRecordMeta?.originId || 'self').trim() || 'self';
+  const title = String(runtimeMapRecordMeta?.title || 'WORLD').trim() || 'WORLD';
+  const thumbnailPath = String(runtimeMapRecordMeta?.thumbnailPath || '').trim() || null;
+  const uploadPath = `worlds/${userId}/${slotId}/${RUNTIME_STRUCTURE_FILE_NAME}`;
+
+  const { error: uploadError } = await supabaseClient.storage
+    .from(RUNTIME_WORLD_BUCKET)
+    .upload(uploadPath, zipBlob, {
+      upsert: true,
+      contentType: 'application/zip',
+    });
+  if (uploadError) {
+    throw new Error(uploadError.message || '構造物データのアップロードに失敗しました。');
+  }
+
+  if (!Number.isFinite(slotNumber) || slotNumber < 1) {
+    throw new Error('保存先スロット番号を特定できませんでした。');
+  }
+
+  const createArgs = {
+    p_title: title,
+    p_description: 'saved from edit runtime',
+    p_status: 'draft',
+    p_world_zip_path: uploadPath,
+    p_world_zip_bytes: Number(zipBlob?.size) || 0,
+    p_thumbnail_path: thumbnailPath,
+    p_thumbnail_bytes: 0,
+    p_origin_id: originId,
+    p_slot: slotNumber,
+  };
+  const updateArgs = worldId
+    ? {
+      p_world_id: worldId,
+      ...createArgs,
+    }
+    : null;
+
+  let data = null;
+  let rpcError = null;
+  if (updateArgs) {
+    const updateResult = await supabaseClient.rpc('update_world_with_quota', updateArgs);
+    data = updateResult.data;
+    rpcError = updateResult.error;
+    if (rpcError && /world not found or not owned/i.test(String(rpcError.message || ''))) {
+      const createResult = await supabaseClient.rpc('create_world_with_quota', createArgs);
+      data = createResult.data;
+      rpcError = createResult.error;
+    }
+  } else {
+    const createResult = await supabaseClient.rpc('create_world_with_quota', createArgs);
+    data = createResult.data;
+    rpcError = createResult.error;
+  }
+  if (rpcError) {
+    throw new Error(rpcError.message || 'ワールド情報の更新に失敗しました。');
+  }
+
+  runtimeMapRecordMeta = {
+    ...runtimeMapRecordMeta,
+    worldId: String(data?.id || worldId).trim(),
+    originId,
+    slotId,
+    title,
+    thumbnailPath: thumbnailPath || '',
+  };
+}
+
 async function downloadWorldData() {
   let JSZipCtor = null;
   try {
@@ -12535,16 +12687,20 @@ async function downloadWorldData() {
     compressionOptions: { level: 6 },
   });
 
-  const url = URL.createObjectURL(zipBlob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'world_data.zip';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  if (IS_EDIT_RUNTIME_LOCAL_VIEW) {
+    await saveWorldZipToSupabaseForEditRuntime(zipBlob);
+  } else {
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = RUNTIME_STRUCTURE_FILE_NAME;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
-  console.log('[world_save] world_data.zip saved:', {
+  console.log(`[world_save] ${RUNTIME_STRUCTURE_FILE_NAME} saved:`, {
     entries: [
       'group.msgpack',
       'orbit.msgpack',
@@ -12563,7 +12719,7 @@ async function downloadWorldData() {
     single_structure_groups: singleStructureGroupIds,
     single_structure_group_count: singleStructureGroupIds.length,
   });
-  alert('world_data.zip を保存しました。');
+  alert(IS_EDIT_RUNTIME_LOCAL_VIEW ? `${RUNTIME_STRUCTURE_FILE_NAME} を Supabase に保存しました。` : `${RUNTIME_STRUCTURE_FILE_NAME} を保存しました。`);
 }
 
 const saveWorldButton = document.getElementById('save-world-data');
@@ -12837,17 +12993,6 @@ async function loadRuntimeMapGlbFromPublicUpload(arrayBuffer, fileName = 'public
     previous.parent.remove(previous);
   }
 
-  const alignRootVisualCenterXzToOrigin = (targetRoot) => {
-    if (!targetRoot) { return; }
-    targetRoot.updateMatrixWorld(true);
-    const targetBox = new THREE.Box3().setFromObject(targetRoot);
-    if (targetBox.isEmpty()) { return; }
-    const targetCenter = targetBox.getCenter(new THREE.Vector3());
-    targetRoot.position.x -= targetCenter.x;
-    targetRoot.position.z -= targetCenter.z;
-    targetRoot.updateMatrixWorld(true);
-  };
-
   const box = new THREE.Box3().setFromObject(root);
   const size = box.getSize(new THREE.Vector3());
 
@@ -12857,10 +13002,7 @@ async function loadRuntimeMapGlbFromPublicUpload(arrayBuffer, fileName = 'public
   }
   if (kind === 'ct') {
     root.rotation.y = 0;
-    const currentY = root.position.y;
-    root.position.set(0, currentY, 0);
     root.scale.multiplyScalar(WORLD_SCALE);
-    alignRootVisualCenterXzToOrigin(root);
   }
 
   root.name = objectName;
@@ -12869,6 +13011,7 @@ async function loadRuntimeMapGlbFromPublicUpload(arrayBuffer, fileName = 'public
 
 function activatePublicRuntimeObjectViewMode() {
   const hiddenUiIds = [
+    'UiGroup',
     'save-buttons',
     'show-instructions-btn',
     'instructions-panel',
@@ -12899,19 +13042,19 @@ function activatePublicRuntimeObjectViewMode() {
   clearDifferenceHistory();
   clearDifferenceRailOperations();
   stopAllConfiguredTrains();
-  clearGuideAddGridsForImport();
   clearDifferenceSpacesForImport();
   setAddPointGuideGridVisibleFromUI(false);
   guideRailPickMeshes.forEach((mesh) => {
     if (mesh) { mesh.visible = false; }
   });
+  setPublicRuntimeGuideGridsVisible(false);
   updateStructurePinnedVisibility();
 }
 
 function applyRuntimeMapLoadedUiState() {
   completeLoadingOverlayState('読み込み完了');
-  clearCreateHistory();
-  clearDifferenceHistory();
+  // clearCreateHistory();
+  // clearDifferenceHistory();
   UIevent('rail', 'inactive');
   UIevent('structure', 'inactive');
   UIevent('edit', 'inactive');
@@ -12959,6 +13102,7 @@ async function loadRuntimeMapFromPublicUpload() {
   };
 
   const record = await readRuntimeMapRecord().catch(() => null);
+  runtimeMapRecordMeta = record?.meta && typeof record.meta === 'object' ? { ...record.meta } : {};
   const runtimeFiles = record?.files && typeof record.files === 'object'
     ? record.files
     : { ct: record };
@@ -13315,6 +13459,8 @@ async function loadRuntimeMapFromPublicUpload() {
   if (IS_PUBLIC_RUNTIME_LOCAL_VIEW) {
     activatePublicRuntimeObjectViewMode();
     publicRuntimeMapCleanupPending = true;
+  } else if (IS_EDIT_RUNTIME_LOCAL_VIEW) {
+    setPublicRuntimeGuideGridsVisible(false);
   }
   if (!runtimeMapStructurePostProcessRequired) {
     markRuntimeMapStructurePostProcessReady('runtime-load-no-async-postprocess');
@@ -15504,6 +15650,8 @@ function applyCreateHistory(action, mode) {
     if (action.type === 'copy_items') {
       const pointItems = Array.isArray(action.pointItems) ? action.pointItems : [];
       const objectItems = Array.isArray(action.objectItems) ? action.objectItems : [];
+      const linkedPins = Array.isArray(action?.pinLinkState?.pins) ? action.pinLinkState.pins : [];
+      const linkedObjectIds = Array.isArray(action?.pinLinkState?.linkedObjectIds) ? action.pinLinkState.linkedObjectIds : [];
       if (mode === 'undo') {
         pointItems.forEach((item) => {
           steelFrameMode.removePointMesh(item.mesh);
@@ -15517,6 +15665,10 @@ function applyCreateHistory(action, mode) {
             steelFrameMode?.removeExistingSegmentMesh?.(mesh);
           }
         });
+        applyLinkedObjectIdsToPins(linkedPins, linkedObjectIds, 'remove');
+        if (action.generationRun) {
+          removeStructureGenerationRun(action.generationRun);
+        }
       } else {
         pointItems.forEach((item) => {
           steelFrameMode.addExistingPoint(item.mesh, item.lineIndex);
@@ -15530,6 +15682,10 @@ function applyCreateHistory(action, mode) {
             steelFrameMode?.addExistingSegmentMesh?.(mesh);
           }
         });
+        applyLinkedObjectIdsToPins(linkedPins, linkedObjectIds, 'add');
+        if (action.generationRun) {
+          recordStructureGenerationRun(action.generationRun);
+        }
       }
       refreshCreateTargetsForSearch();
       drawingObject(pointItems.map((item) => item.mesh));
@@ -16022,8 +16178,15 @@ function normalizeTrainRunConfig(rawConfig) {
       Number.isFinite(speedRaw) ? speedRaw : defaultSpeed
     )
   );
+  let resolvedId = requestedId || `train_${trainConfigIdSeq += 1}`;
+  if (usedTrainConfigIds.has(resolvedId)) {
+    do {
+      resolvedId = `train_${trainConfigIdSeq += 1}`;
+    } while (usedTrainConfigIds.has(resolvedId));
+  }
+  usedTrainConfigIds.add(resolvedId);
   return {
-    id: requestedId || `train_${trainConfigIdSeq += 1}`,
+    id: resolvedId,
     trackName,
     trainType,
     direction,
@@ -16127,6 +16290,7 @@ function renderTrainConfigRows() {
 }
 
 function syncTrainPanelFromConfig() {
+  usedTrainConfigIds.clear();
   if (!Array.isArray(trainRunConfigs) || trainRunConfigs.length < 1) {
     trainRunConfigs = [createDefaultTrainConfig()];
   } else {
@@ -21753,6 +21917,24 @@ function setGuideGridVisibleFromUI(visible) {
 function setAddPointGuideGridVisibleFromUI(visible) {
   AddPointGuideGrid.visible = Boolean(visible);
 }
+
+let publicRuntimeGuideGridsVisible = false;
+
+function setPublicRuntimeGuideGridsVisible(visible) {
+  publicRuntimeGuideGridsVisible = Boolean(visible);
+  AddPointGuideGrid.visible = publicRuntimeGuideGridsVisible;
+  GuideGrid_Center_x.visible = publicRuntimeGuideGridsVisible;
+  GuideGrid_Center_z.visible = publicRuntimeGuideGridsVisible;
+  guideAddGrids.forEach((grid) => {
+    if (!grid?.parent) { return; }
+    grid.visible = publicRuntimeGuideGridsVisible;
+  });
+  guideAddGridPicks.forEach((pick) => {
+    if (!pick?.parent) { return; }
+    pick.visible = false;
+  });
+}
+
 
 function setGuideGridVisibilityForViewMode(isViewMode) {
   const hide = Boolean(isViewMode);
@@ -28180,6 +28362,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1);
     toggleRailTube(true);
     setCreateModeWorldFocus(true);
+    setPublicRuntimeGuideGridsVisible(true);
 
   } else {
     console.log( 'creat _inactive' )
@@ -28199,6 +28382,7 @@ export function UIevent (uiID, toggle){
     groupModeActive = false;
     clearGroupSelection();
     setGroupModePanelVisible(false);
+    setPublicRuntimeGuideGridsVisible(false);
 
   }} else if ( uiID === 'view' ){ if ( toggle === 'active' ){
   console.log( 'view _active' )

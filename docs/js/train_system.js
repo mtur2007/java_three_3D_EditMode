@@ -1,6 +1,6 @@
 // functions.js
 
-import * as THREE from 'three';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 
 const PILLAR_STEEL_COLOR = 0x5f6670;
 const PILLAR_STEEL_METALNESS = 0.28;

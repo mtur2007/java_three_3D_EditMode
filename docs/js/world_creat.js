@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 
 import { TrainSystem } from './train_system.js';
 import { BASE_WORLD_SCALE } from './scale_config.js';
