@@ -2200,6 +2200,9 @@ async function readEditorSlotThumbnailRecord(slotId) {
     window.addEventListener("scroll", syncFloatingFeaturesButton, { passive: true });
     window.addEventListener("resize", syncFloatingFeaturesButton);
   }
+  if (featuresSection && !featuresGuideActive) {
+    activateFeaturesGuide();
+  }
 
   if (localMapSelectBtn && localMapFileInput) {
     localMapSelectBtn.addEventListener("click", () => {
