@@ -254,6 +254,35 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   preserveDrawingBuffer: THUMBNAIL_CAPTURE_MODE,
 });
+const PERFORMANCE_SETTINGS_STORAGE_KEY = 'train_editmode_performance_v1';
+const PERFORMANCE_QUALITY_OPTIONS = {
+  low: { label: '低', pixelRatioScale: 0.75 },
+  medium: { label: '標準', pixelRatioScale: 1.0 },
+  high: { label: '高', pixelRatioScale: 1.5 },
+};
+const PERFORMANCE_DRAW_DISTANCE_MIN = 80;
+const PERFORMANCE_DRAW_DISTANCE_MAX = 500;
+const PERFORMANCE_DRAW_DISTANCE_STEP = 10;
+function loadPerformanceSettings() {
+  const fallback = { quality: 'medium', drawDistance: 200 };
+  try {
+    const raw = window.localStorage.getItem(PERFORMANCE_SETTINGS_STORAGE_KEY);
+    if (!raw) { return fallback; }
+    const parsed = JSON.parse(raw);
+    const quality = String(parsed?.quality || '').trim();
+    const drawDistance = Number(parsed?.drawDistance);
+    return {
+      quality: PERFORMANCE_QUALITY_OPTIONS[quality] ? quality : fallback.quality,
+      drawDistance: Number.isFinite(drawDistance)
+        ? Math.min(PERFORMANCE_DRAW_DISTANCE_MAX, Math.max(PERFORMANCE_DRAW_DISTANCE_MIN, drawDistance))
+        : fallback.drawDistance,
+    };
+  } catch (err) {
+    console.warn('failed to load performance settings', err);
+    return fallback;
+  }
+}
+const performanceSettings = loadPerformanceSettings();
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
 const loadingBarFill = document.getElementById('loading-bar-fill');
@@ -265,6 +294,8 @@ let publicRuntimeMapCleanupPending = false;
 let runtimeMapLoadedUiStatePending = false;
 let runtimeMapStructurePostProcessReady = false;
 let runtimeMapStructurePostProcessRequired = false;
+let runtimeMapRestorePhaseDone = true;
+let activateSeeModeOnLoadCompletePending = true;
 const LOADING_STABLE_FRAMES = 20;
 const LOADING_MIN_WAIT_MS = 450;
 const LOADING_FORCE_FINISH_MS = 1800;
@@ -361,6 +392,8 @@ function restartLoadingOverlay(message = '読み込み中...') {
   loadingReady = false;
   renderedFramesSinceReady = 0;
   loadingReadyAt = 0;
+  runtimeMapRestorePhaseDone = !IS_RUNTIME_LOCAL_VIEW;
+  activateSeeModeOnLoadCompletePending = true;
   loadingOverlay.classList.remove('is-hidden');
   if (loadingBarFill) {
     loadingBarFill.style.width = '0%';
@@ -396,6 +429,10 @@ function hideLoadingOverlay() {
     loadingReadyAt,
     elapsedMs: loadingReadyAt > 0 ? Math.round(performance.now() - loadingReadyAt) : 0,
   });
+  if (activateSeeModeOnLoadCompletePending) {
+    activateSeeModeOnLoadCompletePending = false;
+    UIevent('see', 'active');
+  }
   completeLoadingOverlayState('読み込み完了');
   if (!runtimeMapLoadedUiStatePending) {
     hideLoadingOverlayElement();
@@ -411,6 +448,7 @@ function tryFinishLoadingOverlay() {
   const stableRenderReady =
     (renderedFramesSinceReady >= LOADING_STABLE_FRAMES && elapsed >= LOADING_MIN_WAIT_MS)
     || elapsed >= LOADING_FORCE_FINISH_MS;
+  const runtimeRestoreReady = !IS_RUNTIME_LOCAL_VIEW || runtimeMapRestorePhaseDone;
   const structurePostProcessReady = !runtimeMapLoadedUiStatePending
     || !runtimeMapStructurePostProcessRequired
     || runtimeMapStructurePostProcessReady;
@@ -421,16 +459,24 @@ function tryFinishLoadingOverlay() {
     requiredMs: LOADING_MIN_WAIT_MS,
     forceFinishMs: LOADING_FORCE_FINISH_MS,
     stableRenderReady,
+    runtimeRestoreReady,
     structurePostProcessReady,
+    runtimeMapRestorePhaseDone,
     runtimeMapLoadedUiStatePending,
     runtimeMapStructurePostProcessRequired,
     runtimeMapStructurePostProcessReady,
     loadingDone,
-    canFinish: stableRenderReady && structurePostProcessReady,
+    canFinish: stableRenderReady && runtimeRestoreReady && structurePostProcessReady,
   });
   if (!stableRenderReady) {
     if (loadingText) {
       loadingText.textContent = `描画準備中... (${Math.min(renderedFramesSinceReady, LOADING_STABLE_FRAMES)}/${LOADING_STABLE_FRAMES})`;
+    }
+    return;
+  }
+  if (!runtimeRestoreReady) {
+    if (loadingText) {
+      loadingText.textContent = '保存データを復元中...';
     }
     return;
   }
@@ -496,6 +542,11 @@ const threeUi = document.getElementById('three-ui');
   const guideWindow = document.getElementById('guide-window');
   const rotationPanel = document.getElementById('rotation-panel');
   const rotationPanelTitle = document.getElementById('rotation-panel-title');
+  const groupPointEditModePanel = document.getElementById('group-point-edit-mode-panel');
+  const normalGroupPointPartialBtn = document.getElementById('normal-group-point-partial');
+  const normalGroupPointGroupBtn = document.getElementById('normal-group-point-group');
+  const copiedGroupPointDetachBtn = document.getElementById('copied-group-point-detach');
+  const copiedGroupPointGroupBtn = document.getElementById('copied-group-point-group');
   const rotationLabelX = document.getElementById('rotation-label-x');
   const rotationLabelY = document.getElementById('rotation-label-y');
   const rotationLabelZ = document.getElementById('rotation-label-z');
@@ -566,6 +617,9 @@ const threeUi = document.getElementById('three-ui');
   const railConstructionSpacingInput = document.getElementById('rail-construction-spacing');
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
+  const structureGenerationListPanel = document.getElementById('structure-generation-list-panel');
+  const structureGenerationListSummary = document.getElementById('structure-generation-list-summary');
+  const structureGenerationList = document.getElementById('structure-generation-list');
   let railGroupRangePreviewGroup = null;
   let mapLoadStatusHideTimer = 0;
 
@@ -817,6 +871,7 @@ const threeUi = document.getElementById('three-ui');
       differencePanel,
       constructionCategoryPanel,
       railConstructionPanel,
+      structureGenerationListPanel,
       groupModePanel,
       guideWindow,
     ].forEach((panel) => clampPanelToViewport(panel));
@@ -856,7 +911,7 @@ const threeUi = document.getElementById('three-ui');
     }
 
     const targets = Array.from(document.querySelectorAll(
-      '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller, #log, #toggle-daynight, #difference-body-select, #UiGroup > button:not([data-ui-root-level=\"1\"]), #frontViewButtons > button, #save-buttons > button, #show-instructions-btn'
+      '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller, #log, #toggle-daynight, #difference-body-select, #performance-toggle-btn, #performance-panel, #UiGroup > button:not([data-ui-root-level=\"1\"]), #frontViewButtons > button, #save-buttons > button, #show-instructions-btn'
     ));
     targets.forEach((el) => {
       if (!el) { return; }
@@ -925,6 +980,8 @@ let differenceSpaceTransformMode = 'none';
   let polePlacementMode = false;
   let editObject = 'Standby';
   let objectEditMode = 'Standby';
+  let normalStructureGroupPointEditMode = 'group';
+  let copiedStructureGroupPointEditMode = 'group';
   const EDIT_RAIL = 'EDIT_RAIL';
   const ROTATE_MODE = 'ROTATE';
   const SEARCH_MODE = 'SEARCH';
@@ -946,6 +1003,8 @@ let differenceSpaceTransformMode = 'none';
   const STRUCTURE_LINK_REBUILD_MAX_RETRY = 24;
   const STRUCTURE_LINK_REBUILD_RETRY_MS = 180;
   let structureGenerationRuns = [];
+  let selectedStructureGenerationRunKey = '';
+  let pinGenerationRuntimeSeq = 1;
   let structureGenerationReplayActive = false;
   let structureGenerationReplayPending = false;
   let structureGenerationReplayTimer = null;
@@ -971,6 +1030,7 @@ let differenceSpaceTransformMode = 'none';
   let selectedRailConstructionCategory = null;
   let selectedRailConstructionParentCategory = null;
   let selectedRailConstructionGroupId = '';
+  let structureGenerationListUiVisible = false;
   const manualDioramaSpaceEnabled = ENABLE_MANUAL_DIORAMA_SPACE === true;
   let railSelectionStatusFloating = null;
 
@@ -1135,6 +1195,179 @@ let differenceSpaceTransformMode = 'none';
     railConstructionPanel.style.display = visible ? 'block' : 'none';
   }
 
+  function formatStructureGenerationRunSummary(run, index, total) {
+    const category = String(run?.category || '').trim() || '-';
+    const pins = normalizePinsPayload(run?.pins);
+    const trackNames = Array.from(new Set(
+      pins
+        .map((pin) => String(pin?.trackName || '').trim())
+        .filter(Boolean)
+    ));
+    const groupId = String(run?.params?.groupId || '').trim();
+    const groupSourceLabel = String(run?.params?.groupSourceLabel || '').trim();
+    const meta = [
+      `ピン: ${pins.length}`,
+      `路線: ${trackNames.length > 0 ? trackNames.join(', ') : '未設定'}`,
+    ];
+    if (groupSourceLabel) {
+      meta.push(`group名: ${groupSourceLabel}`);
+    }
+    if (groupId) {
+      meta.push(`group: ${groupId}`);
+    }
+    return {
+      title: category,
+      order: `${total - index}`,
+      meta,
+    };
+  }
+
+  function getStructurePinMatchKey(pinLike = {}) {
+    return JSON.stringify({
+      x: roundTo(pinLike?.x, 3),
+      y: roundTo(pinLike?.y, 3),
+      z: roundTo(pinLike?.z, 3),
+      trackName: String(pinLike?.trackName || '').trim(),
+    });
+  }
+
+  function getSelectedStructureGenerationRun() {
+    if (!selectedStructureGenerationRunKey) { return null; }
+    return (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : [])
+      .find((run) => buildGenerationRunDedupKey(run) === selectedStructureGenerationRunKey) || null;
+  }
+
+  function refreshStructurePinnedPinColors() {
+    const selectedRun = getSelectedStructureGenerationRun();
+    const selectedPinKeys = new Set(
+      normalizePinsPayload(selectedRun?.pins).map((pin) => getStructurePinMatchKey(pin))
+    );
+    structurePinnedPins.forEach((pin) => {
+      if (!pin) { return; }
+      const pinKey = getStructurePinMatchKey({
+        x: pin?.position?.x,
+        y: pin?.position?.y,
+        z: pin?.position?.z,
+        trackName: pin?.userData?.trackName,
+      });
+      const isRunSelectedPin = selectedPinKeys.has(pinKey);
+      if (isConstructionPinSelected(pin)) {
+        setPinColor(pin, structureSelectedColor);
+        return;
+      }
+      setPinColor(pin, isRunSelectedPin ? structureGenerationListSelectedColor : structurePinnedColor);
+    });
+  }
+
+  function setSelectedStructureGenerationRun(runLike = null) {
+    selectedStructureGenerationRunKey = runLike ? buildGenerationRunDedupKey(runLike) : '';
+    refreshStructurePinnedPinColors();
+    renderStructureGenerationList();
+  }
+
+  function renderStructureGenerationList() {
+    if (!structureGenerationList || !structureGenerationListSummary) { return; }
+    const runs = Array.isArray(structureGenerationRuns) ? structureGenerationRuns.slice() : [];
+    if (selectedStructureGenerationRunKey) {
+      const hasSelected = runs.some((run) => buildGenerationRunDedupKey(run) === selectedStructureGenerationRunKey);
+      if (!hasSelected) {
+        selectedStructureGenerationRunKey = '';
+      }
+    }
+    const orderedRuns = runs.slice().reverse();
+    structureGenerationList.replaceChildren();
+    structureGenerationListSummary.textContent = runs.length > 0
+      ? `ピンから生成した履歴: ${runs.length}件`
+      : '生成履歴はありません。';
+    if (orderedRuns.length < 1) {
+      const empty = document.createElement('p');
+      empty.className = 'structure-generation-list-empty';
+      empty.textContent = 'ピンから生成した構造物がここに表示されます。';
+      structureGenerationList.appendChild(empty);
+      refreshStructurePinnedPinColors();
+      return;
+    }
+    orderedRuns.forEach((run, index) => {
+      const row = formatStructureGenerationRunSummary(run, index, orderedRuns.length);
+      const runKey = buildGenerationRunDedupKey(run);
+      const isSelected = selectedStructureGenerationRunKey === runKey;
+      const item = document.createElement('div');
+      item.className = 'structure-generation-list-item';
+      item.classList.toggle('is-selected', isSelected);
+      item.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      item.addEventListener('click', () => {
+        setSelectedStructureGenerationRun(isSelected ? null : run);
+      });
+
+      const head = document.createElement('div');
+      head.className = 'structure-generation-list-item-head';
+
+      const title = document.createElement('div');
+      title.className = 'structure-generation-list-item-title';
+      title.textContent = row.title;
+
+      const order = document.createElement('div');
+      order.className = 'structure-generation-list-item-index';
+      order.textContent = `#${row.order}`;
+
+      head.append(title, order);
+
+      const meta = document.createElement('div');
+      meta.className = 'structure-generation-list-item-meta';
+      row.meta.forEach((text, metaIndex) => {
+        if (metaIndex > 0) {
+          meta.appendChild(document.createElement('br'));
+        }
+        meta.appendChild(document.createTextNode(text));
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'structure-generation-list-item-actions';
+      if (canRegenerateStructureRun(run)) {
+        const regenerateButton = document.createElement('button');
+        regenerateButton.type = 'button';
+        regenerateButton.textContent = '再生成';
+        regenerateButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          setSelectedStructureGenerationRun(run);
+          rerunStructureGenerationRun(run);
+        });
+        actions.appendChild(regenerateButton);
+      }
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.textContent = '削除';
+      deleteButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setSelectedStructureGenerationRun(run);
+        deleteStructureGenerationRunByRuntimeId(run);
+      });
+      actions.appendChild(deleteButton);
+
+      item.append(head, meta, actions);
+      structureGenerationList.appendChild(item);
+    });
+    refreshStructurePinnedPinColors();
+  }
+
+  function setStructureGenerationListPanelVisible(visible) {
+    if (!structureGenerationListPanel) { return; }
+    structureGenerationListPanel.style.display = visible ? 'block' : 'none';
+    if (visible) {
+      renderStructureGenerationList();
+      refreshStructurePinnedPinColors();
+    }
+  }
+
+  function setStructureGenerationListUiVisible(visible) {
+    structureGenerationListUiVisible = Boolean(visible);
+    updateStructureGenerationListPanelVisibility();
+  }
+
+  function updateStructureGenerationListPanelVisibility() {
+    setStructureGenerationListPanelVisible(structureGenerationListUiVisible);
+  }
+
   function setRailConstructionCategory(category) {
     const allow = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel', 'tunnel_rect', 'tunnel_circle', 'platform', 'group'];
     const next = allow.includes(category) ? category : null;
@@ -1180,6 +1413,7 @@ let differenceSpaceTransformMode = 'none';
         ? `選択中: ${selectedRailConstructionCategory}。ピンを選択して「選択カテゴリで生成」。`
         : '選択中: 未選択。カテゴリを選んで「選択カテゴリで生成」。';
     }
+    updateStructureGenerationListPanelVisibility();
   }
 
   function setGroupModePanelVisible(visible) {
@@ -1417,6 +1651,27 @@ let differenceSpaceTransformMode = 'none';
     return ids;
   }
 
+  function snapshotExistingSceneObjectIds() {
+    const ids = new Set();
+    scene.traverse((obj) => {
+      if (!obj?.parent || !obj.isObject3D) { return; }
+      ids.add(obj.id);
+    });
+    return ids;
+  }
+
+  function collectNewSceneObjectsSince(beforeIds) {
+    const out = [];
+    scene.traverse((obj) => {
+      if (!obj?.parent || !obj.isObject3D) { return; }
+      if (beforeIds?.has?.(obj.id)) { return; }
+      const name = String(obj?.name || '').trim();
+      if (name === 'StructurePinnedPin' || name === 'StructureHoverPin' || name === 'RailGroupRangePreview') { return; }
+      out.push(obj);
+    });
+    return out;
+  }
+
   function collectNewStructureObjectsSince(beforeIds) {
     const out = [];
     getConstructionCopyTargets()
@@ -1492,6 +1747,263 @@ let differenceSpaceTransformMode = 'none';
     return Math.round(n * p) / p;
   }
 
+  const PIN_GENERATION_NAME_TOKEN = '__pin_gen__';
+
+  function allocatePinGenerationRuntimeId() {
+    const id = `pin_gen_${pinGenerationRuntimeSeq}`;
+    pinGenerationRuntimeSeq += 1;
+    return id;
+  }
+
+  function stripPinGenerationRuntimeNameTag(name) {
+    const raw = String(name || '');
+    const tokenIndex = raw.indexOf(PIN_GENERATION_NAME_TOKEN);
+    return tokenIndex >= 0 ? raw.slice(0, tokenIndex) : raw;
+  }
+
+  function buildPinGenerationTaggedName(baseName, runtimeId) {
+    const base = stripPinGenerationRuntimeNameTag(baseName).trim();
+    return `${base || 'PinGeneratedObject'}${PIN_GENERATION_NAME_TOKEN}${String(runtimeId || '').trim()}`;
+  }
+
+  function getPinGenerationRuntimeIdFromObjectName(name) {
+    const raw = String(name || '');
+    const tokenIndex = raw.indexOf(PIN_GENERATION_NAME_TOKEN);
+    if (tokenIndex < 0) { return ''; }
+    return raw.slice(tokenIndex + PIN_GENERATION_NAME_TOKEN.length).trim();
+  }
+
+  function ensureGenerationRunRuntimeId(runLike) {
+    if (!runLike || typeof runLike !== 'object') {
+      return allocatePinGenerationRuntimeId();
+    }
+    const current = String(runLike._pinGenerationRuntimeId || '').trim();
+    if (current) { return current; }
+    const next = allocatePinGenerationRuntimeId();
+    runLike._pinGenerationRuntimeId = next;
+    return next;
+  }
+
+  function syncPinGenerationRuntimeSeqFromRuns() {
+    let max = 0;
+    (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : []).forEach((run) => {
+      const runtimeId = String(run?._pinGenerationRuntimeId || '').trim();
+      const match = runtimeId.match(/^pin_gen_(\d+)$/);
+      if (!match) { return; }
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > max) {
+        max = n;
+      }
+    });
+    pinGenerationRuntimeSeq = Math.max(pinGenerationRuntimeSeq, max + 1);
+  }
+
+  function applyPinGenerationRuntimeNameToMeshes(meshes, runtimeId, fallbackName = 'PinGeneratedObject') {
+    const id = String(runtimeId || '').trim();
+    if (!id) { return; }
+    (Array.isArray(meshes) ? meshes : []).forEach((mesh) => {
+      if (!mesh || !mesh.isObject3D) { return; }
+      const baseName = mesh.userData?.steelFramePoint
+        ? (mesh.name || 'SteelFramePoint')
+        : (mesh.name || fallbackName);
+      mesh.name = buildPinGenerationTaggedName(baseName, id);
+    });
+  }
+
+  function findPinnedMeshesByPayload(pinsPayload) {
+    const normalizedPins = normalizePinsPayload(pinsPayload);
+    if (normalizedPins.length < 1) { return []; }
+    const toKey = (pin) => JSON.stringify({
+      x: roundTo(pin.x, 3),
+      y: roundTo(pin.y, 3),
+      z: roundTo(pin.z, 3),
+      trackName: String(pin.trackName || '').trim(),
+    });
+    const remaining = new Set(normalizedPins.map((pin) => toKey(pin)));
+    const matches = [];
+    structurePinnedPins.forEach((pin) => {
+      if (!pin?.parent) { return; }
+      const key = toKey({
+        x: pin.position.x,
+        y: pin.position.y,
+        z: pin.position.z,
+        trackName: pin.userData?.trackName ?? null,
+      });
+      if (!remaining.has(key)) { return; }
+      matches.push(pin);
+      remaining.delete(key);
+    });
+    return matches;
+  }
+
+  function collectPinGeneratedObjectsByRuntimeId(runtimeId) {
+    const id = String(runtimeId || '').trim();
+    if (!id) { return []; }
+    const out = [];
+    const seen = new Set();
+    scene.traverse((obj) => {
+      if (!obj?.parent || !obj.isObject3D || seen.has(obj.id)) { return; }
+      if (getPinGenerationRuntimeIdFromObjectName(obj.name) !== id) { return; }
+      seen.add(obj.id);
+      out.push(obj);
+    });
+    return out;
+  }
+
+  function detachPinGeneratedObject(mesh) {
+    if (!mesh) { return false; }
+    if (mesh?.userData?.steelFramePoint) {
+      return steelFrameMode.removePointMesh(mesh);
+    }
+    if (mesh?.userData?.decorationType) {
+      return detachDecorationObject(mesh);
+    }
+    if (stripPinGenerationRuntimeNameTag(mesh?.name) === 'SteelFrameSegment') {
+      return detachSteelSegmentObject(mesh);
+    }
+    if (mesh === choice_object) {
+      choice_object = false;
+    }
+    if (mesh?.parent) {
+      mesh.parent.remove(mesh);
+    }
+    disposeObject3DMaterials(mesh);
+    return true;
+  }
+
+  function deleteStructureGenerationRunByRuntimeId(runLike) {
+    return removeStructureGenerationMeshesByRuntimeId(runLike, { removeRun: true });
+  }
+
+  function summarizePinGeneratedTargets(targets) {
+    const list = Array.isArray(targets) ? targets.filter(Boolean) : [];
+    const summary = {
+      total: list.length,
+      steelFramePoints: 0,
+      steelFrameSegments: 0,
+      decorations: 0,
+      otherObjects: 0,
+      structureObjectIds: 0,
+      names: {},
+    };
+    list.forEach((mesh) => {
+      const baseName = stripPinGenerationRuntimeNameTag(mesh?.name || '') || '(unnamed)';
+      summary.names[baseName] = (summary.names[baseName] || 0) + 1;
+      if (String(mesh?.userData?.structureObjectId || '').trim()) {
+        summary.structureObjectIds += 1;
+      }
+      if (mesh?.userData?.steelFramePoint) {
+        summary.steelFramePoints += 1;
+        return;
+      }
+      if (baseName === 'SteelFrameSegment') {
+        summary.steelFrameSegments += 1;
+        return;
+      }
+      if (mesh?.userData?.decorationType) {
+        summary.decorations += 1;
+        return;
+      }
+      summary.otherObjects += 1;
+    });
+    return summary;
+  }
+
+  function removeStructureGenerationMeshesByRuntimeId(runLike, { removeRun = false } = {}) {
+    const runtimeId = String(runLike?._pinGenerationRuntimeId || '').trim();
+    if (!runtimeId) { return false; }
+    const targets = collectPinGeneratedObjectsByRuntimeId(runtimeId);
+    const category = String(runLike?.category || '').trim();
+    console.log('[structure regenerate] target summary before remove', {
+      category,
+      runtimeId,
+      summary: summarizePinGeneratedTargets(targets),
+    });
+    const linkedIds = Array.from(new Set(
+      targets
+        .map((mesh) => String(mesh?.userData?.structureObjectId || '').trim())
+        .filter(Boolean)
+    ));
+    targets.forEach((mesh) => {
+      detachPinGeneratedObject(mesh);
+    });
+    applyLinkedObjectIdsToPins(findPinnedMeshesByPayload(runLike?.pins), linkedIds, 'remove');
+    if (removeRun) {
+      removeStructureGenerationRun(runLike);
+    }
+    refreshCreateTargetsForSearch();
+    drawingObject();
+    if (removeRun && railConstructionStatus) {
+      railConstructionStatus.textContent = `削除完了: ${String(runLike?.category || '').trim() || 'structure'}`;
+    }
+    return targets.length > 0;
+  }
+
+  function canRegenerateStructureRun(runLike) {
+    const category = String(runLike?.category || '').trim();
+    return category.length > 0;
+  }
+
+  function rerunStructureGenerationRun(runLike) {
+    if (!canRegenerateStructureRun(runLike)) { return false; }
+    const category = String(runLike?.category || '').trim();
+    const runtimeId = String(runLike?._pinGenerationRuntimeId || '').trim();
+    const params = (runLike?.params && typeof runLike.params === 'object') ? runLike.params : {};
+    const pinsPayload = normalizePinsPayload(runLike?.pins);
+    console.log('[structure regenerate] start', {
+      category,
+      runtimeId,
+      pinCount: pinsPayload.length,
+      pins: pinsPayload.map((pin, index) => ({
+        index,
+        trackName: String(pin?.trackName || '').trim(),
+        x: roundTo(pin?.x, 3),
+        y: roundTo(pin?.y, 3),
+        z: roundTo(pin?.z, 3),
+      })),
+      params: {
+        lateralOffset: params?.lateralOffset,
+        verticalOffset: params?.verticalOffset,
+        yawOffsetDeg: params?.yawOffsetDeg,
+        spacing: params?.spacing,
+        groupId: params?.groupId,
+      },
+    });
+    const removed = removeStructureGenerationMeshesByRuntimeId(runLike, { removeRun: false });
+    console.log('[structure regenerate] cleared old meshes', {
+      category,
+      runtimeId,
+      removed,
+    });
+    const ok = runRailConstructionByCategory(category, {
+      pinsPayload,
+      runtimeId,
+      lateralOffset: params?.lateralOffset,
+      verticalOffset: params?.verticalOffset,
+      yawOffsetDeg: params?.yawOffsetDeg,
+      spacing: params?.spacing,
+      groupId: params?.groupId,
+    });
+    console.log('[structure regenerate] result', {
+      category,
+      runtimeId,
+      ok,
+    });
+    const regeneratedTargets = collectPinGeneratedObjectsByRuntimeId(runtimeId);
+    console.log('[structure regenerate] target summary after rerun', {
+      category,
+      runtimeId,
+      summary: summarizePinGeneratedTargets(regeneratedTargets),
+    });
+    if (railConstructionStatus) {
+      railConstructionStatus.textContent = ok
+        ? `再生成完了: ${category}`
+        : `再生成失敗: ${category}`;
+    }
+    renderStructureGenerationList();
+    return ok;
+  }
+
   function buildGenerationRunDedupKey(runLike = {}) {
     const category = String(runLike?.category || '').trim();
     const params = (runLike?.params && typeof runLike.params === 'object') ? runLike.params : {};
@@ -1538,7 +2050,7 @@ let differenceSpaceTransformMode = 'none';
     return out;
   }
 
-  function recordStructureGenerationRun({ category = '', pins = [], params = {} } = {}) {
+  function recordStructureGenerationRun({ category = '', pins = [], params = {}, runtimeId = '' } = {}) {
     if (structureGenerationReplayActive) { return; }
     const kind = String(category || '').trim();
     if (!kind) { return; }
@@ -1548,11 +2060,14 @@ let differenceSpaceTransformMode = 'none';
       category: kind,
       pins: normalizedPins,
       params: { ...(params || {}) },
+      _pinGenerationRuntimeId: String(runtimeId || '').trim() || allocatePinGenerationRuntimeId(),
     };
     const nextKey = buildGenerationRunDedupKey(nextRun);
     const hasSame = structureGenerationRuns.some((run) => buildGenerationRunDedupKey(run) === nextKey);
     if (hasSame) { return null; }
     structureGenerationRuns.push(nextRun);
+    renderStructureGenerationList();
+    syncPinGenerationRuntimeSeqFromRuns();
     return nextRun;
   }
 
@@ -1562,6 +2077,8 @@ let differenceSpaceTransformMode = 'none';
     const index = structureGenerationRuns.findIndex((run) => buildGenerationRunDedupKey(run) === targetKey);
     if (index < 0) { return false; }
     structureGenerationRuns.splice(index, 1);
+    renderStructureGenerationList();
+    syncPinGenerationRuntimeSeqFromRuns();
     return true;
   }
 
@@ -2591,6 +3108,7 @@ let differenceSpaceTransformMode = 'none';
     lastRailConstructionCreatedObjects = [];
     clearRailGroupRangePreview();
     const id = String(groupId || '').trim();
+    const runtimeId = String(options?.runtimeId || '').trim();
     if (!id) {
       if (railConstructionStatus) {
         railConstructionStatus.textContent = 'group 生成にはグループID選択が必要です。';
@@ -3481,6 +3999,8 @@ let differenceSpaceTransformMode = 'none';
       }
       return false;
     }
+    applyPinGenerationRuntimeNameToMeshes(pointItems.map((item) => item?.mesh).filter(Boolean), runtimeId, 'SteelFramePoint');
+    applyPinGenerationRuntimeNameToMeshes(objectItems, runtimeId, 'PinGeneratedGroupObject');
     const historyAction = {
       type: 'copy_items',
       pointItems,
@@ -3508,6 +4028,7 @@ let differenceSpaceTransformMode = 'none';
 
   function runRailConstructionByCategory(category, options = {}) {
     lastRailConstructionCreatedObjects = [];
+    const runtimeId = String(options?.runtimeId || '').trim() || allocatePinGenerationRuntimeId();
     const kind = ['bridge', 'elevated', 'wall', 'floor', 'pillar', 'catenary_pole', 'rib_bridge', 'tunnel_rect', 'tunnel_circle', 'platform', 'group'].includes(category)
       ? category
       : 'bridge';
@@ -3520,6 +4041,7 @@ let differenceSpaceTransformMode = 'none';
       ? bridgeSourcePins.slice()
       : (providedPins.length > 0 ? pins : constructionSelectedPins.slice());
     const beforeIds = snapshotExistingStructureObjectIds();
+    const beforeSceneIds = snapshotExistingSceneObjectIds();
     const minPins = kind === 'bridge' ? 1 : (kind === 'pillar' ? 1 : (kind === 'group' ? 1 : (kind === 'platform' ? 1 : 2)));
     const activePinCount = kind === 'bridge' ? bridgeSourcePins.length : pins.length;
     if (activePinCount < minPins) {
@@ -3547,6 +4069,7 @@ let differenceSpaceTransformMode = 'none';
         verticalOffset: options?.verticalOffset,
         yawOffsetDeg: options?.yawOffsetDeg,
         spacing: options?.spacing,
+        runtimeId,
       });
       if (!ok) { return false; }
       const created = lastRailConstructionCreatedObjects.length > 0
@@ -3563,6 +4086,7 @@ let differenceSpaceTransformMode = 'none';
       const generationRun = recordStructureGenerationRun({
         category: kind,
         pins,
+        runtimeId,
         params: {
           groupId: targetGroupId,
           groupSourceKey: String(groupSourceInfo?.sourceKey || ''),
@@ -3605,6 +4129,7 @@ let differenceSpaceTransformMode = 'none';
       });
       // 橋モデルのローカル原点が端寄りのため、生成後に実形状中心をピン中心へ合わせる。
       alignObjectXZCenterToWorldTarget(bridgeObj, placement.position);
+      applyPinGenerationRuntimeNameToMeshes([bridgeObj], runtimeId, 'bridge');
       ensureStructureObjectId(bridgeObj);
       lastRailConstructionCreatedObjects = [bridgeObj];
     } else if (kind === 'pillar') {
@@ -3724,6 +4249,7 @@ let differenceSpaceTransformMode = 'none';
         if (railConstructionStatus) {
           railConstructionStatus.textContent = `生成完了: platform / 2路線 (${rightTrack.trackName} - ${leftTrack.trackName})`;
         }
+        applyPinGenerationRuntimeNameToMeshes([platformMesh], runtimeId, 'platform');
         ensureStructureObjectId(platformMesh);
         lastRailConstructionCreatedObjects = [platformMesh];
         return true;
@@ -3740,6 +4266,7 @@ let differenceSpaceTransformMode = 'none';
       recordStructureGenerationRun({
         category: kind,
         pins,
+        runtimeId,
         params: {},
       });
       return true;
@@ -3747,12 +4274,18 @@ let differenceSpaceTransformMode = 'none';
       const built = TSys.buildStructureFromPins(kind, pins, railTrackCurveMap);
       if (!built) { return false; }
     }
-    const created = collectNewStructureObjectsSince(beforeIds);
+    const created = (() => {
+      const byStructure = collectNewStructureObjectsSince(beforeIds);
+      if (byStructure.length > 0) { return byStructure; }
+      return collectNewSceneObjectsSince(beforeSceneIds);
+    })();
+    applyPinGenerationRuntimeNameToMeshes(created, runtimeId, kind);
     appendLinkedObjectIdsToPins(pinsForLink, created);
     lastRailConstructionCreatedObjects = created;
     recordStructureGenerationRun({
       category: kind,
       pins,
+      runtimeId,
       params: {},
     });
     showRailGeneratedStructures();
@@ -4445,7 +4978,8 @@ let differenceSpaceTransformMode = 'none';
     clearCopiedStateFromSegmentsByPoints(pointList);
 
     if (!gid) {
-      drawingObject();
+      drawingObject(pointList.length > 0 ? pointList : null);
+      syncSteelFrameTargetObjectsAfterRebuild();
       refreshCreateTargetsForSearch();
       return;
     }
@@ -4485,7 +5019,8 @@ let differenceSpaceTransformMode = 'none';
         }
       });
 
-    drawingObject();
+    drawingObject(pointList.length > 0 ? pointList : null);
+    syncSteelFrameTargetObjectsAfterRebuild();
     refreshCreateTargetsForSearch();
   }
 
@@ -4670,12 +5205,14 @@ let differenceSpaceTransformMode = 'none';
     movePointPanelActive = true;
     movePointDepthBiasTubeSegId = null;
     applySteelFramePointDepthPolicy();
+    updateGroupPointEditModePanel();
   }
 
   function disableMovePointToggleEffects() {
     movePointPanelActive = false;
     movePointDepthBiasTubeSegId = null;
     applySteelFramePointDepthPolicy();
+    updateGroupPointEditModePanel();
   }
 
   function getSteelFrameAddPointTargets() {
@@ -4916,10 +5453,10 @@ let differenceSpaceTransformMode = 'none';
     const initialPoints = collectStructurePointsFromHitTarget(target);
     if (!Array.isArray(initialPoints) || initialPoints.length < 1) { return false; }
     // 先に元状態を判定する。
-    // ensureCopiedGroupReadyForPointEdit() は「いいえ」時に全点選択へ展開するため、
+    // ensureCopiedGroupReadyForPointEdit() は設定に応じて全点選択へ展開するため、
     // 後判定だと直後に解除扱いになってしまう。
     const wasAllSelected = initialPoints.every((mesh) => steelFrameMode.isSelectedPoint(mesh));
-    const points = ensureCopiedGroupReadyForPointEdit(initialPoints);
+    const points = ensureCopiedGroupReadyForPointEdit(initialPoints, { promptDetachConfirm: true });
     if (!Array.isArray(points) || points.length < 1) { return false; }
     const allSelected = wasAllSelected;
     if (allSelected) {
@@ -6585,7 +7122,7 @@ function computeStructureGroupPoseFromMembers(members) {
   }
 
   function detachSteelSegmentObject(mesh) {
-    if (!mesh || mesh?.name !== 'SteelFrameSegment') { return false; }
+    if (!mesh || stripPinGenerationRuntimeNameTag(mesh?.name) !== 'SteelFrameSegment') { return false; }
     if (mesh === choice_object) { choice_object = false; }
     if (mesh?.parent) {
       mesh.parent.remove(mesh);
@@ -6600,7 +7137,7 @@ function computeStructureGroupPoseFromMembers(members) {
   }
 
   function restoreSteelSegmentObject(mesh) {
-    if (!mesh || mesh?.name !== 'SteelFrameSegment') { return false; }
+    if (!mesh || stripPinGenerationRuntimeNameTag(mesh?.name) !== 'SteelFrameSegment') { return false; }
     if (!mesh.parent) {
       scene.add(mesh);
     }
@@ -7017,12 +7554,80 @@ function computeStructureGroupPoseFromMembers(members) {
   function setRotationPanelVisible(visible) {
     if (!rotationPanel) { return; }
     rotationPanel.style.display = visible ? 'block' : 'none';
+    updateGroupPointEditModePanel();
     if (visible) {
       scheduleClampUiPanels();
     }
     if (visible) {
       syncRotationInputGhostHints();
     }
+  }
+
+  function updateGroupPointEditModeButtons() {
+    const setButtonActive = (btn, active, colors) => {
+      if (!btn) { return; }
+      btn.style.background = active ? colors.activeBg : colors.baseBg;
+      btn.style.borderColor = active ? colors.activeBorder : colors.baseBorder;
+      btn.style.color = active ? colors.activeText : colors.baseText;
+      btn.style.fontWeight = active ? '700' : '500';
+    };
+    setButtonActive(normalGroupPointPartialBtn, normalStructureGroupPointEditMode === 'partial', {
+      activeBg: '#edf6ff',
+      activeBorder: '#5f93d6',
+      activeText: '#173a69',
+      baseBg: '#ffffff',
+      baseBorder: '#c5d1df',
+      baseText: '#415167',
+    });
+    setButtonActive(normalGroupPointGroupBtn, normalStructureGroupPointEditMode === 'group', {
+      activeBg: '#dfeeff',
+      activeBorder: '#2f6dc2',
+      activeText: '#123564',
+      baseBg: '#ffffff',
+      baseBorder: '#c5d1df',
+      baseText: '#415167',
+    });
+    setButtonActive(copiedGroupPointDetachBtn, copiedStructureGroupPointEditMode === 'detach', {
+      activeBg: '#fff0f0',
+      activeBorder: '#c45d5d',
+      activeText: '#6e2020',
+      baseBg: '#ffffff',
+      baseBorder: '#dec8c8',
+      baseText: '#6a4a4a',
+    });
+    setButtonActive(copiedGroupPointGroupBtn, copiedStructureGroupPointEditMode === 'group', {
+      activeBg: '#e7f6eb',
+      activeBorder: '#5a9a6c',
+      activeText: '#1f5b2c',
+      baseBg: '#ffffff',
+      baseBorder: '#c8dacd',
+      baseText: '#47614d',
+    });
+  }
+
+  function shouldShowGroupPointEditModePanel() {
+    if (editObject !== 'STEEL_FRAME') { return false; }
+    return movePointPanelActive || scalePointPanelActive || objectEditMode === ROTATE_MODE;
+  }
+
+  function updateGroupPointEditModePanel() {
+    if (!groupPointEditModePanel) { return; }
+    const visible = shouldShowGroupPointEditModePanel();
+    groupPointEditModePanel.style.display = visible ? 'block' : 'none';
+    updateGroupPointEditModeButtons();
+    if (visible) {
+      scheduleClampUiPanels();
+    }
+  }
+
+  function setNormalStructureGroupPointEditMode(mode = 'partial') {
+    normalStructureGroupPointEditMode = mode === 'group' ? 'group' : 'partial';
+    updateGroupPointEditModeButtons();
+  }
+
+  function setCopiedStructureGroupPointEditMode(mode = 'detach') {
+    copiedStructureGroupPointEditMode = mode === 'group' ? 'group' : 'detach';
+    updateGroupPointEditModeButtons();
   }
 
   function setDifferenceBodySelectButtonState(active) {
@@ -7040,6 +7645,9 @@ function computeStructureGroupPoseFromMembers(members) {
     getDifferenceSelectedPointsForTransform,
     getConstructionCopyTargets,
     getCopyStructurePointMeshes,
+    collectStructurePointsFromHitTarget,
+    getNormalStructureGroupPointEditMode: () => normalStructureGroupPointEditMode,
+    getCopiedStructureGroupPointEditMode: () => copiedStructureGroupPointEditMode,
     detachCopiedStructureGroup,
     syncCopiedGroupRotationPanel,
     refreshPointEditPanelUI,
@@ -7070,6 +7678,19 @@ function computeStructureGroupPoseFromMembers(members) {
   const gridToWorldPosition = movePointSpace.gridToWorldPosition;
   const getMovePointAxisPosition = movePointSpace.getMovePointAxisPosition;
 
+  normalGroupPointPartialBtn?.addEventListener('click', () => {
+    setNormalStructureGroupPointEditMode('partial');
+  });
+  normalGroupPointGroupBtn?.addEventListener('click', () => {
+    setNormalStructureGroupPointEditMode('group');
+  });
+  copiedGroupPointDetachBtn?.addEventListener('click', () => {
+    setCopiedStructureGroupPointEditMode('detach');
+  });
+  copiedGroupPointGroupBtn?.addEventListener('click', () => {
+    setCopiedStructureGroupPointEditMode('group');
+  });
+
   function getAxisDisplayForTargets(targets, axis) {
     if (!Array.isArray(targets) || targets.length === 0) { return '-'; }
     if (targets.length === 1) {
@@ -7083,6 +7704,7 @@ function computeStructureGroupPoseFromMembers(members) {
     if (!movePointPanelActive) { return; }
     setRotationPanelMode('move_point');
     setRotationPanelVisible(true);
+    updateGroupPointEditModePanel();
     const targets = getMovePointPanelTargets();
     ensureMovePointAxisLockValues(targets);
 
@@ -7180,6 +7802,7 @@ function computeStructureGroupPoseFromMembers(members) {
     if (!scalePointPanelActive) { return; }
     setRotationPanelMode('scale_point');
     setRotationPanelVisible(true);
+    updateGroupPointEditModePanel();
     const targets = getMovePointPanelTargets();
 
     if (rotationInputX) {
@@ -8141,7 +8764,7 @@ if (introWrapper) {
   const previewWidth = Math.min(640, Math.floor(rect.width - 16)); // パディング分を差し引く
   const previewHeight = Math.floor(previewWidth * 9 / 16);
   renderer.setSize(previewWidth, previewHeight);
-  try { renderer.setPixelRatio(1); } catch (e) {}
+  try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
   // CSS 上の表示サイズも明示的に設定しておく
   canvas.style.width = previewWidth + 'px';
   canvas.style.height = previewHeight + 'px';
@@ -8151,8 +8774,8 @@ if (introWrapper) {
 } else {
   canvas.classList.add('full-canvas');
   renderer.setSize(window.innerWidth, window.innerHeight);
+  try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
   positionLoadingOverlayToCanvas();
-  // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 }
 
 // ----------------- シャドウを有効化（renderer を作った直後あたりに入れる） -----------------
@@ -8210,20 +8833,49 @@ loader.load('textures/moonless_golf.jpg', (texture_night) => {
 
 let ref_envMap = null
 let ref_envMapNight = null
+
+function getActiveTrainEnvMap() {
+  if (isNight) {
+    return ref_envMapNight || envMapNight || scene.environment || null;
+  }
+  return ref_envMap || envMap || scene.environment || null;
+}
+
+function syncTrainEnvMapReference() {
+  scene.ref = getActiveTrainEnvMap();
+  refreshAllLoadedTrainModelEnvMaps();
+  for (let line = 0; line < Trains.length; line++) {
+    for (let cars = 0; cars < Trains[line].children.length; cars++) {
+      const car = Trains[line].children[cars];
+      car?.traverse?.((node) => {
+        if (node?.isMesh) {
+          setTrainNodeEnvMap(node);
+        }
+      });
+    }
+  }
+}
+
 loader.load('textures/skyy.jpg', (ref) => {
   ref.mapping = THREE.EquirectangularReflectionMapping;
   ref.colorSpace = THREE.SRGBColorSpace;
-  ref_envMap = ref
-  scene.ref = ref_envMap;
+  const processed = pmremGenerator.fromEquirectangular(ref);
+  ref_envMap = processed.texture;
+  ref.dispose?.();
+  if (!isNight) {
+    syncTrainEnvMapReference();
+  }
 });
 
 loader.load('textures/shanghai_bund_4k.jpg', (ref_night) => {
   ref_night.mapping = THREE.EquirectangularReflectionMapping;
   ref_night.colorSpace = THREE.SRGBColorSpace;
-  // scene.background = texture_night;
-  // scene.environment = texture_night;
-  ref_envMapNight = ref_night ;
-  // scene.ref = ref_envMapNight;
+  const processed = pmremGenerator.fromEquirectangular(ref_night);
+  ref_envMapNight = processed.texture;
+  ref_night.dispose?.();
+  if (isNight) {
+    syncTrainEnvMapReference();
+  }
 });
 
 // envMap = envMapNight
@@ -8249,7 +8901,7 @@ console.log('WorldCreat')
 
 import { WorldCreat } from './world_creat.js';
 import { BASE_WORLD_SCALE } from './scale_config.js';
-const WORLD_SCALE = 0.35;
+const WORLD_SCALE = BASE_WORLD_SCALE;
 let LoadModels = [null, null, null];
 if (!IS_RUNTIME_LOCAL_VIEW) {
   LoadModels = await WorldCreat(scene, train_width, car_Spacing, {
@@ -8364,6 +9016,12 @@ function setTrainNodeEnvMap(node) {
     return;
   }
   forEachNodeMaterial(node, (mat) => {
+    if ('envMap' in mat) {
+      mat.envMap = getActiveTrainEnvMap();
+      if ('envMapIntensity' in mat && !Number.isFinite(mat.envMapIntensity)) {
+        mat.envMapIntensity = 1.0;
+      }
+    }
     mat.needsUpdate = true;
   });
 }
@@ -8547,7 +9205,16 @@ console.log('geo : ',geo)
 
 // world_creat()
 
-const dirLight = scene.getObjectByName('dirLight');
+let dirLight = scene.getObjectByName('dirLight') || null;
+
+function setDirLightVisible(visible) {
+  if (!dirLight) {
+    dirLight = scene.getObjectByName('dirLight') || null;
+  }
+  if (dirLight) {
+    dirLight.visible = visible;
+  }
+}
 
 
 import { TrainSystem } from './train_system.js';
@@ -8563,19 +9230,8 @@ const TSys = new TrainSystem(scene,dirLight);
 let isNight = false;
 
 function TextureToggle(){
-  refreshAllLoadedTrainModelEnvMaps();
-
-  for (let line = 0; line < Trains.length; line++){
-    for (let cars = 0; cars < Trains[line].children.length; cars++){
-      const car = Trains[line].children[cars]
-     
-      car.traverse((node) => {
-        if (node.isMesh) {
-          setTrainNodeEnvMap(node);
-        }})
-    }
-  }
-  }
+  syncTrainEnvMapReference();
+}
 
 const toggleBtn = document.getElementById("toggle-daynight");
 
@@ -8587,9 +9243,7 @@ toggleBtn.addEventListener("click", () => {
     scene.background = envMapNight;
     scene.environment = envMapNight;
 
-    scene.ref = ref_envMapNight;
-    
-    dirLight.visible = false;
+    setDirLightVisible(false);
     // ambient.visible = false;
     TextureToggle();
     toggleBtn.textContent = "☀️ 昼にする";
@@ -8599,9 +9253,7 @@ toggleBtn.addEventListener("click", () => {
     scene.background = envMap;
     scene.environment = envMap;
 
-    scene.ref = ref_envMap;
-
-    dirLight.visible = true;
+    setDirLightVisible(true);
     // ambient.visible = true;
     TextureToggle();
     toggleBtn.textContent = "🌙 夜にする";
@@ -8616,9 +9268,7 @@ toggleBtn.addEventListener("touchstart", () => {
     scene.background = envMapNight;
     scene.environment = envMapNight;
 
-    scene.ref = ref_envMapNight;
-
-    dirLight.visible = false;
+    setDirLightVisible(false);
     // ambient.visible = false;
     TextureToggle();
 
@@ -8629,9 +9279,7 @@ toggleBtn.addEventListener("touchstart", () => {
     scene.background = envMap;
     scene.environment = envMap;
 
-    scene.ref = ref_envMap;
-
-    dirLight.visible = true;
+    setDirLightVisible(true);
     // ambient.visible = true;
     TextureToggle();
 
@@ -8640,11 +9288,144 @@ toggleBtn.addEventListener("touchstart", () => {
 });
 
 const camera = new THREE.PerspectiveCamera(
-  75, window.innerWidth / window.innerHeight, 0.1, 200
+  75, window.innerWidth / window.innerHeight, 0.1, performanceSettings.drawDistance
 );
 
 // カメラ初期位置（必要に応じて調整してください）
 camera.position.set(0, 10, 30);
+
+function savePerformanceSettings() {
+  try {
+    window.localStorage.setItem(PERFORMANCE_SETTINGS_STORAGE_KEY, JSON.stringify(performanceSettings));
+  } catch (err) {
+    console.warn('failed to save performance settings', err);
+  }
+}
+
+function getPerformancePixelRatio() {
+  const quality = PERFORMANCE_QUALITY_OPTIONS[performanceSettings.quality] || PERFORMANCE_QUALITY_OPTIONS.medium;
+  const deviceRatio = Math.max(1, Number(window.devicePixelRatio) || 1);
+  return Math.min(deviceRatio * quality.pixelRatioScale, 2.5);
+}
+
+const performanceToggleButton = document.createElement('button');
+performanceToggleButton.id = 'performance-toggle-btn';
+performanceToggleButton.type = 'button';
+performanceToggleButton.textContent = 'Performance';
+Object.assign(performanceToggleButton.style, {
+  position: 'fixed',
+  right: '14px',
+  bottom: '14px',
+  zIndex: '2700',
+  border: '1px solid rgba(255,255,255,0.24)',
+  borderRadius: '999px',
+  background: 'rgba(11,17,29,0.84)',
+  color: '#f4f7fb',
+  padding: '10px 14px',
+  fontSize: '13px',
+  fontWeight: '600',
+  letterSpacing: '0.04em',
+  backdropFilter: 'blur(10px)',
+  boxShadow: '0 12px 30px rgba(0,0,0,0.24)',
+  cursor: 'pointer',
+});
+document.body.appendChild(performanceToggleButton);
+
+const performancePanel = document.createElement('section');
+performancePanel.id = 'performance-panel';
+Object.assign(performancePanel.style, {
+  position: 'fixed',
+  right: '14px',
+  bottom: '62px',
+  zIndex: '2700',
+  width: '220px',
+  padding: '14px',
+  borderRadius: '16px',
+  border: '1px solid rgba(255,255,255,0.18)',
+  background: 'rgba(7,12,20,0.9)',
+  color: '#f5f7fb',
+  boxShadow: '0 18px 36px rgba(0,0,0,0.28)',
+  backdropFilter: 'blur(14px)',
+  display: 'none',
+  fontSize: '13px',
+  lineHeight: '1.45',
+});
+performancePanel.innerHTML = `
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
+    <strong style="font-size:13px;letter-spacing:0.04em;">Performance</strong>
+    <button type="button" id="performance-panel-close" style="border:none;background:transparent;color:#d5dbe7;font-size:18px;line-height:1;cursor:pointer;">×</button>
+  </div>
+  <label for="performance-quality-select" style="display:block;margin-bottom:6px;color:#b7c3d9;">画質</label>
+  <select id="performance-quality-select" style="width:100%;margin-bottom:12px;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#f5f7fb;">
+    <option value="low">低</option>
+    <option value="medium">標準</option>
+    <option value="high">高</option>
+  </select>
+  <label for="performance-distance-range" style="display:block;margin-bottom:6px;color:#b7c3d9;">描画距離</label>
+  <input id="performance-distance-range" type="range" min="${PERFORMANCE_DRAW_DISTANCE_MIN}" max="${PERFORMANCE_DRAW_DISTANCE_MAX}" step="${PERFORMANCE_DRAW_DISTANCE_STEP}" style="width:100%;margin-bottom:6px;" />
+  <div id="performance-distance-value" style="color:#f5f7fb;font-variant-numeric:tabular-nums;">200</div>
+`;
+document.body.appendChild(performancePanel);
+
+const performanceQualitySelect = document.getElementById('performance-quality-select');
+const performanceDistanceRange = document.getElementById('performance-distance-range');
+const performanceDistanceValue = document.getElementById('performance-distance-value');
+const performancePanelClose = document.getElementById('performance-panel-close');
+
+function updatePerformancePanelUi() {
+  if (performanceQualitySelect) {
+    performanceQualitySelect.value = performanceSettings.quality;
+  }
+  if (performanceDistanceRange) {
+    performanceDistanceRange.value = String(performanceSettings.drawDistance);
+  }
+  if (performanceDistanceValue) {
+    performanceDistanceValue.textContent = `${performanceSettings.drawDistance.toFixed(0)}`;
+  }
+}
+
+function setPerformancePanelVisible(visible) {
+  performancePanel.style.display = visible ? 'block' : 'none';
+}
+
+function applyPerformanceSettings({ save = true, resize = true } = {}) {
+  camera.far = performanceSettings.drawDistance;
+  camera.updateProjectionMatrix();
+  try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
+  if (resize) {
+    onWindowResize();
+  }
+  updatePerformancePanelUi();
+  if (save) {
+    savePerformanceSettings();
+  }
+}
+
+performanceToggleButton.addEventListener('click', () => {
+  setPerformancePanelVisible(performancePanel.style.display === 'none');
+});
+performancePanelClose?.addEventListener('click', () => {
+  setPerformancePanelVisible(false);
+});
+performanceQualitySelect?.addEventListener('change', () => {
+  const nextQuality = String(performanceQualitySelect.value || '').trim();
+  if (!PERFORMANCE_QUALITY_OPTIONS[nextQuality]) { return; }
+  performanceSettings.quality = nextQuality;
+  applyPerformanceSettings({ save: true, resize: true });
+});
+performanceDistanceRange?.addEventListener('input', () => {
+  const nextDistance = Number(performanceDistanceRange.value);
+  if (!Number.isFinite(nextDistance)) { return; }
+  performanceSettings.drawDistance = Math.min(PERFORMANCE_DRAW_DISTANCE_MAX, Math.max(PERFORMANCE_DRAW_DISTANCE_MIN, nextDistance));
+  applyPerformanceSettings({ save: false, resize: false });
+});
+performanceDistanceRange?.addEventListener('change', () => {
+  const nextDistance = Number(performanceDistanceRange.value);
+  if (!Number.isFinite(nextDistance)) { return; }
+  performanceSettings.drawDistance = Math.min(PERFORMANCE_DRAW_DISTANCE_MAX, Math.max(PERFORMANCE_DRAW_DISTANCE_MIN, nextDistance));
+  applyPerformanceSettings({ save: true, resize: false });
+});
+updatePerformancePanelUi();
 
 // 使用している canvas は既に DOM にあるため、appendChild は行わない。
 // (document.body.appendChild(renderer.domElement) をするとプレビュー時の親要素配置が崩れるため削除)
@@ -8659,7 +9440,7 @@ function onWindowResize() {
     camera.aspect = previewWidth / previewHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(previewWidth, previewHeight);
-    try { renderer.setPixelRatio(1); } catch (e) {}
+    try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
     canvas.style.width = previewWidth + 'px';
     canvas.style.height = previewHeight + 'px';
     positionLoadingOverlayToCanvas();
@@ -8667,7 +9448,7 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    // renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     positionLoadingOverlayToCanvas();
@@ -8805,7 +9586,7 @@ async function restorePreview() {
     // restore renderer preview size and pixel ratio
     const previewWidth = Math.min(640, Math.floor(window.innerWidth * 0.6));
     const previewHeight = Math.floor(previewWidth * 9 / 16);
-    try { renderer.setPixelRatio(1); } catch (e) {}
+    try { renderer.setPixelRatio(getPerformancePixelRatio()); } catch (e) {}
     renderer.setSize(previewWidth, previewHeight);
     positionLoadingOverlayToCanvas();
     try { updateCtrlPos(); } catch (e) {}
@@ -9245,7 +10026,7 @@ function createFallbackTrainCar(length, color = 0xaaaaaa, transparency = 1) {
     opacity: transparency,
     metalness: 0.7,
     roughness: 0.55,
-    envMap: scene.environment,
+    envMap: scene.ref || scene.environment,
     envMapIntensity: 1.0,
   });
   return new THREE.Mesh(geometry, material);
@@ -9285,35 +10066,36 @@ function TrainSettings(
   const metalness_num = 1
   const roughness_num = 0.6
   const envMapIntensity_num = 1.0
+  const trainEnvMap = scene.ref || scene.environment
   // 指定されたテクスチャセットをもとにマテリアル6面分を生成
   function createMaterials(set) {
     const sideRightMat = set.side_right
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side_right),   transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side_right),   transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
       : set.side
-        ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
-        : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num });
+        ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
+        : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num });
 
     const sideLeftMat = set.side_left
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side_left), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num }) // 反転なし
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side_left), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num }) // 反転なし
       : set.side
-        ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
+        ? new THREE.MeshStandardMaterial({ map: loadTexture(set.side), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
         : sideRightMat.clone();
 
     const topMat = set.top
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.top), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
-      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num });
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.top), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
+      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num });
 
     const bottomMat = set.bottom
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.bottom), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.bottom), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
       : topMat.clone();
 
     const frontMat = set.front
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.front), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
-      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num });
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.front), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
+      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num });
 
     const backMat = set.back
-      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.back), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num })
-      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: scene.environment, envMapIntensity: envMapIntensity_num });
+      ? new THREE.MeshStandardMaterial({ map: loadTexture(set.back), transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num })
+      : new THREE.MeshStandardMaterial({ color, transparent: true, opacity: transparency, metalness: metalness_num, roughness: roughness_num, envMap: trainEnvMap, envMapIntensity: envMapIntensity_num });
 
     // 面の順番：[右, 左, 上, 下, 前, 後]
     return [
@@ -9354,7 +10136,7 @@ function TrainSettings(
       }
       car = createFallbackTrainCar(length, color, transparency);
     }
-    // car.material.envMap = scene.ref;
+    refreshTrainRootEnvMap(car);
 
     // ▼ 車両の位置を z 方向にずらす（中央起点）
     const spacing = 6.95; // 車両の長さと同じだけ間隔を空ける
@@ -9503,7 +10285,7 @@ function Sin_TrainSettings(
     // Opposition.rotation.y = Math.PI
     // trainCars.push(Opposition);
     // trainGroup.add(Opposition); // グループに追加
-    
+    refreshTrainRootEnvMap(car);
     disableShadowRecursive(car);
     trainCars.push(car);
     trainGroup.add(car); // グループに追加
@@ -9834,15 +10616,21 @@ const structureSampleInterval = 0.5;
 const structureHoverColor = 0xffff33;
 const structurePinnedColor = 0xff33aa;
 const structureSelectedColor = 0x33ffaa;
+const structureGenerationListSelectedColor = 0xffc933;
 const structureDataUrl = 'map_data/structure.json';
 let structureModeActive = false;
 let structureViewActive = false;
 let constructionModeActive = false;
+let structurePinMoveModeActive = false;
 let structureSamplesDirty = true;
 let structureSamplePoints = [];
 let structureHoverPoint = null;
 let structureHoverTrackName = null;
 let structureHoverPin = null;
+let structurePinDragActive = false;
+let structureDraggedPin = null;
+let structureDraggedPinStartSnapshot = null;
+let structureDraggedPinLockedTrackName = null;
 const structurePinnedPins = [];
 const constructionSelectedPins = [];
 let railStructurePickMeshes = [];
@@ -10448,8 +11236,7 @@ function refreshRailSelectionTargets() {
   selectedRailPoint = null;
   clearRailSelectionLine();
 
-  const useStructureHandles = editObject === 'RAIL'
-    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE);
+  const useStructureHandles = false;
   if (useStructureHandles) {
     railStructurePickMeshes = [];
     const groups = collectRailStructureGroups();
@@ -10811,16 +11598,10 @@ function ensureStructureHoverPin() {
   structureHoverPin.name = 'StructureHoverPin';
 }
 
-function updateStructureHover() {
-  if (!structureModeActive || !lastPointerScreen || structurePointerBlockedByUI) {
-    if (structureHoverPin) {
-      structureHoverPin.visible = false;
-    }
-    structureHoverPoint = null;
-    structureHoverTrackName = null;
-    return;
+function getNearestStructureSampleFromPointerScreen(preferredTrackName = null) {
+  if (!lastPointerScreen || structurePointerBlockedByUI) {
+    return null;
   }
-
   if (structureSamplesDirty || structureSamplePoints.length === 0) {
     buildStructureSamplePoints();
   }
@@ -10832,12 +11613,17 @@ function updateStructureHover() {
 
   const targetX = lastPointerScreen.x;
   const targetY = lastPointerScreen.y;
+  const lockedTrackName = String(preferredTrackName || '').trim();
+  const hasLockedTrackName = lockedTrackName.length > 0;
 
   let best = null;
   let bestDist = Infinity;
   const tmp = new THREE.Vector3();
 
   structureSamplePoints.forEach((sample) => {
+    if (hasLockedTrackName && String(sample?.trackName || '').trim() !== lockedTrackName) {
+      return;
+    }
     tmp.copy(sample.point).project(camera);
     if (tmp.z < -1 || tmp.z > 1) { return; }
     const sx = (tmp.x + 1) * 0.5 * w;
@@ -10850,6 +11636,55 @@ function updateStructureHover() {
       best = sample;
     }
   });
+
+  return best;
+}
+
+function clearStructurePinDragState() {
+  structurePinDragActive = false;
+  structureDraggedPin = null;
+  structureDraggedPinStartSnapshot = null;
+  structureDraggedPinLockedTrackName = null;
+}
+
+function beginStructurePinDrag(pin) {
+  if (!pin) { return false; }
+  structurePinDragActive = true;
+  structureDraggedPin = pin;
+  structureDraggedPinStartSnapshot = {
+    x: Number(pin?.position?.x) || 0,
+    y: Number(pin?.position?.y) || 0,
+    z: Number(pin?.position?.z) || 0,
+    trackName: String(pin?.userData?.trackName || '').trim(),
+  };
+  structureDraggedPinLockedTrackName = String(pin?.userData?.trackName || '').trim() || null;
+  structureSamplesDirty = true;
+  updateDraggedStructurePinFromPointer();
+  efficacy = false;
+  return true;
+}
+
+function updateDraggedStructurePinFromPointer() {
+  if (!structurePinDragActive || !structureDraggedPin) { return false; }
+  const best = getNearestStructureSampleFromPointerScreen(structureDraggedPinLockedTrackName);
+  if (!best?.point) { return false; }
+  structureDraggedPin.position.copy(best.point);
+  structureDraggedPin.userData = structureDraggedPin.userData || {};
+  structureDraggedPin.userData.trackName = structureDraggedPinLockedTrackName || best.trackName || null;
+  return true;
+}
+
+function updateStructureHover() {
+  if (!structureModeActive) {
+    if (structureHoverPin) {
+      structureHoverPin.visible = false;
+    }
+    structureHoverPoint = null;
+    structureHoverTrackName = null;
+    return;
+  }
+
+  const best = getNearestStructureSampleFromPointerScreen();
 
   if (!best) {
     if (structureHoverPin) {
@@ -10899,7 +11734,7 @@ function placeStructurePinnedPinAt(position, trackName = null) {
     linkedStructureObjectIds: Array.from(new Set(linkedIds)),
     structureLinkedRestored: false,
   };
-  pin.visible = structureViewActive || structureModeActive || constructionModeActive;
+  pin.visible = structureViewActive || structureModeActive || structurePinMoveModeActive || constructionModeActive;
   structurePinnedPins.push(pin);
   return pin;
 }
@@ -10930,7 +11765,8 @@ function setStructurePinnedVisibility(visible) {
 }
 
 function updateStructurePinnedVisibility() {
-  setStructurePinnedVisibility(structureViewActive || structureModeActive || constructionModeActive);
+  setStructurePinnedVisibility(structureViewActive || structureModeActive || structurePinMoveModeActive || constructionModeActive);
+  refreshStructurePinnedPinColors();
 }
 
 function setPinColor(pin, color) {
@@ -10950,7 +11786,7 @@ function setConstructionPinSelected(pin, selected) {
   if (!pin) { return; }
   pin.userData = pin.userData || {};
   pin.userData.constructionSelected = selected;
-  setPinColor(pin, selected ? structureSelectedColor : structurePinnedColor);
+  refreshStructurePinnedPinColors();
 }
 
 function clearConstructionSelection() {
@@ -10980,6 +11816,89 @@ function pickStructurePinnedPin() {
   const hits = raycaster.intersectObjects(structurePinnedPins, false);
   if (hits.length === 0) { return null; }
   return hits[0].object;
+}
+
+function buildStructurePinPayloadFromMesh(pin) {
+  if (!pin?.position) { return null; }
+  return {
+    x: Number(pin.position.x) || 0,
+    y: Number(pin.position.y) || 0,
+    z: Number(pin.position.z) || 0,
+    trackName: String(pin?.userData?.trackName || '').trim(),
+  };
+}
+
+function syncStructureGenerationRunsForMovedPin(pin, startSnapshot = null) {
+  if (!pin?.userData) { return 0; }
+  const linkedIds = Array.from(new Set(
+    (Array.isArray(pin.userData.linkedStructureObjectIds) ? pin.userData.linkedStructureObjectIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const nextPinPayload = buildStructurePinPayloadFromMesh(pin);
+  if (!nextPinPayload) { return 0; }
+  let updatedCount = 0;
+  (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : []).forEach((run) => {
+    if (!run || typeof run !== 'object') { return; }
+    let relatedPins = [];
+    let shouldUpdateRun = false;
+    const runtimeId = String(run?._pinGenerationRuntimeId || '').trim();
+    if (runtimeId && linkedIds.length > 0) {
+      const runObjectIds = new Set(
+        collectPinGeneratedObjectsByRuntimeId(runtimeId)
+          .map((mesh) => String(mesh?.userData?.structureObjectId || '').trim())
+          .filter(Boolean)
+      );
+      if (runObjectIds.size > 0) {
+        relatedPins = structurePinnedPins.filter((candidate) => {
+          const candidateIds = Array.isArray(candidate?.userData?.linkedStructureObjectIds)
+            ? candidate.userData.linkedStructureObjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+            : [];
+          return candidateIds.some((id) => runObjectIds.has(id));
+        });
+        shouldUpdateRun = relatedPins.some((candidate) => candidate === pin);
+      }
+    }
+    if (shouldUpdateRun && relatedPins.length > 0) {
+      const nextPins = normalizePinsPayload(relatedPins.map((candidate) => buildStructurePinPayloadFromMesh(candidate)));
+      if (nextPins.length > 0) {
+        run.pins = nextPins;
+        updatedCount += 1;
+      }
+      return;
+    }
+    const pins = normalizePinsPayload(run?.pins);
+    if (pins.length < 1) { return; }
+    const ref = startSnapshot && Number.isFinite(startSnapshot.x) && Number.isFinite(startSnapshot.y) && Number.isFinite(startSnapshot.z)
+      ? startSnapshot
+      : nextPinPayload;
+    let bestIndex = -1;
+    let bestScore = Infinity;
+    const trackName = String(ref.trackName || '').trim();
+    const fallbackThresholdSq = 0.36;
+    pins.forEach((entry, index) => {
+      if (trackName && String(entry.trackName || '').trim() !== trackName) { return; }
+      const dx = Number(entry.x) - Number(ref.x);
+      const dy = Number(entry.y) - Number(ref.y);
+      const dz = Number(entry.z) - Number(ref.z);
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq < bestScore) {
+        bestScore = distSq;
+        bestIndex = index;
+      }
+    });
+    if (bestIndex < 0 || bestScore > fallbackThresholdSq) { return; }
+    run.pins = pins.map((entry, index) => (index === bestIndex ? { ...nextPinPayload } : entry));
+    updatedCount += 1;
+  });
+  if (updatedCount > 0) {
+    renderStructureGenerationList();
+  }
+  console.log('[structure pin] synced generation runs after move', {
+    updatedCount,
+    pin: nextPinPayload,
+  });
+  return updatedCount;
 }
 
 function getSelectedTrackCurvesForConstructionFromPinsPayload(pinsPayload) {
@@ -11194,8 +12113,11 @@ function applyStructureDataPayload(data) {
     : [];
   structureGenerationRuns = dedupeGenerationRuns(loadedRuns).map((run) => ({
     ...run,
+    _pinGenerationRuntimeId: ensureGenerationRunRuntimeId(run),
     replayDone: false,
   }));
+  syncPinGenerationRuntimeSeqFromRuns();
+  renderStructureGenerationList();
   console.info('[public_upload][pins] restoring structure payload', {
     pinCount: data.pins.length,
     generationRunCount: structureGenerationRuns.length,
@@ -11288,6 +12210,7 @@ function replayStructureGenerationRunsFromStructureData() {
         verticalOffset: params.verticalOffset,
         yawOffsetDeg: params.yawOffsetDeg,
         spacing: params.spacing,
+        runtimeId: run?._pinGenerationRuntimeId,
       });
       run.replayDone = true;
     });
@@ -12259,6 +13182,7 @@ function buildCreateModePayload(options = {}) {
   const includeDifferenceSpaces = options?.includeDifferenceSpaces !== false;
   const materializeCopiedObjects = options?.materializeCopiedObjects === true;
   const excludeCopiedGroupObjects = options?.excludeCopiedGroupObjects === true;
+  const excludeStructureGroupSourceGuides = options?.excludeStructureGroupSourceGuides === true;
   const excludedGroupIdsOption = options?.excludedGroupIds instanceof Set
     ? options.excludedGroupIds
     : null;
@@ -12277,8 +13201,9 @@ function buildCreateModePayload(options = {}) {
     .filter(Boolean);
   const railOperations = serializeDifferenceRailOperations();
   const baseGuideGrid = serializeBaseGuideGridState();
-  const guideGridStates = guideAddGrids
-    .filter((grid) => grid?.parent)
+  const liveGuideGrids = guideAddGrids
+    .filter((grid) => grid?.parent);
+  let guideGridStates = liveGuideGrids
     .map((grid) => serializeGuideGridState(grid))
     .filter(Boolean);
   const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStates);
@@ -12295,6 +13220,52 @@ function buildCreateModePayload(options = {}) {
     excludedGroupIds: groupedStructureIds,
     excludeCopiedGroupObjects,
   });
+  if (excludeStructureGroupSourceGuides && guideGridStates.length > 0) {
+    const sourceGuideKeys = new Set();
+    liveGuideGrids.forEach((grid, idx) => {
+      const key = String(guideGridStates[idx]?.saveKey || '').trim();
+      if (key && isStructureGroupSourceGuideGrid(grid)) {
+        sourceGuideKeys.add(key);
+      }
+    });
+    if (sourceGuideKeys.size > 0) {
+      const guideStateByKey = new Map(
+        guideGridStates
+          .map((state) => [String(state?.saveKey || '').trim(), state])
+          .filter(([key]) => key.length > 0)
+      );
+      const keepSourceGuideKeys = new Set();
+      const queue = [];
+      const enqueueGuideDependency = (rawKey) => {
+        const key = String(rawKey || '').trim();
+        if (!key || key === 'base') { return; }
+        if (sourceGuideKeys.has(key)) {
+          keepSourceGuideKeys.add(key);
+        }
+        if (!queue.includes(key)) {
+          queue.push(key);
+        }
+      };
+      (Array.isArray(steelFrame?.points) ? steelFrame.points : []).forEach((point) => {
+        enqueueGuideDependency(point?.planeRefKey);
+      });
+      decorations.forEach((state) => {
+        enqueueGuideDependency(state?.planeRefKey);
+      });
+      for (let i = 0; i < queue.length; i += 1) {
+        const state = guideStateByKey.get(queue[i]);
+        if (!state) { continue; }
+        const sourceKey = String(state?.mirroredFromSourceGridKey || '').trim();
+        if (sourceKey && sourceKey !== 'base') {
+          enqueueGuideDependency(sourceKey);
+        }
+      }
+      guideGridStates = guideGridStates.filter((state) => {
+        const key = String(state?.saveKey || '').trim();
+        return !key || !sourceGuideKeys.has(key) || keepSourceGuideKeys.has(key);
+      });
+    }
+  }
 
   return {
     meta: {
@@ -12655,6 +13626,7 @@ async function downloadWorldData() {
     includeDifferenceSpaces: false,
     materializeCopiedObjects: true,
     excludeCopiedGroupObjects: true,
+    excludeStructureGroupSourceGuides: true,
     excludedGroupIds: singleStructureExcludedGroupIds,
   });
   const filteredSingleStructurePayload = filterCreateModePayloadByExcludedGroupIds(
@@ -12879,7 +13851,7 @@ function applyCreateModePayload(payload) {
   });
   const loadedGuideGrids = [];
   nonMirrorGuideStates.forEach((state) => {
-    const grid = addGuideGridFromState(state);
+    const grid = findExistingGuideGridFromState(state) || addGuideGridFromState(state);
     loadedGuideGrids.push(grid || null);
   });
   clearSteelFrameForImport();
@@ -13052,6 +14024,7 @@ function activatePublicRuntimeObjectViewMode() {
 }
 
 function applyRuntimeMapLoadedUiState() {
+  activateSeeModeOnLoadCompletePending = false;
   completeLoadingOverlayState('読み込み完了');
   // clearCreateHistory();
   // clearDifferenceHistory();
@@ -13068,6 +14041,7 @@ async function loadRuntimeMapFromPublicUpload() {
     return false;
   }
   restartLoadingOverlay('runtime map 読み込み中...');
+  runtimeMapRestorePhaseDone = false;
   runtimeMapLoadedUiStatePending = true;
   runtimeMapStructurePostProcessReady = false;
   runtimeMapStructurePostProcessRequired = false;
@@ -13465,6 +14439,7 @@ async function loadRuntimeMapFromPublicUpload() {
   if (!runtimeMapStructurePostProcessRequired) {
     markRuntimeMapStructurePostProcessReady('runtime-load-no-async-postprocess');
   }
+  runtimeMapRestorePhaseDone = true;
   markLoadingReady();
   return true;
 }
@@ -13625,7 +14600,7 @@ function appendCreateModePayload(payload, options = {}) {
 
   const loadedGuideGrids = [];
   nonMirrorGuideStates.forEach((state) => {
-    const grid = addGuideGridFromState(state);
+    const grid = findExistingGuideGridFromState(state) || addGuideGridFromState(state);
     loadedGuideGrids.push(grid || null);
   });
   const keyToGrid = new Map();
@@ -13786,6 +14761,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
+  const sourceGroupId = String(payload?.meta?.groupId || '').trim();
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   const payloadMode = String(payload?.meta?.mode || '').trim();
   syncStructureGroupSequenceFromExisting();
@@ -13802,7 +14778,7 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   });
   const loadedGuideGrids = [];
   nonMirrorGuideStates.forEach((state) => {
-    const grid = addGuideGridFromState(state);
+    const grid = findExistingGuideGridFromState(state) || addGuideGridFromState(state);
     loadedGuideGrids.push(grid || null);
   });
   const keyToGrid = buildExistingGuideGridKeyMap();
@@ -13825,6 +14801,16 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     tryCreateMirrorFromState: (state) => createGuideMirrorGridFromStateLink(state, keyToGrid),
   });
   rebuildMirrorStateOnLoad(keyToGrid, 4);
+  if (sourceGroupId) {
+    const finalKeyToGrid = buildExistingGuideGridKeyMap();
+    guideGridStates.forEach((state, idx) => {
+      const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
+      if (!key || key === 'base') { return; }
+      const grid = finalKeyToGrid.get(key) || null;
+      if (!grid) { return; }
+      markGuideGridAsStructureGroupSource(grid, { sourceTag, sourceGroupId });
+    });
+  }
 
   const standaloneGroupState = payloadMode === 'group_only_with_guides'
     ? hydrateStandaloneStructureGroupPayload(payload)
@@ -14386,6 +15372,7 @@ setConstructionCategory(null);
 setRailConstructionCategory(null);
 setRailConstructionGroupOptions();
 setGroupModePanelVisible(false);
+updateStructureGenerationListPanelVisibility();
 updateGroupModePanelUI();
 if (!IS_RUNTIME_LOCAL_VIEW) {
   autoLoadStructureGroupsFromFolder().catch((err) => {
@@ -15200,6 +16187,110 @@ function clearGuideAddGridsForImport() {
   changeAngleGridTarget = null;
 }
 
+function isStructureGroupSourceGuideGrid(grid) {
+  return Boolean(grid?.userData?.structureGroupSourceGuide);
+}
+
+function markGuideGridAsStructureGroupSource(grid, options = {}) {
+  if (!grid) { return; }
+  const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || '');
+  const sourceGroupId = String(options?.sourceGroupId || '').trim();
+  grid.userData = {
+    ...(grid.userData || {}),
+    structureGroupSourceGuide: true,
+    structureGroupSourceTag: sourceTag || null,
+    structureGroupSourceGroupId: sourceGroupId || null,
+  };
+}
+
+function buildGuideGridStateSignature(stateLike) {
+  const pos = Array.isArray(stateLike?.position)
+    ? stateLike.position
+    : (stateLike?.position?.isVector3
+      ? [stateLike.position.x, stateLike.position.y, stateLike.position.z]
+      : [0, 0, 0]);
+  const quat = Array.isArray(stateLike?.quaternion)
+    ? stateLike.quaternion
+    : (stateLike?.quaternion?.isQuaternion
+      ? [stateLike.quaternion.x, stateLike.quaternion.y, stateLike.quaternion.z, stateLike.quaternion.w]
+      : [0, 0, 0, 1]);
+  const rect = stateLike?.guideRectSize && typeof stateLike.guideRectSize === 'object'
+    ? stateLike.guideRectSize
+    : {};
+  const frameRaw = stateLike?.guideMirrorCoordFrame;
+  const frame = (frameRaw && Array.isArray(frameRaw.anchor) && Array.isArray(frameRaw.quat))
+    ? {
+      anchor: frameRaw.anchor.map((v) => roundTo(v, 4)),
+      quat: frameRaw.quat.map((v) => roundTo(v, 5)),
+      axis: frameRaw.axis === 'x' ? 'x' : frameRaw.axis === 'z' ? 'z' : '',
+      edge: typeof frameRaw.edge === 'string' ? frameRaw.edge : '',
+    }
+    : null;
+  const angles = (stateLike?.changeAnglePanelAngles && typeof stateLike.changeAnglePanelAngles === 'object')
+    ? {
+      x: roundTo(stateLike.changeAnglePanelAngles.x, 4),
+      y: roundTo(stateLike.changeAnglePanelAngles.y, 4),
+      z: roundTo(stateLike.changeAnglePanelAngles.z, 4),
+    }
+    : null;
+  return JSON.stringify({
+    name: String(stateLike?.name || 'AddPointGuideGridClone'),
+    position: pos.map((v) => roundTo(v, 4)),
+    quaternion: quat.map((v) => roundTo(v, 5)),
+    guideGridColor: Number(stateLike?.guideGridColor) || GUIDE_ADD_GRID_COLOR,
+    guideGridDisplay: stateLike?.guideGridDisplay === 'plane' ? 'plane' : 'grid',
+    guideGridOpacity: roundTo(stateLike?.guideGridOpacity, 4),
+    guideRectSize: {
+      width: roundTo(rect?.width || ADD_POINT_GRID_SIZE, 4),
+      height: roundTo(rect?.height || ADD_POINT_GRID_SIZE, 4),
+    },
+    guideMirrorLocked: Boolean(stateLike?.guideMirrorLocked),
+    guideMillerInfluencePlane: Boolean(stateLike?.guideMillerInfluencePlane),
+    mirroredFromEdge: typeof stateLike?.mirroredFromEdge === 'string' ? stateLike.mirroredFromEdge : '',
+    mirroredFromSourceGridKey: typeof stateLike?.mirroredFromSourceGridKey === 'string' ? stateLike.mirroredFromSourceGridKey : '',
+    mirroredFromInfluencePlaneKey: typeof stateLike?.mirroredFromInfluencePlaneKey === 'string' ? stateLike.mirroredFromInfluencePlaneKey : '',
+    frame,
+    angles,
+  });
+}
+
+function buildGuideGridLiveStateSignature(grid) {
+  if (!grid?.parent) { return ''; }
+  const size = getGuideGridRectSize(grid);
+  return buildGuideGridStateSignature({
+    name: String(grid?.name || 'AddPointGuideGridClone'),
+    position: [grid.position.x, grid.position.y, grid.position.z],
+    quaternion: [grid.quaternion.x, grid.quaternion.y, grid.quaternion.z, grid.quaternion.w],
+    guideGridColor: grid?.userData?.guideGridColor,
+    guideGridDisplay: grid?.userData?.guideGridDisplay,
+    guideGridOpacity: grid?.userData?.guideGridOpacity,
+    guideRectSize: {
+      width: size?.width,
+      height: size?.height,
+    },
+    guideMirrorLocked: grid?.userData?.guideMirrorLocked,
+    guideMillerInfluencePlane: grid?.userData?.guideMillerInfluencePlane,
+    mirroredFromEdge: grid?.userData?.mirroredFromEdge,
+    mirroredFromSourceGridKey: grid?.userData?.mirroredFromSourceGridKey,
+    mirroredFromInfluencePlaneKey: grid?.userData?.mirroredFromInfluencePlaneKey,
+    guideMirrorCoordFrame: grid?.userData?.guideMirrorCoordFrame,
+    changeAnglePanelAngles: grid?.userData?.changeAnglePanelAngles,
+  });
+}
+
+function findExistingGuideGridFromState(state) {
+  const targetSignature = buildGuideGridStateSignature(state);
+  if (!targetSignature) { return null; }
+  for (let i = 0; i < guideAddGrids.length; i += 1) {
+    const grid = guideAddGrids[i];
+    if (!grid?.parent) { continue; }
+    if (buildGuideGridLiveStateSignature(grid) === targetSignature) {
+      return grid;
+    }
+  }
+  return null;
+}
+
 function addGuideGridFromState(state) {
   const pos = Array.isArray(state?.position) ? state.position : [0, 0, 0];
   const quat = Array.isArray(state?.quaternion) ? state.quaternion : [0, 0, 0, 1];
@@ -15450,7 +16541,7 @@ function vecMoved(a, b, eps = HISTORY_EPS) {
     if (objectEditMode === 'CREATE_NEW') {
       targetObjects = getSteelFrameAddPointTargets();
     } else if (objectEditMode === 'MOVE_EXISTING') {
-      targetObjects = steelFrameMode.getAllPointMeshes().concat(activeDecorations);
+      targetObjects = getSteelFramePickTargets({ currentOnly: false });
     } else if (objectEditMode === 'COPY') {
       targetObjects = steelFrameMode.getAllPointMeshes().concat(constructionObjects);
     } else if (objectEditMode === 'STYLE') {
@@ -15506,6 +16597,7 @@ function clearCreateHistory() {
   createUndoStack.length = 0;
   createRedoStack.length = 0;
   moveHistoryStart = null;
+  updateGroupPointEditModePanel();
   updateUndoRedoButtons();
 }
 
@@ -24285,6 +25377,9 @@ function handleDrag() {
   }
 
   let changedSteelFramePoints = null;
+  if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING' && railGroupDragState) {
+    railGroupDragState = null;
+  }
   const isRailStructureDrag = editObject === 'RAIL'
     && objectEditMode === 'MOVE_EXISTING'
     && railGroupDragState
@@ -24406,6 +25501,15 @@ function handleDrag() {
 async function handleMouseUp(mobile = false) {
 
   if (pause){return};
+  if (structurePinDragActive) {
+    const draggedPin = structureDraggedPin;
+    const startSnapshot = structureDraggedPinStartSnapshot;
+    updateDraggedStructurePinFromPointer();
+    syncStructureGenerationRunsForMovedPin(draggedPin, startSnapshot);
+    clearStructurePinDragState();
+    efficacy = true;
+    return;
+  }
   if (guideRectangleDragActive) {
     endGuideRectangleDrag();
     efficacy = true;
@@ -24658,9 +25762,21 @@ async function handleMouseUp(mobile = false) {
       }
       
       if (choice_object) {
-        console.log('add_group')
         const already = steelFrameMode.isSelectedPoint(choice_object);
-        steelFrameMode.toggleSelectedPoint(choice_object);
+        if (already) {
+          steelFrameMode.toggleSelectedPoint(choice_object);
+        } else {
+          const readyTargets = ensureCopiedGroupReadyForPointEdit([choice_object], { promptDetachConfirm: true });
+          if (!Array.isArray(readyTargets) || readyTargets.length < 1) {
+            shouldToggle = true;
+            return;
+          }
+          readyTargets.forEach((mesh) => {
+            if (!steelFrameMode.isSelectedPoint(mesh)) {
+              steelFrameMode.toggleSelectedPoint(mesh);
+            }
+          });
+        }
         refreshPointEditPanelUI({ clearInputs: true });
         if (steelFrameMode?.getSelectedPointMeshes) {
           const group = steelFrameMode.getSelectedPointMeshes();
@@ -24813,8 +25929,24 @@ async function handleMouseDown() {
     return;
   }
 
+  if (structurePinMoveModeActive) {
+    if (structurePointerBlockedByUI) {
+      return;
+    }
+    const pin = pickStructurePinnedPin();
+    if (pin) {
+      beginStructurePinDrag(pin);
+    }
+    return;
+  }
+
   if (structureModeActive) {
     if (structurePointerBlockedByUI) {
+      return;
+    }
+    const pin = pickStructurePinnedPin();
+    if (pin) {
+      beginStructurePinDrag(pin);
       return;
     }
     placeStructurePinnedPin();
@@ -25725,15 +26857,10 @@ async function handleMouseDown() {
         && choice_object?.userData?.railStructurePickHandle
       );
       if (pickedIsHandle) {
-        const ok = beginRailStructureGroupDrag(choice_object);
-        if (!ok) {
-          railGroupDragState = null;
-          updateRailSelectionStatus();
-          return;
-        }
-        if (railGroupDragState?.handleMesh) {
-          choice_object = railGroupDragState.handleMesh;
-        }
+        // レールモードのグループドラッグは無効化する。
+        railGroupDragState = null;
+        updateRailSelectionStatus();
+        return;
       } else {
         railGroupDragState = null;
       }
@@ -27389,7 +28516,17 @@ function ensureRotateGizmo() {
 
 function getRotateSelectionMeshes() {
   if (!steelFrameMode?.getSelectedPointMeshes) { return []; }
-  return steelFrameMode.getSelectedPointMeshes();
+  const selected = steelFrameMode.getSelectedPointMeshes();
+  if (Array.isArray(selected) && selected.length > 0) {
+    return selected;
+  }
+  if (editObject === 'STEEL_FRAME') {
+    const groupedPoints = collectStructurePointsFromHitTarget(choice_object);
+    if (Array.isArray(groupedPoints) && groupedPoints.length > 0) {
+      return groupedPoints.filter((mesh) => mesh?.userData?.steelFramePoint);
+    }
+  }
+  return [];
 }
 
 function getRotationPanelAnglesFromQuaternion(quat) {
@@ -28233,6 +29370,7 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'structure' ){ if ( toggle === 'active' ){
     console.log( 'structure _active' )
     structureViewActive = true;
+    setStructureGenerationListUiVisible(true);
     updateStructurePinnedVisibility();
     if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
       refreshRailSelectionTargets();
@@ -28241,6 +29379,15 @@ export function UIevent (uiID, toggle){
     }
   } else {
     structureViewActive = false;
+    structureModeActive = false;
+    structurePinMoveModeActive = false;
+    clearStructurePinDragState();
+    structureHoverPoint = null;
+    structureHoverTrackName = null;
+    if (structureHoverPin) {
+      structureHoverPin.visible = false;
+    }
+    setStructureGenerationListUiVisible(false);
     updateStructurePinnedVisibility();
     if (editObject === 'RAIL' && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)) {
       refreshRailSelectionTargets();
@@ -28250,24 +29397,48 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'new/2' ){ if ( toggle === 'active' ){
     console.log( 'new/2 _active' )
     structureModeActive = true;
+    structurePinMoveModeActive = false;
+    clearStructurePinDragState();
     structureSamplesDirty = true;
     updateStructureHover();
     updateStructurePinnedVisibility();
+    updateStructureGenerationListPanelVisibility();
   } else {
     console.log( 'new/2 _inactive' )
     structureModeActive = false;
+    clearStructurePinDragState();
     structureHoverPoint = null;
     structureHoverTrackName = null;
     if (structureHoverPin) {
       structureHoverPin.visible = false;
     }
     updateStructurePinnedVisibility();
+    updateStructureGenerationListPanelVisibility();
+  }} else if ( uiID === 'move_structure' ){ if ( toggle === 'active' ){
+    console.log( 'move_structure _active' )
+    structureModeActive = false;
+    structurePinMoveModeActive = true;
+    clearStructurePinDragState();
+    structureHoverPoint = null;
+    structureHoverTrackName = null;
+    if (structureHoverPin) {
+      structureHoverPin.visible = false;
+    }
+    updateStructurePinnedVisibility();
+    updateStructureGenerationListPanelVisibility();
+  } else {
+    console.log( 'move_structure _inactive' )
+    structurePinMoveModeActive = false;
+    clearStructurePinDragState();
+    updateStructurePinnedVisibility();
+    updateStructureGenerationListPanelVisibility();
   }} else if ( uiID === 'construction' ){ if ( toggle === 'active' ){
   console.log( 'construction _active' )
   resetConstructionStrokeState();
   constructionModeActive = true;
   setRailConstructionPanelVisible(true);
   setRailConstructionCategory(selectedRailConstructionCategory);
+  setStructureGenerationListUiVisible(false);
   updateStructurePinnedVisibility();
   if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
     refreshRailSelectionTargets();
@@ -28278,6 +29449,9 @@ export function UIevent (uiID, toggle){
   resetConstructionStrokeState();
   constructionModeActive = false;
   setRailConstructionPanelVisible(false);
+  if (structureViewActive) {
+    setStructureGenerationListUiVisible(true);
+  }
   clearConstructionSelection();
   updateStructurePinnedVisibility();
   if (editObject === 'RAIL' && objectEditMode === 'MOVE_EXISTING') {
@@ -28286,46 +29460,57 @@ export function UIevent (uiID, toggle){
   }
   }} else if ( uiID === 'bridge' ){ if ( toggle === 'active' ){
   console.log( 'bridge _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('bridge');
   runRailConstructionByCategory('bridge');
   }} else if ( uiID === 'elevated' ){ if ( toggle === 'active' ){
   console.log( 'elevated _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('elevated');
   runRailConstructionByCategory('elevated');
   }} else if ( uiID === 'wall' ){ if ( toggle === 'active' ){
   console.log( 'wall _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('wall');
   runRailConstructionByCategory('wall');
   }} else if ( uiID === 'floor' ){ if ( toggle === 'active' ){
   console.log( 'floor _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('floor');
   runRailConstructionByCategory('floor');
   }} else if ( uiID === 'pillar' ){ if ( toggle === 'active' ){
   console.log( 'pillar _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('pillar');
   runRailConstructionByCategory('pillar');
   }} else if ( uiID === 'catenary_pole' ){ if ( toggle === 'active' ){
   console.log( 'catenary_pole _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('catenary_pole');
   runRailConstructionByCategory('catenary_pole');
   }} else if ( uiID === 'rib_bridge' ){ if ( toggle === 'active' ){
   console.log( 'rib_bridge _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('rib_bridge');
   runRailConstructionByCategory('rib_bridge');
   }} else if ( uiID === 'tunnel_rect' ){ if ( toggle === 'active' ){
   console.log( 'tunnel_rect _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('tunnel_rect');
   runRailConstructionByCategory('tunnel_rect');
   }} else if ( uiID === 'tunnel_circle' ){ if ( toggle === 'active' ){
   console.log( 'tunnel_circle _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('tunnel_circle');
   runRailConstructionByCategory('tunnel_circle');
   }} else if ( uiID === 'platform' ){ if ( toggle === 'active' ){
   console.log( 'platform _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('platform');
   runRailConstructionByCategory('platform');
   }} else if ( uiID === 'group_rail' ){ if ( toggle === 'active' ){
   console.log( 'group_rail _active' )
+  setStructureGenerationListUiVisible(false);
   setRailConstructionCategory('group');
   runRailConstructionByCategory('group');
   }} else if ( uiID === 'move/2_legacy' ){ if ( toggle === 'active' ){
@@ -29614,7 +30799,7 @@ function isInteractionAllowed(clientX, clientY){
   return pointInCanvas(clientX, clientY);
 }
 
-const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel';
+const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel, #group-point-edit-mode-panel, #performance-panel';
 const PANEL_INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [contenteditable]:not([contenteditable="false"])';
 
 function isPanelValueInputTarget(target) {
@@ -29641,7 +30826,7 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('touchstart', (e) => {
   if (isPanelValueInputTarget(e.target) || isPanelValueInputActive()) { return; }
   const uiTarget = e.target instanceof Element
-    ? e.target.closest('#save-buttons, #show-instructions-btn, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel')
+    ? e.target.closest('#save-buttons, #show-instructions-btn, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #performance-panel, #performance-toggle-btn')
     : null;
   if (uiTarget) { return; }
 
@@ -29689,6 +30874,10 @@ document.addEventListener('mousemove', (e) => {
   // UI監視 編集モード
   handleMouseMove(e.clientX, e.clientY);
   updateConstructionStrokeSelection(e.clientX, e.clientY);
+  if (structurePinDragActive) {
+    updateDraggedStructurePinFromPointer();
+    return;
+  }
   if (movePlaneRotateDragging) {
     updateMovePlaneRotateDrag();
     return;
@@ -29826,6 +31015,10 @@ document.addEventListener('touchmove', (e) => {
   // UI監視
   handleMouseMove(touch.clientX, touch.clientY);
   updateConstructionStrokeSelection(touch.clientX, touch.clientY);
+  if (structurePinDragActive) {
+    updateDraggedStructurePinFromPointer();
+    return;
+  }
   if (movePlaneRotateDragging) {
     updateMovePlaneRotateDrag();
     return;

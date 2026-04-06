@@ -48,6 +48,11 @@ function getAssetFilterFromUrl() {
   return "all";
 }
 
+function getNormalizedPathname() {
+  const pathname = window.location.pathname || "/";
+  return pathname.replace(/^\/+/, "/");
+}
+
 function setAssetPageInUrl(page) {
   const params = new URLSearchParams(window.location.search);
   params.set("page", String(page));
@@ -55,7 +60,7 @@ function setAssetPageInUrl(page) {
     params.set("asset", currentFilter);
   }
   const nextQuery = params.toString();
-  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+  const nextUrl = `${getNormalizedPathname()}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
   window.history.replaceState({}, "", nextUrl);
 }
 

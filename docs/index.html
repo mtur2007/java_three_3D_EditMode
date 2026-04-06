@@ -845,6 +845,37 @@
   #rotation-panel {
     border: 1px solid rgba(170, 200, 250, 0.3);
   }
+  #group-point-edit-mode-panel {
+    border: 1px solid rgba(170, 200, 250, 0.34);
+    backdrop-filter: blur(6px);
+  }
+  #group-point-edit-mode-panel .group-point-edit-row {
+    display: grid;
+    grid-template-columns: 72px 1fr 1fr;
+    gap: 6px;
+    align-items: center;
+  }
+  #group-point-edit-mode-panel .group-point-edit-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #213245;
+    white-space: nowrap;
+  }
+  #group-point-edit-mode-panel .group-point-edit-btn {
+    padding: 6px 8px;
+    font-size: 11px;
+    border-radius: 8px;
+    border: 1px solid #c5d1df;
+    background: #ffffff;
+    color: #415167;
+    cursor: pointer;
+  }
+  #group-point-edit-mode-panel .group-point-edit-caption {
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #546476;
+  }
   #rotation-panel input,
   #rotation-apply {
     border-radius: 8px;
@@ -1208,6 +1239,102 @@
     font-size: 10px;
     line-height: 1.4;
     color: #4a5f78;
+  }
+  #structure-generation-list-panel {
+    position: fixed;
+    right: 20px;
+    top: 120px;
+    width: 320px;
+    max-height: calc(100vh - 140px);
+    overflow: auto;
+    padding: 12px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    z-index: 10003;
+    display: none;
+    pointer-events: auto;
+    border: 1px solid rgba(170, 200, 250, 0.3);
+    color: #1a2533;
+  }
+  #structure-generation-list-panel .structure-generation-list-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #structure-generation-list-summary {
+    margin: 0 0 8px;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #4a5f78;
+  }
+  #structure-generation-list {
+    display: grid;
+    gap: 8px;
+  }
+  .structure-generation-list-empty {
+    margin: 0;
+    padding: 10px;
+    border-radius: 8px;
+    background: #f4f8ff;
+    border: 1px solid rgba(130, 160, 210, 0.2);
+    color: #4a5f78;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .structure-generation-list-item {
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(90, 120, 170, 0.24);
+    background: linear-gradient(180deg, #f9fbff, #edf4ff);
+    cursor: pointer;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+  }
+  .structure-generation-list-item:hover {
+    border-color: rgba(90, 120, 170, 0.42);
+  }
+  .structure-generation-list-item.is-selected {
+    border-color: rgba(201, 142, 28, 0.8);
+    background: linear-gradient(180deg, #fff6d9, #ffeab0);
+    box-shadow: 0 0 0 2px rgba(255, 201, 51, 0.24);
+  }
+  .structure-generation-list-item-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .structure-generation-list-item-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #24364d;
+  }
+  .structure-generation-list-item-index {
+    font-size: 10px;
+    color: #6480a2;
+  }
+  .structure-generation-list-item-meta {
+    font-size: 10px;
+    line-height: 1.45;
+    color: #46617e;
+  }
+  .structure-generation-list-item-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .structure-generation-list-item-actions button {
+    flex: 1;
+    border-radius: 8px;
+    border: 1px solid rgba(90, 120, 170, 0.28);
+    background: #f8fbff;
+    color: #27405d;
+    cursor: pointer;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .structure-generation-list-item-actions button:hover {
+    background: #eef5ff;
   }
   #group-mode-panel {
     position: fixed;
@@ -1662,6 +1789,21 @@
                 <pre id="rotation-selection-info" style="margin-top: 8px; max-height: 180px; overflow: auto; padding: 6px; border-radius: 6px; background: rgba(14,20,30,0.78); color: #eef4ff; border: 1px solid rgba(150,180,230,0.3); font-size: 10px; line-height: 1.45; white-space: pre-wrap;">選択点: 2点以上で情報を表示</pre>
               </div>
 
+              <div id="group-point-edit-mode-panel" role="region" aria-label="グループ編集モード" style="position: fixed; right: 20px; bottom: 20px; width: 250px; padding: 12px; background: rgba(255,255,255,0.92); border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.22); z-index: 10002; display: none; pointer-events: auto;">
+                <div style="font-size: 12px; font-weight: 700; margin-bottom: 8px; color: #223448;">グループ編集</div>
+                <div class="group-point-edit-row" style="margin-bottom: 8px;">
+                  <div class="group-point-edit-label">通常グループ</div>
+                  <button id="normal-group-point-group" type="button" class="group-point-edit-btn">グループ</button>
+                  <button id="normal-group-point-partial" type="button" class="group-point-edit-btn">部分</button>
+                </div>
+                <div class="group-point-edit-row">
+                  <div class="group-point-edit-label">複製グループ</div>
+                  <button id="copied-group-point-group" type="button" class="group-point-edit-btn">グループ</button>
+                  <button id="copied-group-point-detach" type="button" class="group-point-edit-btn">独立</button>
+                </div>
+                <div class="group-point-edit-caption">通常グループの「部分」は何も追加処理をせず、そのまま編集します。複製グループの「独立」は確認ウィンドウなしで独立化します。</div>
+              </div>
+
               <div id="construction-category-panel" role="region" aria-label="construction カテゴリ">
                 <div class="construction-title">Construction Category</div>
                 <div class="construction-grid">
@@ -1780,6 +1922,14 @@
                 </div>
                 <button id="rail-construction-generate-button" type="button">選択カテゴリで生成</button>
                 <p id="rail-construction-status">ピンを選択し、カテゴリを選んで生成します。</p>
+              </div>
+
+              <div id="structure-generation-list-panel" role="region" aria-label="ピン生成一覧">
+                <div class="structure-generation-list-title">Pin Generation List</div>
+                <p id="structure-generation-list-summary">生成履歴はありません。</p>
+                <div id="structure-generation-list">
+                  <p class="structure-generation-list-empty">ピンから生成した構造物がここに表示されます。</p>
+                </div>
               </div>
 
               <div id="group-mode-panel" role="region" aria-label="group mode panel">

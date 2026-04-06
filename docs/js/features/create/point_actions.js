@@ -8,6 +8,9 @@ export function createPointActions(deps) {
     getDifferenceSelectedPointsForTransform,
     getConstructionCopyTargets,
     getCopyStructurePointMeshes,
+    collectStructurePointsFromHitTarget,
+    getNormalStructureGroupPointEditMode,
+    getCopiedStructureGroupPointEditMode,
     detachCopiedStructureGroup,
     syncCopiedGroupRotationPanel,
     refreshPointEditPanelUI,
@@ -28,6 +31,10 @@ export function createPointActions(deps) {
       if (choiceObject?.userData?.steelFramePoint) {
         return [choiceObject];
       }
+      const groupedPoints = collectStructurePointsFromHitTarget?.(choiceObject) || [];
+      if (groupedPoints.length > 0) {
+        return groupedPoints.filter((mesh) => Boolean(mesh?.userData?.steelFramePoint));
+      }
       if (choiceObject?.userData?.decorationType) {
         return [choiceObject];
       }
@@ -43,147 +50,193 @@ export function createPointActions(deps) {
     return [];
   }
 
-  function ensureCopiedGroupReadyForPointEdit(targets) {
+  function ensureCopiedGroupReadyForPointEdit(targets, options = {}) {
     if (getEditObject() !== 'STEEL_FRAME') { return targets; }
     if (!Array.isArray(targets) || targets.length < 1) { return targets; }
+    const { promptDetachConfirm = false } = options || {};
     const selectedPoints = targets.filter((mesh) => mesh?.userData?.steelFramePoint);
     if (selectedPoints.length < 1) { return targets; }
 
+    const normalGroupMode = getNormalStructureGroupPointEditMode?.() === 'group' ? 'group' : 'partial';
+    const copiedGroupMode = getCopiedStructureGroupPointEditMode?.() === 'group' ? 'group' : 'detach';
     const selectedSet = new Set(selectedPoints);
-    const copyStructures = getConstructionCopyTargets()
-      .filter((mesh) => Boolean(mesh?.userData?.steelFrameCopiedObject));
-    const copyStructureEntries = copyStructures.map((mesh) => ({
-      mesh,
-      points: getCopyStructurePointMeshes(mesh).filter((p) => p?.userData?.steelFramePoint),
-    }));
-    const structureIndexByMesh = new Map();
-    copyStructureEntries.forEach((entry, idx) => {
-      structureIndexByMesh.set(entry.mesh, idx);
-    });
+    const allPointMeshes = getSteelFrameMode()?.getAllPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
     const pointKey = (mesh) => {
       const id = Number(mesh?.id);
-      return Number.isFinite(id) ? `id:${id}` : `pos:${Number(mesh?.position?.x || 0).toFixed(5)},${Number(mesh?.position?.y || 0).toFixed(5)},${Number(mesh?.position?.z || 0).toFixed(5)}`;
+      return Number.isFinite(id)
+        ? `id:${id}`
+        : `pos:${Number(mesh?.position?.x || 0).toFixed(5)},${Number(mesh?.position?.y || 0).toFixed(5)},${Number(mesh?.position?.z || 0).toFixed(5)}`;
     };
-    const structureAdj = copyStructureEntries.map(() => new Set());
-    const pointToStructureIdx = new Map();
-    copyStructureEntries.forEach((entry, idx) => {
-      entry.points.forEach((pointMesh) => {
-        const key = pointKey(pointMesh);
-        if (!pointToStructureIdx.has(key)) {
-          pointToStructureIdx.set(key, []);
-        }
-        pointToStructureIdx.get(key).push(idx);
-      });
-    });
-    pointToStructureIdx.forEach((idxList) => {
-      if (!Array.isArray(idxList) || idxList.length < 2) { return; }
-      for (let i = 0; i < idxList.length; i += 1) {
-        for (let j = i + 1; j < idxList.length; j += 1) {
-          const a = idxList[i];
-          const b = idxList[j];
-          structureAdj[a].add(b);
-          structureAdj[b].add(a);
-        }
-      }
-    });
-    const collectConnectedPoints = (startMesh) => {
-      const startIdx = structureIndexByMesh.get(startMesh);
-      if (!Number.isInteger(startIdx)) { return []; }
-      const visited = new Set([startIdx]);
-      const queue = [startIdx];
-      while (queue.length > 0) {
-        const idx = queue.shift();
-        structureAdj[idx].forEach((nextIdx) => {
-          if (visited.has(nextIdx)) { return; }
-          visited.add(nextIdx);
-          queue.push(nextIdx);
-        });
-      }
+
+    const collectNormalGroupPoints = (groupId) => {
+      const gid = String(groupId || '').trim();
+      if (!gid) { return []; }
+      const direct = allPointMeshes.filter((mesh) => (
+        String(mesh?.userData?.structureGroupId || '').trim() === gid
+        && !mesh?.userData?.steelFrameCopied
+        && !mesh?.userData?.steelFrameCopyGroupId
+        && !mesh?.userData?.structureGroupCopySourceId
+      ));
+      if (direct.length > 0) { return direct; }
       const out = [];
-      const seenPoints = new Set();
-      visited.forEach((idx) => {
-        const row = copyStructureEntries[idx];
-        row?.points?.forEach((pointMesh) => {
-          const key = pointKey(pointMesh);
-          if (seenPoints.has(key)) { return; }
-          seenPoints.add(key);
-          out.push(pointMesh);
-        });
+      const seen = new Set();
+      getConstructionCopyTargets()
+        .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === gid)
+        .forEach((obj) => {
+          getCopyStructurePointMeshes(obj).forEach((pointMesh) => {
+            if (!pointMesh?.userData?.steelFramePoint) { return; }
+            if (pointMesh?.userData?.steelFrameCopied || pointMesh?.userData?.steelFrameCopyGroupId || pointMesh?.userData?.structureGroupCopySourceId) {
+              return;
+            }
+            const key = pointKey(pointMesh);
+            if (seen.has(key)) { return; }
+            seen.add(key);
+            out.push(pointMesh);
+          });
       });
       return out;
     };
+
+    const normalGroupIdsByPointKey = new Map();
+    getConstructionCopyTargets()
+      .filter((obj) => !obj?.userData?.steelFrameCopiedObject)
+      .forEach((obj) => {
+        const gid = String(obj?.userData?.structureGroupId || '').trim();
+        if (!gid) { return; }
+        getCopyStructurePointMeshes(obj).forEach((pointMesh) => {
+          if (!pointMesh?.userData?.steelFramePoint) { return; }
+          if (pointMesh?.userData?.steelFrameCopied || pointMesh?.userData?.steelFrameCopyGroupId || pointMesh?.userData?.structureGroupCopySourceId) {
+            return;
+          }
+          const key = pointKey(pointMesh);
+          if (!normalGroupIdsByPointKey.has(key)) {
+            normalGroupIdsByPointKey.set(key, new Set());
+          }
+          normalGroupIdsByPointKey.get(key).add(gid);
+        });
+      });
+
+    const normalPartialGroups = [];
+    const seenNormalGroups = new Set();
+    selectedPoints.forEach((pointMesh) => {
+      if (pointMesh?.userData?.steelFrameCopied || pointMesh?.userData?.steelFrameCopyGroupId || pointMesh?.userData?.structureGroupCopySourceId) {
+        return;
+      }
+      const candidateGroupIds = new Set();
+      const ownGroupId = String(pointMesh?.userData?.structureGroupId || '').trim();
+      if (ownGroupId) {
+        candidateGroupIds.add(ownGroupId);
+      }
+      const indexedGroupIds = normalGroupIdsByPointKey.get(pointKey(pointMesh));
+      indexedGroupIds?.forEach((gid) => candidateGroupIds.add(gid));
+      candidateGroupIds.forEach((gid) => {
+        if (!gid || seenNormalGroups.has(gid)) { return; }
+        seenNormalGroups.add(gid);
+        const all = collectNormalGroupPoints(gid);
+        if (all.length < 1) { return; }
+        const picked = all.filter((mesh) => selectedSet.has(mesh));
+        if (picked.length > 0 && picked.length < all.length) {
+          normalPartialGroups.push({ groupId: gid, all });
+        }
+      });
+    });
+    if (normalPartialGroups.length > 0 && normalGroupMode === 'group') {
+      normalPartialGroups.forEach(({ all }) => {
+        all.forEach((mesh) => {
+          getSteelFrameMode()?.appendSelectedPoint?.(mesh);
+        });
+      });
+      refreshPointEditPanelUI({ clearInputs: true });
+      return getSteelFrameMode()?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || targets;
+    }
+
     const collectGroupCopiedPoints = (groupId) => {
       const gid = String(groupId || '').trim();
       if (!gid) { return []; }
       const out = [];
       const seenPoints = new Set();
-      copyStructureEntries.forEach((entry) => {
-        const entryGroupId = String(entry?.mesh?.userData?.structureGroupId || '').trim();
-        if (entryGroupId !== gid) { return; }
-        entry?.points?.forEach((pointMesh) => {
-          const key = pointKey(pointMesh);
-          if (seenPoints.has(key)) { return; }
-          seenPoints.add(key);
-          out.push(pointMesh);
+      getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === gid)
+        .forEach((mesh) => {
+          getCopyStructurePointMeshes(mesh).forEach((pointMesh) => {
+            if (!pointMesh?.userData?.steelFramePoint) { return; }
+            if (!pointMesh?.parent) { return; }
+            const key = pointKey(pointMesh);
+            if (seenPoints.has(key)) { return; }
+            seenPoints.add(key);
+            out.push(pointMesh);
+          });
         });
-      });
       return out;
     };
     const partialGroups = [];
-    const seenConnectedKey = new Set();
+    const seenGroupIds = new Set();
 
-    copyStructures.forEach((structureMesh) => {
-      const all = collectConnectedPoints(structureMesh);
+    selectedPoints.forEach((pointMesh) => {
+      const gid = String(pointMesh?.userData?.structureGroupId || '').trim();
+      if (!gid || seenGroupIds.has(gid)) { return; }
+      seenGroupIds.add(gid);
+      const all = collectGroupCopiedPoints(gid);
       if (all.length < 1) { return; }
       const picked = all.filter((mesh) => selectedSet.has(mesh));
       if (picked.length > 0 && picked.length < all.length) {
-        const key = all
-          .map((mesh) => pointKey(mesh))
-          .sort()
-          .join(',');
-        if (seenConnectedKey.has(key)) { return; }
-        seenConnectedKey.add(key);
-        partialGroups.push({ structureMesh, picked, all });
+        partialGroups.push({ groupId: gid, picked, all });
       }
     });
 
-    // フォールバック: 構造物参照が無い古いデータは copyGroupId 単位で扱う。
     if (partialGroups.length < 1) {
-      const allPoints = getSteelFrameMode()?.getAllPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
-      // 旧データ対策: copyGroupId ではなく位置近傍で判定する。
-      // 意図しない構造物を巻き込まないため、許容差は極小にする。
-      const FALLBACK_POS_EPS = 0.02;
-      const candidatePoints = allPoints.filter((mesh) =>
-        Boolean(mesh?.userData?.steelFrameCopied) || Boolean(mesh?.userData?.steelFrameCopyGroupId)
-      );
-      const makeNearSet = (seed) =>
-        candidatePoints.filter((mesh) => mesh?.position?.distanceTo?.(seed.position) <= FALLBACK_POS_EPS);
-
-      const seenNearKey = new Set();
-      selectedPoints.forEach((seed) => {
-        const all = makeNearSet(seed);
+      const copiedTargets = getConstructionCopyTargets()
+        .filter((mesh) => mesh?.parent)
+        .filter((mesh) => {
+          const gid = String(mesh?.userData?.structureGroupId || '').trim();
+          const sourceId = String(mesh?.userData?.structureGroupCopySourceId || '').trim();
+          const copyGroupId = String(mesh?.userData?.steelFrameCopyGroupId || '').trim();
+          return Boolean(gid && (sourceId || copyGroupId || mesh?.userData?.steelFrameCopiedObject));
+        });
+      copiedTargets.forEach((mesh) => {
+        const gid = String(mesh?.userData?.structureGroupId || '').trim();
+        if (!gid || seenGroupIds.has(gid)) { return; }
+        seenGroupIds.add(gid);
+        const all = collectGroupCopiedPoints(gid);
         if (all.length < 1) { return; }
-        const picked = all.filter((mesh) => selectedSet.has(mesh));
-        if (picked.length < 1 || picked.length >= all.length) { return; }
-        const key = all.map((mesh) => mesh.id).sort((a, b) => a - b).join(',');
-        if (seenNearKey.has(key)) { return; }
-        seenNearKey.add(key);
-        partialGroups.push({ nearKey: key, picked, all });
+        const picked = all.filter((point) => selectedSet.has(point));
+        if (picked.length > 0 && picked.length < all.length) {
+          partialGroups.push({ groupId: gid, picked, all });
+        }
       });
-
-      if (partialGroups.length < 1) { return targets; }
     }
 
-    const yesDetach = window.confirm('複製されたオブジェクトを独立させますか？\nOK=はい / キャンセル=いいえ');
-    if (yesDetach) {
-      partialGroups.forEach(({ structureMesh, all }) => {
-        const groupId = String(structureMesh?.userData?.structureGroupId || '').trim();
+    if (partialGroups.length < 1) { return targets; }
+
+    if (copiedGroupMode === 'detach') {
+      if (!promptDetachConfirm) {
+        return targets;
+      }
+      const detachGroupIds = partialGroups
+        .map(({ groupId }) => String(groupId || '').trim())
+        .filter(Boolean);
+      const detachGroupLabel = detachGroupIds.length > 1
+        ? `${detachGroupIds.length}個の複製グループ`
+        : 'この複製グループ';
+      const ok = window.confirm(`${detachGroupLabel}を独立化します。よろしいですか？`);
+      if (!ok) {
+        return [];
+      }
+      const detachedPoints = [];
+      partialGroups.forEach(({ groupId, all }) => {
         detachCopiedStructureGroup({
           groupId,
           points: all,
         });
+        all.forEach((mesh) => {
+          if (!detachedPoints.includes(mesh)) {
+            detachedPoints.push(mesh);
+          }
+        });
       });
-      return targets;
+      refreshPointEditPanelUI({ clearInputs: true });
+      return detachedPoints.length > 0 ? detachedPoints : targets;
     }
 
     const partialPickedSet = new Set(partialGroups.flatMap((entry) => entry.picked));
@@ -196,18 +249,8 @@ export function createPointActions(deps) {
         }
       });
     });
-    partialGroups.forEach(({ structureMesh }) => {
-      const gid = String(structureMesh?.userData?.structureGroupId || '').trim();
-      if (!gid) { return; }
-      const groupPoints = collectGroupCopiedPoints(gid);
-      groupPoints.forEach((mesh) => {
-        if (!expanded.includes(mesh)) {
-          expanded.push(mesh);
-        }
-      });
-    });
     const syncGroupId = partialGroups
-      .map(({ structureMesh }) => String(structureMesh?.userData?.structureGroupId || '').trim())
+      .map(({ groupId }) => String(groupId || '').trim())
       .filter(Boolean)
       .find(Boolean);
     if (syncGroupId) {

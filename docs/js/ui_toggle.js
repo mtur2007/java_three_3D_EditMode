@@ -181,6 +181,11 @@ const UI_BUTTON_META = {
         svg: MOVE_POINT_ICON_SVG,
         variant: 'icon-square',
     },
+    move_structure: {
+        label: '移動',
+        svg: MOVE_POINT_ICON_SVG,
+        variant: 'icon-square',
+    },
     add_point: {
         label: 'ポイント追加',
         svg: ADD_POINT_ICON_SVG,
@@ -513,6 +518,7 @@ const uiTree = {
             },
             'structure': {
                 'new': '',
+                'move_structure': '',
                 'construction': {
                     'bridge': '',
                     'elevated': '',
@@ -660,7 +666,7 @@ const UisToggle = {...Allkeys};
 Object.keys(UisToggle).forEach(key => {
     UisToggle[key] = 'inactive';
   });
-UisToggle[Object.keys(UisToggle)[0]]='active'
+UisToggle.see = 'active'
 
 console.log(uiTree)
 console.log(rename_uiTree)
@@ -764,8 +770,6 @@ UiGroup.addEventListener('touchstart', (event) => {
     showRootButtons(rootKeys);
   });
 
-const restoredPath = loadUiState();
-if (!applyUiState(restoredPath, rootKeys)) {
-  saveUiState(Allkeys['see'] || [0]);
-}
+getValueByIndex(rename_uiTree, UiGroup, Allkeys['see'] || [0]);
+saveUiState(Allkeys['see'] || [0]);
   

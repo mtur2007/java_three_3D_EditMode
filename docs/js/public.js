@@ -1183,11 +1183,16 @@ async function readEditorSlotThumbnailRecord(slotId) {
     return PUBLIC_LIBRARY_ASSET_VALUES.has(asset) ? asset : "st";
   }
 
+  function getNormalizedPathname() {
+    const pathname = window.location.pathname || "/";
+    return pathname.replace(/^\/+/, "/");
+  }
+
   function setPublicViewerPageInUrl(page) {
     const params = new URLSearchParams(window.location.search);
     params.set("page", String(page));
     const nextQuery = params.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    const nextUrl = `${getNormalizedPathname()}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
   }
 
@@ -1196,7 +1201,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     params.set("asset", asset);
     params.set("page", String(page));
     const nextQuery = params.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    const nextUrl = `${getNormalizedPathname()}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
   }
 
