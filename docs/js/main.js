@@ -256,7 +256,7 @@ const renderer = new THREE.WebGLRenderer({
 });
 const PERFORMANCE_SETTINGS_STORAGE_KEY = 'train_editmode_performance_v1';
 const PERFORMANCE_QUALITY_OPTIONS = {
-  low: { label: '低', pixelRatioScale: 0.75 },
+  low: { label: '低', pixelRatioScale: 0.5 },
   medium: { label: '標準', pixelRatioScale: 1.0 },
   high: { label: '高', pixelRatioScale: 1.5 },
 };
@@ -409,6 +409,17 @@ function hideLoadingOverlayElement() {
   requestAnimationFrame(() => {
     loadingOverlay.classList.add('is-hidden');
   });
+}
+
+function forceFinishLoadingOverlay(message = '読み込み完了') {
+  completeLoadingOverlayState(message);
+  runtimeMapLoadedUiStatePending = false;
+  runtimeMapStructurePostProcessRequired = false;
+  runtimeMapStructurePostProcessReady = true;
+  runtimeMapRestorePhaseDone = true;
+  activateSeeModeOnLoadCompletePending = false;
+  hideLoadingOverlayElement();
+  void cleanupPublicRuntimeMapRecordOnLoadComplete();
 }
 
 function completeLoadingOverlayState(message = '読み込み完了') {
@@ -641,8 +652,8 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function setCreateModeUtilityButtonsRightAligned(enabled) {
-    // if (!createModeUtilityButtons) { return; }
-    // document.body.classList.toggle('creat-mode-ui-active', Boolean(enabled));
+    if (!createModeUtilityButtons) { return; }
+    document.body.classList.toggle('edit-mode-ui-active', Boolean(enabled));
   }
 
   function clearRailGroupRangePreview() {
@@ -9308,65 +9319,8 @@ function getPerformancePixelRatio() {
   return Math.min(deviceRatio * quality.pixelRatioScale, 2.5);
 }
 
-const performanceToggleButton = document.createElement('button');
-performanceToggleButton.id = 'performance-toggle-btn';
-performanceToggleButton.type = 'button';
-performanceToggleButton.textContent = 'Performance';
-Object.assign(performanceToggleButton.style, {
-  position: 'fixed',
-  right: '14px',
-  bottom: '14px',
-  zIndex: '2700',
-  border: '1px solid rgba(255,255,255,0.24)',
-  borderRadius: '999px',
-  background: 'rgba(11,17,29,0.84)',
-  color: '#f4f7fb',
-  padding: '10px 14px',
-  fontSize: '13px',
-  fontWeight: '600',
-  letterSpacing: '0.04em',
-  backdropFilter: 'blur(10px)',
-  boxShadow: '0 12px 30px rgba(0,0,0,0.24)',
-  cursor: 'pointer',
-});
-document.body.appendChild(performanceToggleButton);
-
-const performancePanel = document.createElement('section');
-performancePanel.id = 'performance-panel';
-Object.assign(performancePanel.style, {
-  position: 'fixed',
-  right: '14px',
-  bottom: '62px',
-  zIndex: '2700',
-  width: '220px',
-  padding: '14px',
-  borderRadius: '16px',
-  border: '1px solid rgba(255,255,255,0.18)',
-  background: 'rgba(7,12,20,0.9)',
-  color: '#f5f7fb',
-  boxShadow: '0 18px 36px rgba(0,0,0,0.28)',
-  backdropFilter: 'blur(14px)',
-  display: 'none',
-  fontSize: '13px',
-  lineHeight: '1.45',
-});
-performancePanel.innerHTML = `
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
-    <strong style="font-size:13px;letter-spacing:0.04em;">Performance</strong>
-    <button type="button" id="performance-panel-close" style="border:none;background:transparent;color:#d5dbe7;font-size:18px;line-height:1;cursor:pointer;">×</button>
-  </div>
-  <label for="performance-quality-select" style="display:block;margin-bottom:6px;color:#b7c3d9;">画質</label>
-  <select id="performance-quality-select" style="width:100%;margin-bottom:12px;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#f5f7fb;">
-    <option value="low">低</option>
-    <option value="medium">標準</option>
-    <option value="high">高</option>
-  </select>
-  <label for="performance-distance-range" style="display:block;margin-bottom:6px;color:#b7c3d9;">描画距離</label>
-  <input id="performance-distance-range" type="range" min="${PERFORMANCE_DRAW_DISTANCE_MIN}" max="${PERFORMANCE_DRAW_DISTANCE_MAX}" step="${PERFORMANCE_DRAW_DISTANCE_STEP}" style="width:100%;margin-bottom:6px;" />
-  <div id="performance-distance-value" style="color:#f5f7fb;font-variant-numeric:tabular-nums;">200</div>
-`;
-document.body.appendChild(performancePanel);
-
+const performanceToggleButton = document.getElementById('performance-toggle-btn');
+const performancePanel = document.getElementById('performance-panel');
 const performanceQualitySelect = document.getElementById('performance-quality-select');
 const performanceDistanceRange = document.getElementById('performance-distance-range');
 const performanceDistanceValue = document.getElementById('performance-distance-value');
@@ -9377,6 +9331,9 @@ function updatePerformancePanelUi() {
     performanceQualitySelect.value = performanceSettings.quality;
   }
   if (performanceDistanceRange) {
+    performanceDistanceRange.min = String(PERFORMANCE_DRAW_DISTANCE_MIN);
+    performanceDistanceRange.max = String(PERFORMANCE_DRAW_DISTANCE_MAX);
+    performanceDistanceRange.step = String(PERFORMANCE_DRAW_DISTANCE_STEP);
     performanceDistanceRange.value = String(performanceSettings.drawDistance);
   }
   if (performanceDistanceValue) {
@@ -9385,6 +9342,7 @@ function updatePerformancePanelUi() {
 }
 
 function setPerformancePanelVisible(visible) {
+  if (!performancePanel) { return; }
   performancePanel.style.display = visible ? 'block' : 'none';
 }
 
@@ -9401,8 +9359,8 @@ function applyPerformanceSettings({ save = true, resize = true } = {}) {
   }
 }
 
-performanceToggleButton.addEventListener('click', () => {
-  setPerformancePanelVisible(performancePanel.style.display === 'none');
+performanceToggleButton?.addEventListener('click', () => {
+  setPerformancePanelVisible(performancePanel?.style.display === 'none');
 });
 performancePanelClose?.addEventListener('click', () => {
   setPerformancePanelVisible(false);
@@ -9518,6 +9476,7 @@ async function triggerRuntimeMapLoadFromStartButton() {
     setMapLoadStatusText(message);
     if (railConstructionStatus) { railConstructionStatus.textContent = message; }
     updateDifferenceStatus(message);
+    forceFinishLoadingOverlay(message);
   }
 }
 
@@ -14107,7 +14066,9 @@ async function loadRuntimeMapFromPublicUpload() {
     throw new Error('public.html で選択されたマップファイルも map_data フォルダーも見つかりません。');
   }
 
+  const hasRuntimeStructureFile = fileEntries.some(([kind]) => kind === 'st');
   const loadedNames = [];
+  let discoveredStructurePayload = false;
   const classifyRuntimeArchiveEntry = (entryName, payload, fallbackKind = 'ct') => {
     const lower = String(entryName || '').trim().toLowerCase();
     if (lower.startsWith('st')) { return 'st'; }
@@ -14246,6 +14207,7 @@ async function loadRuntimeMapFromPublicUpload() {
         if (entryKind !== 'st') {
           return;
         }
+        discoveredStructurePayload = true;
         const hasCopiedRefs = Array.isArray(payload?.copiedStructureGroups) && payload.copiedStructureGroups.length > 0;
         const hasGroupObjects =
           Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0
@@ -14363,6 +14325,7 @@ async function loadRuntimeMapFromPublicUpload() {
       size: Number(runtimeFile?.size) || bytes.byteLength,
     });
     if (kind === 'st') {
+      discoveredStructurePayload = true;
       const mode = String(payload?.meta?.mode || '').trim();
       const type = String(payload?.meta?.type || '').trim();
       if (mode === 'copied_group_sources_only' && Array.isArray(payload?.sourceStructureGroups)) {
@@ -14416,6 +14379,26 @@ async function loadRuntimeMapFromPublicUpload() {
     } else {
       applyCreateModePayload(payload);
     }
+  }
+
+  const hasStructureRuntimeSource = hasRuntimeStructureFile || discoveredStructurePayload;
+  if (!hasStructureRuntimeSource) {
+    runtimeMapStructurePostProcessRequired = false;
+    runtimeMapStructurePostProcessReady = true;
+    console.info('[runtime][load-complete] no structure runtime source detected; settle load on ct completion', {
+      hasRuntimeStructureFile,
+      discoveredStructurePayload,
+      loadedNames,
+    });
+    flushRuntimeMapLoadedUiState();
+    window.setTimeout(() => {
+      if (!loadingDone && runtimeMapRestorePhaseDone && !runtimeMapLoadedUiStatePending) {
+        console.info('[runtime][load-complete] force finish fallback for ct-only runtime load', {
+          loadedNames,
+        });
+        forceFinishLoadingOverlay('読み込み完了');
+      }
+    }, 900);
   }
 
   const runtimeLabel = IS_EDIT_RUNTIME_LOCAL_VIEW ? 'edit object' : 'public object';
