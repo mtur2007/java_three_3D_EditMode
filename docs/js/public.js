@@ -13,17 +13,12 @@ const SUPABASE_STRUCTURE_FILE_NAME = "st_world_data.zip";
 const PUBLIC_WORLD_PAGE_SIZE = 6;
 const QUOTA_GROUP_STRUCTURE = "structure_download";
 const PUBLIC_LIBRARY_ASSET_VALUES = new Set(["st", "ct", "tr"]);
+const DEFAULT_EDITOR_SLOT_LIMIT = 3;
 const RUNTIME_FILE_PREFIXES = {
   st: "構造物",
   ct: "マップ",
   tr: "車両",
 };
-
-const DEFAULT_EDITOR_SLOTS = Object.freeze([
-  { slotId: "slot-01", label: "SLOT 01", title: "WORLD_1", status: "private" },
-  { slotId: "slot-02", label: "SLOT 02", title: "WORLD_2", status: "private" },
-  { slotId: "slot-03", label: "SLOT 03", title: "WORLD_3", status: "private" },
-]);
 
 function getEditorSlotNumber(slotId) {
   const normalized = String(slotId || "").trim();
@@ -280,7 +275,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const publicMapStatus = document.getElementById("public-map-status");
   const publicMapPagination = document.getElementById("public-map-pagination");
   const viewerMetaValue = document.getElementById("viewer-meta-value");
-  const editSlots = Array.from(document.querySelectorAll(".edit-slot[data-slot]"));
+  const editGrid = document.getElementById("edit-grid");
   const detailTitle = document.getElementById("detail-title");
   const detailTitleEditBtn = document.getElementById("detail-title-edit-btn");
   const detailTitleInput = document.getElementById("detail-title-input");
@@ -299,9 +294,10 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
   const startLinks = [heroStartLink, mapModalStartBtn, editDetailStartLink].filter(Boolean);
   const isPublicPage = Boolean(viewerArea && publicMapGrid);
-  const isEditorPage = editSlots.length > 0;
+  const isEditorPage = Boolean(editLab && editGrid);
   let editorSlotsState = [];
-  let activeEditorSlotId = DEFAULT_EDITOR_SLOTS[0].slotId;
+  let activeEditorSlotId = "slot-01";
+  let editorSlotLimit = DEFAULT_EDITOR_SLOT_LIMIT;
   const editorSlotThumbnailState = new Map();
   let isEditingEditorSlotTitle = false;
   let publicViewerPage = 1;
@@ -309,9 +305,30 @@ async function readEditorSlotThumbnailRecord(slotId) {
   let publicViewerSelectedWorld = null;
   let currentPublicLibraryAsset = "st";
 
-  function createDefaultEditorSlots() {
-    return DEFAULT_EDITOR_SLOTS.map((slot) => ({
-      ...slot,
+  function createEditorSlotTemplate(slotNumber) {
+    const numericSlot = Number.isFinite(slotNumber) ? Math.max(1, Math.floor(slotNumber)) : 1;
+    const padded = String(numericSlot).padStart(2, "0");
+    return {
+      slotId: `slot-${padded}`,
+      label: `SLOT ${padded}`,
+      title: `WORLD_${numericSlot}`,
+      status: "private",
+    };
+  }
+
+  function normalizeEditorSlotLimit(value) {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isFinite(parsed)) {
+      return DEFAULT_EDITOR_SLOT_LIMIT;
+    }
+    return Math.min(99, Math.max(1, parsed));
+  }
+
+  function createDefaultEditorSlots(limit = DEFAULT_EDITOR_SLOT_LIMIT) {
+    return Array.from({ length: normalizeEditorSlotLimit(limit) }, (_, index) => {
+      const slot = createEditorSlotTemplate(index + 1);
+      return {
+        ...slot,
       fileName: "",
       fileSize: 0,
       cityFileName: "",
@@ -329,14 +346,40 @@ async function readEditorSlotThumbnailRecord(slotId) {
       remoteThumbnailPath: "",
       remoteThumbnailUrl: "",
       remoteUpdatedAt: "",
-    }));
+      };
+    });
   }
 
-  function loadEditorSlotsMeta() {
+  function getDefaultEditorSlotTitle(slotId) {
+    const slotNumber = getEditorSlotNumber(slotId);
+    return createEditorSlotTemplate(slotNumber || 1).title;
+  }
+
+  async function fetchEditorSlotLimit() {
+    const supabaseBridge = window.mouseDemoSupabase;
+    const supabaseClient = supabaseBridge?.client || null;
+    const session = await supabaseBridge?.getSession?.();
+    const userId = String(session?.user?.id || "").trim();
+    if (!supabaseClient || !userId) {
+      return DEFAULT_EDITOR_SLOT_LIMIT;
+    }
+    const { data, error } = await supabaseClient
+      .from("profiles")
+      .select("editor_slot_limit")
+      .eq("id", userId)
+      .maybeSingle();
+    if (error) {
+      console.warn("[editor] failed to load editor_slot_limit", error);
+      return DEFAULT_EDITOR_SLOT_LIMIT;
+    }
+    return normalizeEditorSlotLimit(data?.editor_slot_limit);
+  }
+
+  function loadEditorSlotsMeta(limit = editorSlotLimit) {
     try {
       const raw = window.localStorage.getItem(EDITOR_SLOT_META_STORAGE_KEY);
       if (!raw) {
-        return createDefaultEditorSlots();
+        return createDefaultEditorSlots(limit);
       }
       const parsed = JSON.parse(raw);
       const slotMap = new Map(
@@ -346,7 +389,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
             .map((slot) => [String(slot.slotId || ""), slot])
           : []
       );
-      return DEFAULT_EDITOR_SLOTS.map((slot) => {
+      return createDefaultEditorSlots(limit).map((slot) => {
         const saved = slotMap.get(slot.slotId) || {};
         return {
           ...slot,
@@ -372,7 +415,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
         };
       });
     } catch (_error) {
-      return createDefaultEditorSlots();
+      return createDefaultEditorSlots(limit);
     }
   }
 
@@ -564,8 +607,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     editorSlotsState.forEach((slot) => {
       const slotNumber = getEditorSlotNumber(slot.slotId);
       const remote = slotNumber ? (remoteBySlot.get(slotNumber) || null) : null;
-      const defaultSlot = DEFAULT_EDITOR_SLOTS.find((item) => item.slotId === slot.slotId) || null;
-      const defaultTitle = String(defaultSlot?.title || "").trim();
+      const defaultTitle = getDefaultEditorSlotTitle(slot.slotId);
       const currentTitle = String(slot.title || "").trim();
       const previousRemoteTitle = String(slot.remoteTitle || "").trim();
       slot.remoteWorldId = String(remote?.id || "").trim();
@@ -641,7 +683,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       renderEditorSlots();
       return;
     }
-    const fallbackTitle = String(activeSlot.remoteTitle || "").trim() || `WORLD_${String(activeSlot.slotId || "").split("-").pop() || "1"}`;
+    const fallbackTitle = String(activeSlot.remoteTitle || "").trim() || getDefaultEditorSlotTitle(activeSlot.slotId);
     const nextTitle = String(detailTitleInput.value || "").trim() || fallbackTitle;
     const changed = nextTitle !== String(activeSlot.title || "").trim();
     activeSlot.title = nextTitle;
@@ -663,10 +705,48 @@ async function readEditorSlotThumbnailRecord(slotId) {
     renderEditorSlots();
   }
 
+  function renderEditorSlotButtons() {
+    if (!isEditorPage || !editGrid) {
+      return;
+    }
+    editGrid.textContent = "";
+    editorSlotsState.forEach((slot) => {
+      const button = document.createElement("button");
+      button.className = "edit-slot";
+      button.type = "button";
+      button.setAttribute("role", "listitem");
+      button.dataset.slot = slot.slotId;
+
+      const slotId = document.createElement("span");
+      slotId.className = "slot-id";
+      slotId.textContent = slot.label;
+
+      const slotThumb = document.createElement("span");
+      slotThumb.className = "slot-thumb";
+      slotThumb.setAttribute("aria-hidden", "true");
+      const thumbImg = document.createElement("img");
+      thumbImg.setAttribute("data-slot-thumb-image", "");
+      thumbImg.alt = "";
+      thumbImg.hidden = true;
+      slotThumb.append(thumbImg);
+
+      const title = document.createElement("strong");
+      title.setAttribute("data-slot-title", "");
+
+      const status = document.createElement("span");
+      status.className = "slot-private";
+
+      button.append(slotId, slotThumb, title, status);
+      editGrid.append(button);
+    });
+  }
+
   function renderEditorSlots() {
     if (!isEditorPage) {
       return;
     }
+    renderEditorSlotButtons();
+    const editSlots = Array.from(editGrid?.querySelectorAll(".edit-slot[data-slot]") || []);
     editSlots.forEach((button) => {
       const slot = getEditorSlotById(button.dataset.slot || "");
       if (!slot) {
@@ -2094,21 +2174,13 @@ async function readEditorSlotThumbnailRecord(slotId) {
   }
   if (isEditorPage) {
     setEditorLabVisibility({ signedIn: false });
-    editorSlotsState = loadEditorSlotsMeta();
-    const requestedSlotId = String(new URLSearchParams(window.location.search).get("slot") || "").trim();
-    const activeButton = document.querySelector(".edit-slot.is-active[data-slot]");
-    const activeSlotId = String(activeButton?.getAttribute("data-slot") || "").trim();
-    if (requestedSlotId && getEditorSlotById(requestedSlotId)) {
-      activeEditorSlotId = requestedSlotId;
-    } else if (activeSlotId && getEditorSlotById(activeSlotId)) {
-      activeEditorSlotId = activeSlotId;
-    }
-    renderEditorSlots();
+    void initializeEditorSlots().then(() => {
+      void refreshEditorSlotThumbnails();
+      void fetchAndBindOwnWorldSummaries();
+      void syncActiveEditorSlotRuntimeFilesToLoader();
+    });
     setEditSaveNote("構造物は world_id 指定で取得し、都市 / 車両は LOCAL MAP LOADER から読み込みます。", "info");
     void loadPublicStructureQuotaStatus();
-    void refreshEditorSlotThumbnails();
-    void fetchAndBindOwnWorldSummaries();
-    void syncActiveEditorSlotRuntimeFilesToLoader();
   }
   syncFeaturesGuideButtonLabel();
 
@@ -2160,8 +2232,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
     }
     if (isEditorPage) {
       setEditorLabVisibility({ signedIn: Boolean(session?.user) });
+      void initializeEditorSlots().then(() => {
+        void refreshEditorSlotThumbnails();
+        void fetchAndBindOwnWorldSummaries();
+        void syncActiveEditorSlotRuntimeFilesToLoader();
+      });
       void loadPublicStructureQuotaStatus();
-      void fetchAndBindOwnWorldSummaries();
     }
   });
 
@@ -2224,6 +2300,21 @@ async function readEditorSlotThumbnailRecord(slotId) {
       }
     });
   }
+
+  async function initializeEditorSlots() {
+    if (!isEditorPage) {
+      return;
+    }
+    editorSlotLimit = await fetchEditorSlotLimit();
+    editorSlotsState = loadEditorSlotsMeta(editorSlotLimit);
+    const requestedSlotId = String(new URLSearchParams(window.location.search).get("slot") || "").trim();
+    if (requestedSlotId && getEditorSlotById(requestedSlotId)) {
+      activeEditorSlotId = requestedSlotId;
+    } else if (!getEditorSlotById(activeEditorSlotId)) {
+      activeEditorSlotId = editorSlotsState[0]?.slotId || "slot-01";
+    }
+    renderEditorSlots();
+  }
   if (localMapStartBtn) {
     localMapStartBtn.addEventListener("click", handleLocalMapStartButtonClick);
   }
@@ -2243,8 +2334,12 @@ async function readEditorSlotThumbnailRecord(slotId) {
     });
   }
 
-  editSlots.forEach((button) => {
-    button.addEventListener("click", () => {
+  if (editGrid) {
+    editGrid.addEventListener("click", (event) => {
+      const button = event.target instanceof Element ? event.target.closest(".edit-slot[data-slot]") : null;
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
       const slotId = String(button.dataset.slot || "").trim();
       if (!slotId || slotId === activeEditorSlotId) {
         return;
@@ -2255,7 +2350,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       void syncActiveEditorSlotRuntimeFilesToLoader();
       setEditSaveNote(`${button.querySelector(".slot-id")?.textContent || "選択中の枠"} を選択しました。`, "info");
     });
-  });
+  }
 
   if (saveSlotZipBtn) {
     saveSlotZipBtn.addEventListener("click", async () => {
