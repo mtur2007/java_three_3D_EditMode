@@ -558,15 +558,23 @@ const threeUi = document.getElementById('three-ui');
   const normalGroupPointGroupBtn = document.getElementById('normal-group-point-group');
   const copiedGroupPointDetachBtn = document.getElementById('copied-group-point-detach');
   const copiedGroupPointGroupBtn = document.getElementById('copied-group-point-group');
+  const rotationLabelSetY = document.getElementById('rotation-label-set-y');
+  const rotationLabelSetX = document.getElementById('rotation-label-set-x');
   const rotationLabelX = document.getElementById('rotation-label-x');
   const rotationLabelY = document.getElementById('rotation-label-y');
   const rotationLabelZ = document.getElementById('rotation-label-z');
+  const rotationInputSetY = document.getElementById('rotation-input-set-y');
+  const rotationInputSetX = document.getElementById('rotation-input-set-x');
   const rotationInputX = document.getElementById('rotation-input-x');
   const rotationInputY = document.getElementById('rotation-input-y');
   const rotationInputZ = document.getElementById('rotation-input-z');
+  const rotationInputSetYGhost = document.getElementById('rotation-input-set-y-ghost');
+  const rotationInputSetXGhost = document.getElementById('rotation-input-set-x-ghost');
   const rotationInputXGhost = document.getElementById('rotation-input-x-ghost');
   const rotationInputYGhost = document.getElementById('rotation-input-y-ghost');
   const rotationInputZGhost = document.getElementById('rotation-input-z-ghost');
+  const rotationInputSetYMask = document.getElementById('rotation-input-set-y-mask');
+  const rotationInputSetXMask = document.getElementById('rotation-input-set-x-mask');
   const rotationInputXMask = document.getElementById('rotation-input-x-mask');
   const rotationInputYMask = document.getElementById('rotation-input-y-mask');
   const rotationInputZMask = document.getElementById('rotation-input-z-mask');
@@ -792,6 +800,43 @@ const threeUi = document.getElementById('three-ui');
     return hint.startsWith(rawInput);
   }
 
+  function normalizeNumericInputText(raw) {
+    return String(raw ?? '')
+      .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+      .replace(/．/g, '.')
+      .replace(/。/g, '.')
+      .replace(/，/g, ',')
+      .replace(/＋/g, '+')
+      .replace(/－/g, '-')
+      .replace(/ー/g, '-')
+      .replace(/＝/g, '=')
+      .replace(/＊/g, '*')
+      .replace(/　/g, ' ');
+  }
+
+  function normalizeNumericInputElementValue(inputEl) {
+    if (!inputEl) { return; }
+    const normalized = normalizeNumericInputText(inputEl.value);
+    if (inputEl.value !== normalized) {
+      inputEl.value = normalized;
+    }
+  }
+
+  function parseRotationDeltaInput(raw) {
+    const text = normalizeNumericInputText(raw).trim();
+    if (!text || text === '+=' || text === '-=') { return null; }
+    if (text.startsWith('+=')) {
+      const value = parseFloat(text.slice(2).trim());
+      return Number.isFinite(value) ? value : null;
+    }
+    if (text.startsWith('-=')) {
+      const value = parseFloat(text.slice(2).trim());
+      return Number.isFinite(value) ? (-value) : null;
+    }
+    const value = parseFloat(text);
+    return Number.isFinite(value) ? value : null;
+  }
+
   function applyGhostVisibility(inputEl, ghostEl, maskEl) {
     const visible = shouldShowGhostForInput(inputEl, ghostEl);
     if (ghostEl) {
@@ -803,18 +848,49 @@ const threeUi = document.getElementById('three-ui');
   }
 
   function syncRotationInputGhostHints() {
+    alignGhostToInput(rotationInputSetY, rotationInputSetYGhost);
+    alignGhostToInput(rotationInputSetX, rotationInputSetXGhost);
     alignGhostToInput(rotationInputX, rotationInputXGhost);
     alignGhostToInput(rotationInputY, rotationInputYGhost);
     alignGhostToInput(rotationInputZ, rotationInputZGhost);
+    if (rotationInputSetYGhost) { rotationInputSetYGhost.textContent = rotationInputSetY?.placeholder || ''; }
+    if (rotationInputSetXGhost) { rotationInputSetXGhost.textContent = rotationInputSetX?.placeholder || ''; }
     if (rotationInputXGhost) { rotationInputXGhost.textContent = rotationInputX?.placeholder || ''; }
     if (rotationInputYGhost) { rotationInputYGhost.textContent = rotationInputY?.placeholder || ''; }
     if (rotationInputZGhost) { rotationInputZGhost.textContent = rotationInputZ?.placeholder || ''; }
+    syncInputMask(rotationInputSetY, rotationInputSetYMask);
+    syncInputMask(rotationInputSetX, rotationInputSetXMask);
     syncInputMask(rotationInputX, rotationInputXMask);
     syncInputMask(rotationInputY, rotationInputYMask);
     syncInputMask(rotationInputZ, rotationInputZMask);
+    applyGhostVisibility(rotationInputSetY, rotationInputSetYGhost, rotationInputSetYMask);
+    applyGhostVisibility(rotationInputSetX, rotationInputSetXGhost, rotationInputSetXMask);
     applyGhostVisibility(rotationInputX, rotationInputXGhost, rotationInputXMask);
     applyGhostVisibility(rotationInputY, rotationInputYGhost, rotationInputYMask);
     applyGhostVisibility(rotationInputZ, rotationInputZGhost, rotationInputZMask);
+  }
+
+  function updateRotationSetAxisLockState(locked) {
+    [
+      rotationInputSetY,
+      rotationInputSetX,
+    ].forEach((inputEl) => {
+      if (!inputEl) { return; }
+      inputEl.disabled = Boolean(locked);
+      inputEl.style.opacity = locked ? '0.5' : '';
+      inputEl.style.cursor = locked ? 'not-allowed' : '';
+      inputEl.style.backgroundColor = locked ? 'rgba(255,255,255,0.08)' : '';
+      inputEl.style.borderColor = locked ? 'rgba(255,255,255,0.14)' : '';
+    });
+    if (rotationInputSetY && locked) {
+      rotationInputSetY.value = '';
+      rotationInputSetY.placeholder = 'LOCK';
+    }
+    if (rotationInputSetX && locked) {
+      rotationInputSetX.value = '';
+      rotationInputSetX.placeholder = 'LOCK';
+    }
+    syncRotationInputGhostHints();
   }
 
   function normalizeLeadingZeroDecimalInput(raw) {
@@ -828,14 +904,20 @@ const threeUi = document.getElementById('three-ui');
   }
 
   [
+    [rotationInputSetY, rotationInputSetYMask],
+    [rotationInputSetX, rotationInputSetXMask],
     [rotationInputX, rotationInputXMask],
     [rotationInputY, rotationInputYMask],
     [rotationInputZ, rotationInputZMask],
   ].forEach(([inputEl, maskEl]) => {
     if (!inputEl || !maskEl) { return; }
-    const ghostEl = inputEl === rotationInputX
+    const ghostEl = inputEl === rotationInputSetY
+      ? rotationInputSetYGhost
+      : (inputEl === rotationInputSetX
+      ? rotationInputSetXGhost
+      : (inputEl === rotationInputX
       ? rotationInputXGhost
-      : (inputEl === rotationInputY ? rotationInputYGhost : rotationInputZGhost);
+      : (inputEl === rotationInputY ? rotationInputYGhost : rotationInputZGhost)));
     inputEl.addEventListener('input', () => {
       const normalized = normalizeLeadingZeroDecimalInput(inputEl.value);
       if (normalized !== inputEl.value) {
@@ -845,6 +927,61 @@ const threeUi = document.getElementById('three-ui');
       }
       syncInputMask(inputEl, maskEl);
       applyGhostVisibility(inputEl, ghostEl, maskEl);
+    });
+  });
+  let rotationPanelCommitGuardUntil = 0;
+  const applyRotationFromPanelOnCommit = () => {
+    const now = Date.now();
+    if (now < rotationPanelCommitGuardUntil) { return; }
+    rotationPanelCommitGuardUntil = now + 80;
+    applyRotationFromPanel();
+  };
+  const bindBasisRotationPanelInput = (inputEl, beginPreview) => {
+    if (!inputEl || typeof beginPreview !== 'function') { return; }
+    inputEl.addEventListener('focus', () => {
+      clearPanelInputInteractionLocks();
+      beginPreview();
+    });
+    inputEl.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') { return; }
+      event.preventDefault();
+      applyRotationFromPanelOnCommit();
+      inputEl.blur?.();
+    });
+    inputEl.addEventListener('blur', () => {
+      clearPanelInputInteractionLocks();
+      applyRotationFromPanelOnCommit();
+    });
+  };
+  if (rotationInputSetY) {
+    const beginSetYPreviewFromPanel = () => {
+      if (editObject !== 'STEEL_FRAME' || objectEditMode !== ROTATE_MODE || pointRotateModeActive) { return; }
+      enterRotateSetYPreview();
+    };
+    bindBasisRotationPanelInput(rotationInputSetY, beginSetYPreviewFromPanel);
+  }
+  if (rotationInputSetX) {
+    const beginSetXPreviewFromPanel = () => {
+      if (editObject !== 'STEEL_FRAME' || objectEditMode !== ROTATE_MODE || pointRotateModeActive) { return; }
+      enterRotateSetYPreview();
+    };
+    bindBasisRotationPanelInput(rotationInputSetX, beginSetXPreviewFromPanel);
+  }
+  [
+    rotationInputSetY,
+    rotationInputSetX,
+    rotationInputX,
+    rotationInputY,
+    rotationInputZ,
+  ].forEach((inputEl) => {
+    if (!inputEl) { return; }
+    inputEl.addEventListener('input', () => {
+      normalizeNumericInputElementValue(inputEl);
+      syncRotationInputGhostHints();
+    });
+    inputEl.addEventListener('blur', () => {
+      normalizeNumericInputElementValue(inputEl);
+      syncRotationInputGhostHints();
     });
   });
   let uiHiddenByHotkey = false;
@@ -1099,9 +1236,31 @@ let differenceSpaceTransformMode = 'none';
     const el = getRailSelectionStatusElement();
     if (!el) { return; }
     const railEditActive = editObject === 'RAIL'
-      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE);
+      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE || objectEditMode === 'CREATE_NEW');
     if (!railEditActive) {
       el.style.display = 'none';
+      return;
+    }
+    if (objectEditMode === 'CREATE_NEW') {
+      const currentPoint = getRailCreatePointerPoint();
+      const currentY = Number.isFinite(currentPoint?.y) ? currentPoint.y : (Number(addPointGridY) || 0);
+      const lines = [
+        'rail new',
+        `生成高さY: ${formatRailCoord(currentY)}`,
+      ];
+      if (railInsertHoverHit?.trackName) {
+        lines.push(`スナップ: ${railInsertHoverHit.trackName}`);
+      } else {
+        lines.push('スナップ: なし');
+      }
+      if (railStraightDraftStart?.isVector3) {
+        lines.push(`始点XYZ: ${formatRailCoord(railStraightDraftStart.x)}, ${formatRailCoord(railStraightDraftStart.y)}, ${formatRailCoord(railStraightDraftStart.z)}`);
+        lines.push('次のクリックで線路を確定');
+      } else {
+        lines.push('1点目をクリックして線路作成を開始');
+      }
+      el.textContent = lines.join('\n');
+      el.style.display = 'block';
       return;
     }
     const isHandle = Boolean(choice_object?.userData?.railStructureHandle && choice_object?.userData?.railStructurePickHandle);
@@ -4750,6 +4909,22 @@ let differenceSpaceTransformMode = 'none';
       : isScalePoint
       ? ' (scale)'
       : ' (deg)';
+    const showSetY = editObject === 'STEEL_FRAME'
+      && !isMovePoint
+      && !isScalePoint
+      && !isMovePointRotation
+      && !isDecorationRotation
+      && !isCopyMode
+      && !isStyleMode
+      && !isDeleteMode;
+    if (rotationLabelSetY) {
+      rotationLabelSetY.style.display = showSetY ? '' : 'none';
+      rotationLabelSetY.childNodes[0].nodeValue = `Set Y${axisSuffix}`;
+    }
+    if (rotationLabelSetX) {
+      rotationLabelSetX.style.display = showSetY ? '' : 'none';
+      rotationLabelSetX.childNodes[0].nodeValue = `Set X${axisSuffix}`;
+    }
     if (rotationLabelX) {
       rotationLabelX.style.display = isDeleteMode ? 'none' : '';
       rotationLabelX.childNodes[0].nodeValue = isStyleMode ? '横梁 幅' : (isCopyMode ? 'Offset X' : `X${axisSuffix}`);
@@ -4764,7 +4939,7 @@ let differenceSpaceTransformMode = 'none';
         ? '梁 厚み'
         : (isMovePointRotation
           ? 'Len'
-          : (isDecorationRotation ? `Z${axisSuffix}` : (isCopyMode ? 'Offset Y2' : `Y2${axisSuffix}`)));
+          : (isDecorationRotation ? `Z${axisSuffix}` : (isCopyMode ? 'Offset Y2' : `Z${axisSuffix}`)));
     }
     if (rotationApplyBtn) {
       rotationApplyBtn.textContent = isStyleMode
@@ -5065,12 +5240,99 @@ let differenceSpaceTransformMode = 'none';
     return out;
   }
 
+  function setGroupSelectableFlag(target, selectable) {
+    const value = Boolean(selectable);
+    const visit = (obj) => {
+      if (!obj?.isObject3D) { return; }
+      obj.userData = {
+        ...(obj.userData || {}),
+        groupSelectable: value,
+      };
+    };
+    if (Array.isArray(target)) {
+      target.forEach((obj) => obj?.traverse ? obj.traverse(visit) : visit(obj));
+      return;
+    }
+    if (target?.traverse) {
+      target.traverse(visit);
+      return;
+    }
+    visit(target);
+  }
+
+  function isGroupSelectableFlagBlocked(mesh) {
+    let cur = mesh;
+    while (cur) {
+      if (cur?.userData?.groupSelectable === false) {
+        return true;
+      }
+      cur = cur.parent || null;
+    }
+    return false;
+  }
+
+  function isRailGeneratedSelectableBlocked(mesh) {
+    if (isGroupSelectableFlagBlocked(mesh)) {
+      return true;
+    }
+    let cur = mesh;
+    while (cur) {
+      if (cur?.userData?.railPlatform) {
+        return true;
+      }
+      if (String(cur?.userData?.railConstructionCategory || '').trim()) {
+        return true;
+      }
+      if (String(cur?.userData?.railPlacementGroupId || '').trim()) {
+        return true;
+      }
+      if (String(cur?.userData?.trackName || '').trim() && Number.isInteger(cur?.userData?.pointIndex)) {
+        return true;
+      }
+      if (Boolean(getPinGenerationRuntimeIdFromObjectName(cur?.name || ''))) {
+        return true;
+      }
+      cur = cur.parent || null;
+    }
+    const target = resolveCopySelectableFromHit(mesh);
+    if (!target) { return false; }
+    return Boolean(getPinGenerationRuntimeIdFromObjectName(target?.name || ''));
+  }
+
+  function getSelectableDecorationTargets() {
+    return decorationObjects.filter((mesh) => {
+      if (!mesh?.parent) { return false; }
+      if (!mesh?.userData?.decorationType) { return false; }
+      if (isGroupSelectableFlagBlocked(mesh)) { return false; }
+      if (isRailGeneratedSelectableBlocked(mesh)) { return false; }
+      return true;
+    });
+  }
+
+  function getSelectableSteelFrameSegmentTargets() {
+    const out = [];
+    const seen = new Set();
+    const push = (mesh) => {
+      if (!mesh?.parent) { return; }
+      if (mesh?.userData?.steelFramePoint) { return; }
+      if (mesh?.name !== 'SteelFrameSegment') { return; }
+      if (isGroupSelectableFlagBlocked(mesh)) { return; }
+      if (isRailGeneratedSelectableBlocked(mesh)) { return; }
+      if (seen.has(mesh.id)) { return; }
+      seen.add(mesh.id);
+      out.push(mesh);
+    };
+    (steelFrameMode?.getSegmentMeshes?.() || []).forEach(push);
+    scene.traverse((obj) => push(obj));
+    return out;
+  }
+
   function getSteelFramePickTargets({ currentOnly = false } = {}) {
     const points = currentOnly
       ? (steelFrameMode.getCurrentPointMeshes?.() || [])
       : (steelFrameMode.getAllPointMeshes?.() || []);
-    const copyTargets = getConstructionCopyTargets();
-    const decoTargets = decorationObjects.filter((mesh) => mesh?.parent);
+    const segmentTargets = getSelectableSteelFrameSegmentTargets();
+    const decoTargets = getSelectableDecorationTargets();
     const out = [];
     const seen = new Set();
     const push = (mesh) => {
@@ -5080,7 +5342,7 @@ let differenceSpaceTransformMode = 'none';
       out.push(mesh);
     };
     points.forEach(push);
-    copyTargets.forEach(push);
+    segmentTargets.forEach(push);
     decoTargets.forEach(push);
     return out;
   }
@@ -5091,6 +5353,8 @@ let differenceSpaceTransformMode = 'none';
     const pushIfTube = (mesh) => {
       if (!mesh?.parent) { return; }
       if (mesh.name !== 'SteelFrameSegment') { return; }
+      if (isGroupSelectableFlagBlocked(mesh)) { return; }
+      if (isRailGeneratedSelectableBlocked(mesh)) { return; }
       const profile = String(mesh?.userData?.steelFrameSegmentProfile || '').toLowerCase();
       if (!(profile === 'tube' || profile === 'tubular')) { return; }
       const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
@@ -5237,7 +5501,7 @@ let differenceSpaceTransformMode = 'none';
     };
     (steelFrameMode?.getCurrentPointMeshes?.() || []).forEach(push);
     guideRailPickMeshes.forEach(push);
-    decorationObjects.filter((mesh) => mesh?.parent).forEach(push);
+    getSelectableDecorationTargets().forEach(push);
     getSteelFrameTubeSegmentTargets().forEach(push);
     return out;
   }
@@ -5461,6 +5725,27 @@ let differenceSpaceTransformMode = 'none';
   }
 
   function toggleMovePointStructureSelection(target) {
+    const selectedPoints = steelFrameMode?.getSelectedPointMeshes?.() || [];
+    const rotationWholeGroupToggle = editObject === 'STEEL_FRAME'
+      && objectEditMode === ROTATE_MODE
+      && target?.userData?.steelFramePoint
+      && selectedPoints.length > 1
+      && selectedPoints.includes(target);
+    if (rotationWholeGroupToggle) {
+      selectedPoints.forEach((mesh) => {
+        if (steelFrameMode.isSelectedPoint(mesh)) {
+          steelFrameMode.toggleSelectedPoint(mesh);
+        }
+      });
+      if (choice_object === target) {
+        choice_object = false;
+      }
+      drawingObject(selectedPoints);
+      syncSteelFrameTargetObjectsAfterRebuild();
+      refreshPointEditPanelUI({ clearInputs: true });
+      return true;
+    }
+
     const initialPoints = collectStructurePointsFromHitTarget(target);
     if (!Array.isArray(initialPoints) || initialPoints.length < 1) { return false; }
     // 先に元状態を判定する。
@@ -5524,6 +5809,93 @@ let differenceSpaceTransformMode = 'none';
     // 構造物クリック時は「最寄り1点」へ畳まず、構造物のまま返す。
     // クリック確定時に対応する制御点群を一括選択する。
     return selectable;
+  }
+
+  function resolveRotateModePreferredObjectFromIntersects(intersects = []) {
+    if (editObject !== 'STEEL_FRAME' || objectEditMode !== ROTATE_MODE) { return null; }
+    const hits = Array.isArray(intersects) ? intersects : [];
+    for (let i = 0; i < hits.length; i += 1) {
+      const raw = hits[i]?.object || null;
+      const selectable = resolveSelectableHitObject(raw) || raw;
+      if (!selectable?.parent) { continue; }
+      if (selectable?.userData?.decorationType) { return selectable; }
+      const groupedPoints = collectStructurePointsFromHitTarget(selectable);
+      if (Array.isArray(groupedPoints) && groupedPoints.length > 0 && !selectable?.userData?.steelFramePoint) {
+        return selectable;
+      }
+    }
+    return null;
+  }
+
+  function handleSteelFrameSelectionToggleFromChoiceObject({
+    allowAxisReference = false,
+    allowLedBoardEditor = false,
+  } = {}) {
+    if (allowAxisReference && movePointAxisReferencePickAxis) {
+      const axis = movePointAxisReferencePickAxis;
+      const targets = getMovePointPanelTargets();
+      if (!choice_object || !isMovePointReferenceCandidate(choice_object)) {
+        if (rotationSelectionInfo) {
+          rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先にできる点をクリックしてください。`;
+        }
+      } else if (targets.length < 1) {
+        movePointAxisReferencePickAxis = null;
+      } else if (targets.every((mesh) => mesh === choice_object)) {
+        if (rotationSelectionInfo) {
+          rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先は別の点を選択してください。`;
+        }
+      } else if (assignMovePointAxisReference(axis, choice_object, targets)) {
+        syncMovePointAxisReferences();
+        refreshPointEditPanelUI({ clearInputs: true });
+      }
+      return true;
+    }
+
+    if (choice_object && !choice_object?.userData?.steelFramePoint) {
+      const selectedByStructure = toggleMovePointStructureSelection(choice_object);
+      if (selectedByStructure) {
+        return true;
+      }
+    }
+
+    if (choice_object?.userData?.decorationType) {
+      if (choice_object.userData.decorationType === 'led_board' && allowLedBoardEditor && !pointRotateModeActive) {
+        openLedBoardTextEditor(choice_object);
+        return true;
+      }
+      if (pointRotateModeActive) {
+        pointRotateTarget = choice_object;
+        pointRotateCenter.copy(choice_object.position);
+        pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(choice_object));
+        pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
+        pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(choice_object, { ensure: true })).normalize();
+        setRotationPanelMode('rotation_decoration');
+        setRotationPanelVisible(true);
+        syncPointRotatePanelFromTarget();
+        updatePointRotateVisuals();
+        showPointRotationGuideLine(choice_object);
+      }
+      return true;
+    }
+
+    if (choice_object) {
+      const already = steelFrameMode.isSelectedPoint(choice_object);
+      if (already) {
+        steelFrameMode.toggleSelectedPoint(choice_object);
+      } else {
+        const readyTargets = ensureCopiedGroupReadyForPointEdit([choice_object], { promptDetachConfirm: true });
+        if (!Array.isArray(readyTargets) || readyTargets.length < 1) {
+          return true;
+        }
+        readyTargets.forEach((mesh) => {
+          if (!steelFrameMode.isSelectedPoint(mesh)) {
+            steelFrameMode.toggleSelectedPoint(mesh);
+          }
+        });
+      }
+      refreshPointEditPanelUI({ clearInputs: true });
+    }
+    return true;
   }
 
   function isTubeControlPointMesh(mesh) {
@@ -5985,41 +6357,59 @@ function computeStructureGroupPoseFromMembers(members) {
     return computeStructureGroupPoseFromMembers(members);
   }
 
-  function syncCopiedGroupRotationPanel(groupId) {
-    const savedRotation = getSavedRotationForStructureGroup(groupId);
-    if (savedRotation) {
-      setRotationPanelAnglesDisplay(savedRotation);
-      return true;
+function syncCopiedGroupRotationPanel(groupId) {
+  const savedRotation = getSavedRotationForStructureGroup(groupId);
+  if (savedRotation) {
+    setRotationPanelAnglesDisplay(savedRotation);
+    return true;
     }
     const pose = getStructureGroupPoseById(groupId);
     if (!pose?.quaternion?.isQuaternion) { return false; }
-    setRotationPanelAnglesDisplay(getGroupRotationAnglesFromQuat(pose.quaternion));
-    return true;
-  }
+  setRotationPanelAnglesDisplay(getGroupRotationAnglesFromQuat(pose.quaternion));
+  return true;
+}
+
+function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
+  const groupId = getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId;
+  if (!groupId) { return false; }
+  const nextAngles = parseSavedGroupRotationAngles({ rotation: panelAngles || rotatePanelState.angles });
+  if (!nextAngles) { return false; }
+  setSavedRotationForStructureGroup(groupId, nextAngles);
+  return true;
+}
 
   function buildGroupQuatFromRotationAngles(rawAngles) {
-    const angles = (rawAngles && typeof rawAngles === 'object') ? rawAngles : {};
+    const angles = parseSavedGroupRotationAngles(rawAngles) || {
+      set_Y: 0,
+      set_X: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+    };
+    const setYDeg = Number(angles.set_Y) || 0;
+    const setXDeg = Number(angles.set_X) || 0;
     const xDeg = Number(angles.x) || 0;
     const yDeg = Number(angles.y) || 0;
-    const y2Deg = Number.isFinite(Number(angles.y2))
-      ? Number(angles.y2)
-      : (Number.isFinite(Number(angles.y_2)) ? Number(angles.y_2) : null);
     const zDeg = Number(angles.z) || 0;
-    const finalZDeg = Number.isFinite(y2Deg) ? y2Deg : zDeg;
     const degToRad = Math.PI / 180;
     const q = new THREE.Quaternion();
+    const setYQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), setYDeg * degToRad);
+    const setXAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(setYQuat).normalize();
+    const setXQuat = new THREE.Quaternion().setFromAxisAngle(setXAxis, setXDeg * degToRad);
+    const basisAfterSetX = setXQuat.clone().multiply(setYQuat).normalize();
+    if (Math.abs(yDeg) > 1e-6) {
+      const axisY = new THREE.Vector3(0, 1, 0).applyQuaternion(setYQuat.clone().multiply(q)).normalize();
+      const qy = new THREE.Quaternion().setFromAxisAngle(axisY, yDeg * degToRad);
+      q.copy(qy.multiply(q)).normalize();
+    }
     if (Math.abs(xDeg) > 1e-6) {
-      const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
+      const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(basisAfterSetX.clone().multiply(q)).normalize();
       const qx = new THREE.Quaternion().setFromAxisAngle(axisX, xDeg * degToRad);
       q.copy(qx.multiply(q)).normalize();
     }
-    if (Math.abs(yDeg) > 1e-6) {
-      const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yDeg * degToRad);
-      q.copy(qy.multiply(q)).normalize();
-    }
-    if (Math.abs(finalZDeg) > 1e-6) {
-      const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
-      const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, finalZDeg * degToRad);
+    if (Math.abs(zDeg) > 1e-6) {
+      const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(basisAfterSetX.clone().multiply(q)).normalize();
+      const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, zDeg * degToRad);
       q.copy(qz.multiply(q)).normalize();
     }
     return q.normalize();
@@ -6032,18 +6422,25 @@ function computeStructureGroupPoseFromMembers(members) {
     const y = Number(euler?.y) || 0;
     const z = Number(euler?.z) || 0;
     return {
+      set_Y: 0,
+      set_X: 0,
       x,
       y,
-      y2: z,
-      y_2: z,
       z,
     };
   }
 
   function getRotationPanelAnglesXYZ(panelAngles) {
+    const hasSetY = Number.isFinite(Number(panelAngles?.set_Y ?? panelAngles?.setY));
+    const hasSetX = Number.isFinite(Number(panelAngles?.set_X ?? panelAngles?.setX));
+    const setY = hasSetY
+      ? Number(panelAngles?.set_Y ?? panelAngles?.setY)
+      : (Number(panelAngles?.y) || 0);
     return {
+      set_Y: setY,
+      set_X: hasSetX ? Number(panelAngles?.set_X ?? panelAngles?.setX) : 0,
       x: Number(panelAngles?.x) || 0,
-      y: Number(panelAngles?.y) || 0,
+      y: hasSetY ? (Number(panelAngles?.y) || 0) : 0,
       z: Number.isFinite(Number(panelAngles?.y2))
         ? Number(panelAngles.y2)
         : (Number.isFinite(Number(panelAngles?.y_2))
@@ -6060,11 +6457,15 @@ function computeStructureGroupPoseFromMembers(members) {
   } = {}) {
     if (!pivot?.isVector3 || !panelAngles) { return false; }
     const degToRad = Math.PI / 180;
-    const { x, y, z } = getRotationPanelAnglesXYZ(panelAngles);
+    const { set_Y, set_X, x, y, z } = getRotationPanelAnglesXYZ(panelAngles);
+    const setYQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), set_Y * degToRad);
+    const setXAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(setYQuat).normalize();
+    const setXQuat = new THREE.Quaternion().setFromAxisAngle(setXAxis, set_X * degToRad);
+    const basisAfterSetX = setXQuat.clone().multiply(setYQuat).normalize();
     const rotations = [
-      { axis: new THREE.Vector3(1, 0, 0), rad: x * degToRad },
-      { axis: new THREE.Vector3(0, 1, 0), rad: y * degToRad },
-      { axis: new THREE.Vector3(0, 0, 1), rad: z * degToRad },
+      { axisResolver: (basisQuat) => new THREE.Vector3(0, 1, 0).applyQuaternion(setYQuat.clone().multiply(basisQuat)).normalize(), rad: y * degToRad },
+      { axisResolver: (basisQuat) => new THREE.Vector3(1, 0, 0).applyQuaternion(basisAfterSetX.clone().multiply(basisQuat)).normalize(), rad: x * degToRad },
+      { axisResolver: (basisQuat) => new THREE.Vector3(0, 0, 1).applyQuaternion(basisAfterSetX.clone().multiply(basisQuat)).normalize(), rad: z * degToRad },
     ];
 
     const rotatePosition = (mesh, axis, rad) => {
@@ -6079,8 +6480,10 @@ function computeStructureGroupPoseFromMembers(members) {
       mesh.quaternion.premultiply(dq).normalize();
     };
 
-    rotations.forEach(({ axis, rad }) => {
+    const basisQuat = new THREE.Quaternion();
+    rotations.forEach(({ axisResolver, rad }) => {
       if (Math.abs(rad) < 1e-6) { return; }
+      const axis = axisResolver(basisQuat);
       pointMeshes.forEach((mesh) => rotatePosition(mesh, axis, rad));
       objectMeshes.forEach((mesh) => {
         const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
@@ -6090,6 +6493,8 @@ function computeStructureGroupPoseFromMembers(members) {
         }
         rotateQuaternion(mesh, axis, rad);
       });
+      const dq = new THREE.Quaternion().setFromAxisAngle(axis, rad);
+      basisQuat.copy(dq.multiply(basisQuat)).normalize();
     });
     return true;
   }
@@ -6102,20 +6507,27 @@ function computeStructureGroupPoseFromMembers(members) {
     const nested = (entry.rotationAngles && typeof entry.rotationAngles === 'object')
       ? entry.rotationAngles
       : null;
+    const explicitSetY = compactRotation?.set_Y ?? compactRotation?.setY ?? nested?.set_Y ?? nested?.setY ?? entry.set_Y ?? entry.setY;
+    const explicitSetX = compactRotation?.set_X ?? compactRotation?.setX ?? nested?.set_X ?? nested?.setX ?? entry.set_X ?? entry.setX;
+    const hasExplicitSetY = Number.isFinite(Number(explicitSetY));
+    const hasExplicitSetX = Number.isFinite(Number(explicitSetX));
     const raw = {
+      set_Y: hasExplicitSetY ? explicitSetY : (compactRotation?.y ?? nested?.y ?? entry.y),
+      set_X: hasExplicitSetX ? explicitSetX : 0,
       x: compactRotation?.x ?? nested?.x ?? entry.x,
-      y: compactRotation?.y ?? nested?.y ?? entry.y,
+      y: hasExplicitSetY ? (compactRotation?.y ?? nested?.y ?? entry.y) : 0,
       y2: compactRotation?.y2 ?? compactRotation?.y_2 ?? nested?.y2 ?? nested?.y_2 ?? entry.y2 ?? entry.y_2,
       z: compactRotation?.z ?? nested?.z ?? entry.z,
     };
-    const hasAny = ['x', 'y', 'y2', 'z'].some((k) => Number.isFinite(Number(raw[k])));
+    const hasAny = ['set_Y', 'set_X', 'x', 'y', 'y2', 'z'].some((k) => Number.isFinite(Number(raw[k])));
     if (!hasAny) { return null; }
+    const normalizedZ = Number.isFinite(Number(raw.y2)) ? Number(raw.y2) : (Number(raw.z) || 0);
     return {
+      set_Y: Number(raw.set_Y) || 0,
+      set_X: Number(raw.set_X) || 0,
       x: Number(raw.x) || 0,
       y: Number(raw.y) || 0,
-      y2: Number.isFinite(Number(raw.y2)) ? Number(raw.y2) : 0,
-      y_2: Number.isFinite(Number(raw.y2)) ? Number(raw.y2) : 0,
-      z: Number(raw.z) || 0,
+      z: normalizedZ,
     };
   }
 
@@ -6163,6 +6575,81 @@ function computeStructureGroupPoseFromMembers(members) {
     return out;
   }
 
+  function collectStructureGroupRotationMembers(groupId) {
+    const gid = String(groupId || '').trim();
+    if (!gid) {
+      return {
+        groupId: '',
+        pointMeshes: [],
+        objectMeshes: [],
+        center: new THREE.Vector3(),
+      };
+    }
+    const objectMeshes = getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === gid);
+    const pointMeshes = collectUniqueStructureGroupPoints(objectMeshes);
+    const poseMembers = [...objectMeshes, ...pointMeshes];
+    const pose = computeStructureGroupPoseFromMembers(poseMembers);
+    return {
+      groupId: gid,
+      pointMeshes,
+      objectMeshes,
+      center: pose?.center?.clone?.() || getRotateSelectionCenter(pointMeshes),
+    };
+  }
+
+  function captureStructureGroupRotationState(groupId) {
+    const group = collectStructureGroupRotationMembers(groupId);
+    const savedAngles = getSavedRotationForStructureGroup(group.groupId) || {
+      set_Y: 0,
+      set_X: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+    };
+    return {
+      ...group,
+      savedAngles: { ...savedAngles },
+      startSavedAngles: { ...savedAngles },
+      pointEntries: group.pointMeshes.map((mesh) => ({
+        mesh,
+        startPos: mesh?.position?.clone?.() || null,
+      })),
+      objectEntries: group.objectMeshes.map((mesh) => ({
+        mesh,
+        startPos: mesh?.position?.clone?.() || null,
+        startQuat: mesh?.quaternion?.clone?.() || null,
+      })),
+    };
+  }
+
+  function applyQuaternionDeltaToStructureGroupState(groupState, deltaQuat) {
+    if (!groupState || !deltaQuat?.isQuaternion) { return false; }
+    const center = groupState.center?.clone?.();
+    if (!center?.isVector3) { return false; }
+    groupState.pointEntries.forEach((entry) => {
+      if (!entry?.mesh?.parent || !entry?.startPos) { return; }
+      const offset = entry.startPos.clone().sub(center).applyQuaternion(deltaQuat);
+      entry.mesh.position.copy(center.clone().add(offset));
+    });
+    groupState.objectEntries.forEach((entry) => {
+      const mesh = entry?.mesh;
+      if (!mesh?.parent) { return; }
+      const hasPointRefs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        && mesh.userData.steelFrameSegmentPointRefs.length >= 2;
+      if (!hasPointRefs && entry.startPos) {
+        const offset = entry.startPos.clone().sub(center).applyQuaternion(deltaQuat);
+        mesh.position.copy(center.clone().add(offset));
+      }
+      if (!hasPointRefs && mesh?.quaternion?.isQuaternion && entry.startQuat?.isQuaternion) {
+        mesh.quaternion.copy(entry.startQuat);
+        mesh.quaternion.premultiply(deltaQuat).normalize();
+      }
+    });
+    return true;
+  }
+
   function getStructureGroupAnchorPointByMinId(members) {
     const points = collectUniqueStructureGroupPoints(members);
     if (points.length < 1) { return null; }
@@ -6202,7 +6689,8 @@ function computeStructureGroupPoseFromMembers(members) {
       const anchorPoint = getStructureGroupAnchorPointByMinId(members);
       // 複製時を0基準にした相対回転として保存する。
       const relativeQuat = pose.quaternion.clone().multiply(sourceQuat.clone().invert()).normalize();
-      const angles = getGroupRotationAnglesFromQuat(relativeQuat);
+      const angles = getSavedRotationForStructureGroup(gid)
+        || getGroupRotationAnglesFromQuat(relativeQuat);
       const row = {
         groupId: gid,
         sourceGroupId: entry.sourceGroupId,
@@ -6213,9 +6701,10 @@ function computeStructureGroupPoseFromMembers(members) {
           Number(pose.quaternion.w) || 1,
         ],
         rotation: {
+          set_Y: angles.set_Y,
+          set_X: angles.set_X,
           x: angles.x,
           y: angles.y,
-          y_2: angles.y_2,
           z: angles.z,
         },
       };
@@ -6592,6 +7081,19 @@ function computeStructureGroupPoseFromMembers(members) {
     if (selected.length < 1) { return ''; }
     const first = selected[0];
     return selected.every((id) => id === first) ? first : '';
+  }
+
+  function getSelectedRotateStructureGroupIds() {
+    return Array.from(new Set(
+      getRotateSelectionMeshes()
+        .filter((mesh) => mesh?.parent)
+        .map((mesh) => String(mesh?.userData?.structureGroupId || '').trim())
+        .filter((id) => id.length > 0)
+    ));
+  }
+
+  function isMultiRotateStructureGroupSelection() {
+    return getSelectedRotateStructureGroupIds().length > 1;
   }
 
   function renameStructureGroupId(sourceGroupId, targetGroupId) {
@@ -7564,6 +8066,9 @@ function computeStructureGroupPoseFromMembers(members) {
 
   function setRotationPanelVisible(visible) {
     if (!rotationPanel) { return; }
+    if (!visible && rotateSetYPreviewState) {
+      finalizeRotateSetYPreview(rotatePanelState.angles);
+    }
     rotationPanel.style.display = visible ? 'block' : 'none';
     updateGroupPointEditModePanel();
     if (visible) {
@@ -7796,7 +8301,7 @@ function computeStructureGroupPoseFromMembers(members) {
   }
 
   function parseScaleAxisInput(raw) {
-    const text = String(raw ?? '').trim();
+    const text = normalizeNumericInputText(raw).trim();
     if (!text) { return null; }
     const mul = text.match(/^\*=\s*([+-]?(?:\d+\.?\d*|\.\d+))$/);
     if (mul) {
@@ -7960,9 +8465,9 @@ function computeStructureGroupPoseFromMembers(members) {
       return;
     }
 
-    const inputX = parseMovePointAxisInput(rotationInputX?.value ?? '');
-    const inputY = parseMovePointAxisInput(rotationInputY?.value ?? '');
-    const inputZ = parseMovePointAxisInput(rotationInputZ?.value ?? '');
+    const inputX = parseMovePointAxisInput(normalizeNumericInputText(rotationInputX?.value ?? ''));
+    const inputY = parseMovePointAxisInput(normalizeNumericInputText(rotationInputY?.value ?? ''));
+    const inputZ = parseMovePointAxisInput(normalizeNumericInputText(rotationInputZ?.value ?? ''));
     const inputs = { x: inputX, y: inputY, z: inputZ };
     const invalidAxis = Object.entries(inputs).find(([, parsed]) => parsed?.mode === 'invalid');
     if (invalidAxis) {
@@ -8052,7 +8557,7 @@ function computeStructureGroupPoseFromMembers(members) {
       && objectEditMode === ROTATE_MODE
       && choice_object?.userData?.railStructureHandle
       && choice_object?.userData?.railStructurePickHandle) {
-      const yRaw = rotationInputY?.value?.trim?.() ?? '';
+      const yRaw = normalizeNumericInputText(rotationInputY?.value?.trim?.() ?? '');
       const deltaDeg = Number.parseFloat(yRaw);
       if (!Number.isFinite(deltaDeg)) { return; }
       const ok = applyRailStructureGroupYawDelta(choice_object.userData.railStructureGroupKey, deltaDeg);
@@ -8081,9 +8586,9 @@ function computeStructureGroupPoseFromMembers(members) {
       const isMovePointRotate = editObject === 'STEEL_FRAME'
         && objectEditMode === 'MOVE_EXISTING'
         && Boolean(pointRotateTarget?.userData?.steelFramePoint);
-      const xRaw = rotationInputX?.value?.trim?.() ?? '';
-      const yRaw = rotationInputY?.value?.trim?.() ?? '';
-      const zRaw = rotationInputZ?.value?.trim?.() ?? '';
+      const xRaw = normalizeNumericInputText(rotationInputX?.value?.trim?.() ?? '');
+      const yRaw = normalizeNumericInputText(rotationInputY?.value?.trim?.() ?? '');
+      const zRaw = normalizeNumericInputText(rotationInputZ?.value?.trim?.() ?? '');
       const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : state.x;
       const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : state.y;
       const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : state.z;
@@ -8204,9 +8709,9 @@ function computeStructureGroupPoseFromMembers(members) {
       const state = (changeAngleGridTarget?.userData?.changeAnglePanelAngles)
         ? { ...changeAngleGridTarget.userData.changeAnglePanelAngles }
         : { ...movePlanePanelAngles };
-      const xRaw = rotationInputX?.value?.trim?.() ?? '';
-      const yRaw = rotationInputY?.value?.trim?.() ?? '';
-      const zRaw = rotationInputZ?.value?.trim?.() ?? '';
+      const xRaw = normalizeNumericInputText(rotationInputX?.value?.trim?.() ?? '');
+      const yRaw = normalizeNumericInputText(rotationInputY?.value?.trim?.() ?? '');
+      const zRaw = normalizeNumericInputText(rotationInputZ?.value?.trim?.() ?? '');
       const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(state.x) || 0);
       const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(state.y) || 0);
       const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(state.z) || 0);
@@ -8235,16 +8740,41 @@ function computeStructureGroupPoseFromMembers(members) {
     }
     if (meshes.length < 1) { return; }
     const degToRad = Math.PI / 180;
-    const xRaw = rotationInputX?.value?.trim?.() ?? '';
-    const yRaw = rotationInputY?.value?.trim?.() ?? '';
-    const zRaw = rotationInputZ?.value?.trim?.() ?? '';
-    const axDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : rotatePanelState.angles.x;
-    const ayDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : rotatePanelState.angles.y;
-    const azDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : rotatePanelState.angles.z;
-    const dx = axDeg - rotatePanelState.angles.x;
-    const dy = ayDeg - rotatePanelState.angles.y;
-    const dz = azDeg - rotatePanelState.angles.z;
-    rotatePanelState.angles = { x: axDeg, y: ayDeg, z: azDeg };
+    const setYRaw = normalizeNumericInputText(rotationInputSetY?.value?.trim?.() ?? '');
+    const setXRaw = normalizeNumericInputText(rotationInputSetX?.value?.trim?.() ?? '');
+    const xRaw = normalizeNumericInputText(rotationInputX?.value?.trim?.() ?? '');
+    const yRaw = normalizeNumericInputText(rotationInputY?.value?.trim?.() ?? '');
+    const zRaw = normalizeNumericInputText(rotationInputZ?.value?.trim?.() ?? '');
+    const setYDeg = Number.isFinite(parseFloat(setYRaw)) ? parseFloat(setYRaw) : (Number(rotatePanelState.angles.set_Y) || 0);
+    const setXDeg = Number.isFinite(parseFloat(setXRaw)) ? parseFloat(setXRaw) : (Number(rotatePanelState.angles.set_X) || 0);
+    const isMultiGroup = isMultiRotateStructureGroupSelection();
+    const parsedDeltaX = parseRotationDeltaInput(xRaw);
+    const parsedDeltaY = parseRotationDeltaInput(yRaw);
+    const parsedDeltaZ = parseRotationDeltaInput(zRaw);
+    const axDeg = isMultiGroup
+      ? (parsedDeltaX ?? 0)
+      : (Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(rotatePanelState.angles.x) || 0));
+    const ayDeg = isMultiGroup
+      ? (parsedDeltaY ?? 0)
+      : (Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(rotatePanelState.angles.y) || 0));
+    const azDeg = isMultiGroup
+      ? (parsedDeltaZ ?? 0)
+      : (Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(rotatePanelState.angles.z) || 0));
+    const currentAngles = parseSavedGroupRotationAngles({ rotation: rotatePanelState.angles }) || {
+      set_Y: 0,
+      set_X: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+    };
+    const nextAngles = {
+      set_Y: setYDeg,
+      set_X: setXDeg,
+      x: axDeg,
+      y: ayDeg,
+      z: azDeg,
+    };
+    rotatePanelState.angles = nextAngles;
 
     if (isDecorationRotate) {
       const target = rotateTargetObject;
@@ -8293,47 +8823,45 @@ function computeStructureGroupPoseFromMembers(members) {
       updateRotateGizmo();
       return;
     } else {
-      const center = new THREE.Vector3();
-      meshes.forEach((m) => center.add(m.position));
-      center.multiplyScalar(1 / meshes.length);
-
-      const rotateByAxis = (axis, rad) => {
-        if (Math.abs(rad) < 1e-6) return;
-        meshes.forEach((m) => {
-          const offset = m.position.clone().sub(center);
-          offset.applyAxisAngle(axis, rad);
-          m.position.copy(center.clone().add(offset));
-        });
-      };
-
-      rotateByAxis(new THREE.Vector3(1, 0, 0), dx * degToRad);
-      rotateByAxis(new THREE.Vector3(0, 1, 0), dy * degToRad);
-      rotateByAxis(new THREE.Vector3(0, 0, 1), dz * degToRad);
-      const curves = new Set();
-      meshes.forEach((m) => {
-        if (m?.userData?.guideCurve) {
-          const curve = m.userData.guideCurve;
-          const idx = m.userData.guideControlIndex;
-          if (curve?.userData?.controlPoints && typeof idx === 'number') {
-            curve.userData.controlPoints[idx] = m.position.clone();
-            curves.add(curve);
-          }
-        }
-      });
-      curves.forEach((curve) => updateGuideCurve(curve));
+      if (isMultiGroup) {
+        applyMultiGroupRotationDelta({ x: axDeg, y: ayDeg, z: azDeg });
+        resetMultiRotatePanelDeltaDisplay();
+      } else if (rotateSetYPreviewState) {
+        finalizeRotateSetYPreview(nextAngles);
+      } else {
+        const center = getRotateSelectionCenter(meshes);
+        const currentQuat = buildGroupQuatFromRotationAngles(currentAngles);
+        const nextQuat = buildGroupQuatFromRotationAngles(nextAngles);
+        const deltaQuat = nextQuat.clone().multiply(currentQuat.clone().invert()).normalize();
+        applyRotateQuaternionDeltaToMeshes(meshes, center, deltaQuat);
+        syncSavedRotationForActiveCopiedGroup(rotatePanelState.angles);
+      }
     }
 
+    if (rotationInputSetY) {
+      rotationInputSetY.value = '';
+      rotationInputSetY.placeholder = isMultiGroup ? 'LOCK' : String(setYDeg);
+    }
+    if (rotationInputSetX) {
+      rotationInputSetX.value = '';
+      rotationInputSetX.placeholder = isMultiGroup ? 'LOCK' : String(setXDeg);
+    }
     if (rotationInputX) {
-      rotationInputX.value = '';
-      rotationInputX.placeholder = String(axDeg);
+      rotationInputX.value = isMultiGroup ? '+=' : '';
+      rotationInputX.placeholder = isMultiGroup ? '+=0' : String(axDeg);
     }
     if (rotationInputY) {
-      rotationInputY.value = '';
-      rotationInputY.placeholder = String(ayDeg);
+      rotationInputY.value = isMultiGroup ? '+=' : '';
+      rotationInputY.placeholder = isMultiGroup ? '+=0' : String(ayDeg);
     }
     if (rotationInputZ) {
-      rotationInputZ.value = '';
-      rotationInputZ.placeholder = String(azDeg);
+      rotationInputZ.value = isMultiGroup ? '+=' : '';
+      rotationInputZ.placeholder = isMultiGroup ? '+=0' : String(azDeg);
+    }
+    if (editObject === 'STEEL_FRAME' && !isMultiGroup) {
+      drawingObject(meshes);
+      syncSteelFrameTargetObjectsAfterRebuild();
+      refreshPointEditPanelUI({ clearInputs: true });
     }
     updateRotateGizmo();
   }
@@ -10570,6 +11098,7 @@ let railInsertHoverPin = null;
 let railInsertHoverHit = null;
 let railStraightDraftStart = null;
 let railStraightPreviewLine = null;
+let railCreateGuideYModeActive = false;
 
 const structureSampleInterval = 0.5;
 const structureHoverColor = 0xffff33;
@@ -10929,6 +11458,53 @@ function getRailCreatePointerPoint() {
   return point?.isVector3 ? point.clone() : null;
 }
 
+const RAIL_CREATE_GRID_COLOR = 0x3bc9ff;
+let railCreateGuideBaseY = 0;
+
+function snapRailCreateGuideGridPosition(point) {
+  if (!point?.isVector3) { return null; }
+  const cell = Number(GUIDE_GRID_CELL_SIZE) || 0.5;
+  return new THREE.Vector3(
+    Math.round(point.x / cell) * cell,
+    point.y,
+    Math.round(point.z / cell) * cell
+  );
+}
+
+function syncRailCreateGuideGrid() {
+  const active = railModeActive
+    && editObject === 'RAIL'
+    && objectEditMode === 'CREATE_NEW'
+    && !viewModeActive;
+  if (!active) {
+    setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
+    if (!(editObject === 'STEEL_FRAME' && addPointGridActive)) {
+      setAddPointGuideGridVisibleFromUI(false);
+    }
+    return;
+  }
+  if (railCreateGuideYModeActive && dragging === true && choice_object === addPointGridHandle) {
+    setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+    setAddPointGuideGridVisibleFromUI(!railInsertHoverHit?.point);
+    return;
+  }
+  const point = getRailCreatePointerPoint() || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
+  const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
+  if (snappedPoint?.isVector3) {
+    AddPointGuideGrid.position.copy(snappedPoint);
+    AddPointGuideGrid.quaternion.identity();
+    AddPointGuideGrid.updateMatrixWorld(true);
+    if (railCreateGuideYModeActive && dragging !== true) {
+      addPointGridHandle.position.copy(snappedPoint);
+      addPointGridHandle.updateMatrixWorld(true);
+    }
+    addPointGridY = point.y;
+    addPointGridInitialized = true;
+  }
+  setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+  setAddPointGuideGridVisibleFromUI(!railInsertHoverHit?.point);
+}
+
 function updateRailStraightPreview(forceEndPoint = null) {
   const canPreview = railModeActive
     && editObject === 'RAIL'
@@ -11003,16 +11579,24 @@ function commitRailStraightDraft(endPoint) {
 function updateRailInsertHoverFromPointer() {
   const canShow = railModeActive
     && editObject === 'RAIL'
-    && objectEditMode === 'CREATE_NEW'
-    && !pointerBlockedByUI;
+    && objectEditMode === 'CREATE_NEW';
+  if (railCreateGuideYModeActive && dragging === true && choice_object === addPointGridHandle) {
+    return;
+  }
   if (!canShow || !railTubeMesh?.parent) {
     hideRailInsertHoverPin();
+    addPointGridY = railCreateGuideBaseY;
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
     return;
   }
   raycaster.setFromCamera(mouse, camera);
   const hit = raycaster.intersectObject(railTubeMesh, true)[0] || null;
   if (!hit?.point) {
     hideRailInsertHoverPin();
+    addPointGridY = railCreateGuideBaseY;
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
     return;
   }
   const hitTrack = resolveRailTrackByTubeHit(hit);
@@ -11021,12 +11605,17 @@ function updateRailInsertHoverFromPointer() {
     : getNearestRailTrackHitFromPoint(hit.point, 700);
   if (!nearestTrackHit?.trackName || !nearestTrackHit?.point) {
     hideRailInsertHoverPin();
+    addPointGridY = railCreateGuideBaseY;
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
     return;
   }
   railInsertHoverHit = nearestTrackHit;
   ensureRailInsertHoverPin();
   railInsertHoverPin.position.copy(nearestTrackHit.point);
   railInsertHoverPin.visible = true;
+  syncRailCreateGuideGrid();
+  updateRailSelectionStatus();
 }
 
 function getNearestRailTrackHitFromPoint(worldPoint, resolution = 600) {
@@ -12414,9 +13003,10 @@ function buildStructurePayloadForGroup(groupId) {
     })
     .map((state) => ({ ...state }));
   const groupPose = computeStructureGroupPoseFromMembers(groupMembers);
-  const groupRotation = groupPose?.quaternion?.isQuaternion
-    ? getGroupRotationAnglesFromQuat(groupPose.quaternion)
-    : null;
+  const groupRotation = getSavedRotationForStructureGroup(id)
+    || (groupPose?.quaternion?.isQuaternion
+      ? getGroupRotationAnglesFromQuat(groupPose.quaternion)
+      : null);
 
   return {
     meta: {
@@ -13603,6 +14193,10 @@ async function downloadWorldData() {
       .map((decoration) => String(decoration?.structureGroupId || '').trim())
       .filter((id) => id.length > 0),
   ])).sort();
+  const liveGuideGridCount = guideAddGrids.filter((grid) => grid?.parent).length;
+  const savedGuideGridCount = Array.isArray(filteredSingleStructurePayload?.guideAddGrids)
+    ? filteredSingleStructurePayload.guideAddGrids.length
+    : 0;
 
   const zip = new JSZipCtor();
   zip.file('group.msgpack', packState(groupPayload));
@@ -13649,6 +14243,8 @@ async function downloadWorldData() {
     single_structure_excluded_group_ids: Array.from(singleStructureExcludedGroupIds).sort(),
     single_structure_groups: singleStructureGroupIds,
     single_structure_group_count: singleStructureGroupIds.length,
+    guide_grid_total_live: liveGuideGridCount,
+    guide_grid_total_saved: savedGuideGridCount,
   });
   alert(IS_EDIT_RUNTIME_LOCAL_VIEW ? `${RUNTIME_STRUCTURE_FILE_NAME} を Supabase に保存しました。` : `${RUNTIME_STRUCTURE_FILE_NAME} を保存しました。`);
 }
@@ -14264,6 +14860,7 @@ async function loadRuntimeMapFromPublicUpload() {
           }
           console.info('[public_upload][ct] applying payload done', {
             name: row?.name,
+            guideAddGridsTotal: guideAddGrids.filter((grid) => grid?.parent).length,
           });
         } catch (err) {
           console.warn('[public_upload][ct] applying payload failed', {
@@ -23024,6 +23621,7 @@ function setGuideGridVisibilityForViewMode(isViewMode) {
     if (!pick?.parent) { return; }
     pick.visible = !hide;
   });
+  syncRailCreateGuideGrid();
 }
 
 function getGuideGridRectSize(grid) {
@@ -25444,6 +26042,15 @@ function handleDrag() {
   }
 
   if (choice_object === addPointGridHandle) {
+    if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW' && railCreateGuideYModeActive) {
+      addPointGridY = point.y;
+      railCreateGuideBaseY = point.y;
+      AddPointGuideGrid.position.set(AddPointGuideGrid.position.x, point.y, AddPointGuideGrid.position.z);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(AddPointGuideGrid.position);
+      addPointGridHandle.updateMatrixWorld(true);
+    }
     if (isBaseGuideGridMoveModeActive()) {
       addPointGridY = choice_object.position.y;
       AddPointGuideGrid.position.set(point.x, point.y, point.z);
@@ -25623,7 +26230,28 @@ async function handleMouseUp(mobile = false) {
     return;
   }
   if (rotateDragging) {
+    const draggedRailRotateGroupKey = String(railRotateDragState?.groupKey || '').trim();
+    const draggedMultiGroup = rotateMultiGroupDragState.length > 1;
     rotateDragging = false;
+    if (draggedRailRotateGroupKey) {
+      syncSavedRotationForRailStructureGroup(draggedRailRotateGroupKey);
+    } else {
+      if (rotateSetYPreviewState) {
+        finalizeRotateSetYPreview(rotatePanelState.angles);
+      }
+      if (!draggedMultiGroup) {
+        syncSavedRotationForActiveCopiedGroup(rotatePanelState.angles);
+      } else {
+        resetMultiRotatePanelDeltaDisplay();
+      }
+      if (editObject === 'STEEL_FRAME') {
+        drawingObject(rotateStartPositions.map((entry) => entry?.mesh).filter(Boolean));
+        syncSteelFrameTargetObjectsAfterRebuild();
+        refreshPointEditPanelUI({ clearInputs: true });
+      }
+    }
+    rotateStartPositions = [];
+    rotateMultiGroupDragState = [];
     railRotateDragState = null;
     updateRotateGizmo();
     efficacy = true;
@@ -25641,11 +26269,19 @@ async function handleMouseUp(mobile = false) {
       }
     }
     dragging = false;
+    if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW' && railCreateGuideYModeActive) {
+      move_direction_y = false;
+      syncRailCreateGuideGrid();
+    }
     efficacy = true;
     if (objectEditMode === 'MOVE_EXISTING') {
       resetChoiceObjectColor(choice_object);
       search_object = true;
-      search_point();
+      if (mobile) {
+        await onerun_search_point();
+      } else {
+        search_point();
+      }
     }
     moveClickPending = false;
     shouldToggle = false;
@@ -25695,83 +26331,10 @@ async function handleMouseUp(mobile = false) {
     if (shouldToggle) {
       console.log('onerun')
       await onerun_search_point();
-      if (movePointAxisReferencePickAxis) {
-        const axis = movePointAxisReferencePickAxis;
-        const targets = getMovePointPanelTargets();
-        if (!choice_object || !isMovePointReferenceCandidate(choice_object)) {
-          if (rotationSelectionInfo) {
-            rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先にできる点をクリックしてください。`;
-          }
-        } else if (targets.length < 1) {
-          movePointAxisReferencePickAxis = null;
-        } else if (targets.every((mesh) => mesh === choice_object)) {
-          if (rotationSelectionInfo) {
-            rotationSelectionInfo.textContent = `${axis.toUpperCase()} 参照先は別の点を選択してください。`;
-          }
-        } else if (assignMovePointAxisReference(axis, choice_object, targets)) {
-          syncMovePointAxisReferences();
-          refreshPointEditPanelUI({ clearInputs: true });
-        }
-        shouldToggle = true;
-        return;
-      }
-      if (choice_object && !choice_object?.userData?.steelFramePoint) {
-        const selectedByStructure = toggleMovePointStructureSelection(choice_object);
-        if (selectedByStructure) {
-          shouldToggle = true;
-          return;
-        }
-      }
-      if (choice_object?.userData?.decorationType) {
-        if (choice_object.userData.decorationType === 'led_board' && !pointRotateModeActive) {
-          openLedBoardTextEditor(choice_object);
-          shouldToggle = true;
-          return;
-        }
-        if (pointRotateModeActive) {
-          pointRotateTarget = choice_object;
-          pointRotateCenter.copy(choice_object.position);
-          pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(choice_object));
-          pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
-          pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(choice_object, { ensure: true })).normalize();
-          setRotationPanelMode('rotation_decoration');
-          setRotationPanelVisible(true);
-          syncPointRotatePanelFromTarget();
-          updatePointRotateVisuals();
-          showPointRotationGuideLine(choice_object);
-        }
-        shouldToggle = true;
-        return;
-      }
-      
-      if (choice_object) {
-        const already = steelFrameMode.isSelectedPoint(choice_object);
-        if (already) {
-          steelFrameMode.toggleSelectedPoint(choice_object);
-        } else {
-          const readyTargets = ensureCopiedGroupReadyForPointEdit([choice_object], { promptDetachConfirm: true });
-          if (!Array.isArray(readyTargets) || readyTargets.length < 1) {
-            shouldToggle = true;
-            return;
-          }
-          readyTargets.forEach((mesh) => {
-            if (!steelFrameMode.isSelectedPoint(mesh)) {
-              steelFrameMode.toggleSelectedPoint(mesh);
-            }
-          });
-        }
-        refreshPointEditPanelUI({ clearInputs: true });
-        if (steelFrameMode?.getSelectedPointMeshes) {
-          const group = steelFrameMode.getSelectedPointMeshes();
-          const tag = already ? 'remove' : 'add';
-          console.log(`[move_point] group(${tag})`, group.map((m) => ({
-            id: m?.id,
-            x: m?.position?.x,
-            y: m?.position?.y,
-            z: m?.position?.z,
-          })));
-        }
-      }
+      handleSteelFrameSelectionToggleFromChoiceObject({
+        allowAxisReference: true,
+        allowLedBoardEditor: true,
+      });
     }
     shouldToggle = true;
     return;
@@ -26003,8 +26566,7 @@ async function handleMouseDown() {
 
   if (objectEditMode === ROTATE_MODE) {
     if (editObject === 'RAIL') {
-      raycaster.setFromCamera(mouse, camera);
-      const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
+      const gizmoHit = pickRotateGizmoHit();
       if (gizmoHit && choice_object?.userData?.railStructureHandle && choice_object?.userData?.railStructurePickHandle) {
         beginRotateDrag(gizmoHit.object);
         return;
@@ -26026,71 +26588,35 @@ async function handleMouseDown() {
       updateRotateGizmo();
       return;
     }
-    raycaster.setFromCamera(mouse, camera);
     if (rotateTargetObject?.userData?.decorationType) {
       rotateTargetObject = null;
     }
-    const decorationPointRotateActive = pointRotateModeActive && pointRotateTarget?.userData?.decorationType;
-    if (decorationPointRotateActive) {
-      const pointGizmoHit = raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null;
-      if (pointGizmoHit) {
-        beginPointRotateDrag(pointGizmoHit.object, { gizmoOnly: false });
-        return;
-      }
-    } else {
-      const gizmoHit = raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null;
-      if (gizmoHit) {
-        beginRotateDrag(gizmoHit.object);
-        return;
-      }
+    const gizmoHit = pointRotateModeActive && pointRotateTarget?.userData?.decorationType
+      ? pickPointRotateGizmoHit()
+      : pickRotateGizmoHit();
+    if (gizmoHit) {
+      console.log('[rotate-gizmo-hit]', {
+        action: String(gizmoHit.object?.userData?.action || ''),
+        axis: gizmoHit.object?.userData?.axis?.toArray?.() || null,
+        objectId: gizmoHit.object?.id ?? null,
+        choiceObjectName: String(choice_object?.name || ''),
+        rotateTargetObjectName: String(rotateTargetObject?.name || ''),
+        pointRotateModeActive: Boolean(pointRotateModeActive),
+      });
+      beginRotateDrag(gizmoHit.object);
+      return;
     }
-    const hits = getIntersectObjects();
-    const firstHit = hits[0] || null;
-    const movePointHitObject = resolveMovePointPreferredHitObject(hits)
-      || resolveMovePointTargetFromIntersect(firstHit);
-    const fallbackHit = hits.find((h) => {
-      const obj = resolveSelectableHitObject(h?.object) || h?.object;
-      return Boolean(obj?.userData?.steelFramePoint)
-        || Boolean(obj?.userData?.decorationType)
-        || obj?.name === 'SteelFrameSegment';
-    }) || null;
-    const obj = movePointHitObject
-      || (resolveSelectableHitObject(fallbackHit?.object) || fallbackHit?.object || null);
-    if (obj) {
-      const structureTargets = collectStructurePointsFromHitTarget(obj);
-      if (Array.isArray(structureTargets) && structureTargets.length > 0) {
-        pointRotateModeActive = false;
-        pointRotateTarget = null;
-        rotateTargetObject = null;
-        rotateSelectionGroupId = String(obj?.userData?.structureGroupId || '').trim();
-        toggleMovePointStructureSelection(obj);
-        setRotationPanelMode('rotation');
-        updatePointRotateVisuals();
-      } else if (obj?.userData?.decorationType) {
-        steelFrameMode.clearSelection?.();
-        rotateTargetObject = null;
-        rotateSelectionGroupId = '';
-        rotatePanelState.idsKey = '';
-        rotatePanelState.angles = { x: 0, y: 0, z: 0 };
-        setRotationPanelMode('rotation_decoration');
-        pointRotateModeActive = true;
-        pointRotateTarget = obj;
-        pointRotateCenter.copy(obj.position);
-        pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(obj));
-        pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(pointRotateBasisQuat)).normalize();
-        pointRotateGizmoYaw = Math.atan2(pointRotateDirection.x, pointRotateDirection.z);
-        pointRotateGizmoYawStart = pointRotateGizmoYaw;
-        pointRotateGizmoQuat.copy(getDecorationRotationBaseQuat(obj, { ensure: true })).normalize();
-        const panelFromState = obj.userData?.pointRotatePanelAngles;
-        obj.userData = {
-          ...(obj.userData || {}),
-          pointRotatePanelAngles: panelFromState || getRotationPanelAnglesFromTargetQuat(obj, pointRotateBasisQuat),
-        };
-        syncPointRotatePanelFromTarget();
-        updatePointRotateVisuals();
-      }
-      updateRotateGizmo();
-    }
+    await onerun_search_point();
+    handleSteelFrameSelectionToggleFromChoiceObject({
+      allowAxisReference: false,
+      allowLedBoardEditor: false,
+    });
+    rotateTargetObject = null;
+    rotateSelectionGroupId = String(choice_object?.userData?.structureGroupId || '').trim();
+    rotatePanelState.idsKey = '';
+    setRotationPanelMode('rotation');
+    updatePointRotateVisuals();
+    updateRotateGizmo();
     return;
   }
 
@@ -26545,6 +27071,26 @@ async function handleMouseDown() {
     console.log('adding point...')
 
     if (guideRectangleModeActive) {
+      return;
+    }
+
+    if (editObject === 'RAIL' && railCreateGuideYModeActive) {
+      choice_object = addPointGridHandle;
+      addPointGridHandle.position.copy(AddPointGuideGrid.position);
+      addPointGridHandle.updateMatrixWorld(true);
+      move_direction_y = true;
+      const pos = camera.position;
+      raycaster.setFromCamera(mouse, camera);
+      const dir = raycaster.ray.direction;
+      const diff = { x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z };
+      const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x ** 2 + diff.z ** 2);
+      const t = hypotenuse / (Math.cos(cameraAngleY) * dir.z + Math.sin(cameraAngleY) * dir.x);
+      TargetDiff = choice_object.position.y - (pos.y + dir.y * t);
+      dragging = true;
+      efficacy = false;
+      GuideLine.position.copy(choice_object.position);
+      GuideLine.quaternion.identity();
+      GuideLine.visible = true;
       return;
     }
 
@@ -27035,24 +27581,28 @@ async function handleMouseDown() {
 // モード状態（例）
 let pointRotateModeActive = false;
 let angleSearchModeActive = false;
+const GIZMO_PICK_LAYER = 1;
 
 let rotateGizmoGroup = null;
 const rotateGizmoMeshes = [];
+let rotateSetYArrow = null;
 let rotateDragging = false;
 let rotateAxis = new THREE.Vector3(0, 1, 0);
 let rotateCenter = new THREE.Vector3();
 let rotateStartVector = new THREE.Vector3();
 let rotateStartPositions = [];
+let rotateMultiGroupDragState = [];
 let rotateTargetObject = null;
 let rotateSelectionGroupId = '';
 let rotateTargetStartQuaternion = new THREE.Quaternion();
 let rotateAxisLocal = new THREE.Vector3(0, 1, 0);
 let rotateDragAction = 'rotate_points';
-let rotatePanelAnglesStart = { x: 0, y: 0, z: 0 };
+let rotatePanelAnglesStart = { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 };
+let rotateSetYPreviewState = null;
 const rotatePlane = new THREE.Plane();
 let rotatePanelState = {
   idsKey: '',
-  angles: { x: 0, y: 0, z: 0 },
+  angles: { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 },
 };
 let scaleGizmoGroup = null;
 const scaleGizmoMeshes = [];
@@ -27245,6 +27795,304 @@ function applyDifferenceScaleAngleState() {
   }
 }
 
+function createDualLayerGizmoMesh(geometry, {
+  color = 0xffffff,
+  opacityFront = 0.92,
+  opacityBack = 0.16,
+} = {}) {
+  const group = new THREE.Group();
+  const backMaterial = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: opacityBack,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const frontMaterial = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: opacityFront,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const backMesh = new THREE.Mesh(geometry, backMaterial);
+  const frontMesh = new THREE.Mesh(geometry, frontMaterial);
+  backMesh.renderOrder = 9400;
+  frontMesh.renderOrder = 9401;
+  backMesh.userData = { ...(backMesh.userData || {}), gizmoVisualLayer: 'back' };
+  frontMesh.userData = { ...(frontMesh.userData || {}), gizmoVisualLayer: 'front' };
+  group.add(backMesh);
+  group.add(frontMesh);
+  return group;
+}
+
+function markGizmoPickMesh(mesh) {
+  if (!mesh?.layers?.set) { return mesh; }
+  mesh.layers.set(GIZMO_PICK_LAYER);
+  return mesh;
+}
+
+function withGizmoPickLayerRaycast(callback) {
+  if (typeof callback !== 'function') { return null; }
+  const previousMask = raycaster.layers.mask;
+  raycaster.layers.set(GIZMO_PICK_LAYER);
+  try {
+    return callback();
+  } finally {
+    raycaster.layers.mask = previousMask;
+  }
+}
+
+function pickRotateGizmoHit() {
+  raycaster.setFromCamera(mouse, camera);
+  return withGizmoPickLayerRaycast(() =>
+    raycaster.intersectObjects(rotateGizmoMeshes, true)[0] || null
+  );
+}
+
+function pickPointRotateGizmoHit() {
+  raycaster.setFromCamera(mouse, camera);
+  return withGizmoPickLayerRaycast(() =>
+    raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null
+  );
+}
+
+function setDualLayerGizmoColor(target, color) {
+  target?.traverse?.((child) => {
+    if (!child?.material?.color) { return; }
+    child.material.color.set(color);
+  });
+}
+
+function applyDualLayerArrowStyle(helper, {
+  color = 0xffffff,
+  opacityFront = 0.96,
+  opacityBack = 0.2,
+} = {}) {
+  if (!helper) { return; }
+  helper.cone?.material?.dispose?.();
+  helper.line?.material?.dispose?.();
+  helper.cone.material = [
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: opacityBack,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: opacityFront,
+      depthTest: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  ];
+  helper.line.material = [
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: opacityBack,
+      depthTest: false,
+      depthWrite: false,
+    }),
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: opacityFront,
+      depthTest: true,
+      depthWrite: false,
+    }),
+  ];
+  helper.cone.renderOrder = 9401;
+  helper.line.renderOrder = 9401;
+}
+
+function getCreateRotationAxesWorld(panelAngles = getActiveRotateGizmoPanelAngles()) {
+  const setYDeg = Number(panelAngles?.set_Y ?? panelAngles?.setY) || 0;
+  const setXDeg = Number(panelAngles?.set_X ?? panelAngles?.setX) || 0;
+  const xDeg = Number(panelAngles?.x) || 0;
+  const yDeg = Number(panelAngles?.y) || 0;
+  const setYAxis = new THREE.Vector3(0, 1, 0);
+  const setYQuat = new THREE.Quaternion().setFromAxisAngle(setYAxis, THREE.MathUtils.degToRad(setYDeg));
+  const setXAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(setYQuat).normalize();
+  const setXQuat = new THREE.Quaternion().setFromAxisAngle(setXAxis, THREE.MathUtils.degToRad(setXDeg));
+  const afterSetXQuat = setXQuat.clone().multiply(setYQuat).normalize();
+  const yAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(setYQuat).normalize();
+  const yQuat = new THREE.Quaternion().setFromAxisAngle(yAxis, THREE.MathUtils.degToRad(yDeg));
+  const afterYQuat = yQuat.clone().multiply(afterSetXQuat).normalize();
+  const xAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(afterYQuat).normalize();
+  const xQuat = new THREE.Quaternion().setFromAxisAngle(xAxis, THREE.MathUtils.degToRad(xDeg));
+  const afterXQuat = xQuat.clone().multiply(afterYQuat).normalize();
+  const zAxis = new THREE.Vector3(0, 0, 1).applyQuaternion(afterXQuat).normalize();
+  return { setYAxis, setXAxis, xAxis, yAxis, zAxis };
+}
+
+function getCreateRotationXAxisWorld(panelAngles = rotatePanelState?.angles) {
+  return getCreateRotationAxesWorld(panelAngles).xAxis.clone();
+}
+
+function getCreateRotationYAxisWorld(panelAngles = rotatePanelState?.angles) {
+  return getCreateRotationAxesWorld(panelAngles).yAxis.clone();
+}
+
+function getCreateRotationSetYAxisWorld(panelAngles = rotatePanelState?.angles) {
+  return getCreateRotationAxesWorld(panelAngles).setYAxis.clone();
+}
+
+function getCreateRotationZAxisWorld(panelAngles = rotatePanelState?.angles) {
+  return getCreateRotationAxesWorld(panelAngles).zAxis.clone();
+}
+
+function getCreateRotationDragAxisWorld(axisLocal, action = 'rotate_points', panelAngles = rotatePanelState?.angles) {
+  if (axisLocal?.x === 1) {
+    return action === 'rotate_gizmo_x'
+      ? getCreateRotationAxesWorld(panelAngles).setXAxis.clone()
+      : getCreateRotationXAxisWorld(panelAngles);
+  }
+  if (axisLocal?.y === 1) {
+    return action === 'rotate_gizmo_y'
+      ? getCreateRotationSetYAxisWorld(panelAngles)
+      : getCreateRotationYAxisWorld(panelAngles);
+  }
+  if (axisLocal?.z === 1) {
+    return getCreateRotationZAxisWorld(panelAngles);
+  }
+  return axisLocal?.clone?.()?.normalize?.() || new THREE.Vector3(0, 1, 0);
+}
+
+function getActiveRotateGizmoPanelAngles() {
+  if (rotateSetYPreviewState?.previewAngles) {
+    return rotateSetYPreviewState.previewAngles;
+  }
+  return rotatePanelState?.angles;
+}
+
+function getNormalizedRotatePanelAngles(panelAngles = rotatePanelState?.angles) {
+  return parseSavedGroupRotationAngles({ rotation: panelAngles }) || {
+    set_Y: 0,
+    set_X: 0,
+    x: 0,
+    y: 0,
+    z: 0,
+  };
+}
+
+function getRotateSelectionCenter(meshes = []) {
+  const center = new THREE.Vector3();
+  const targets = Array.isArray(meshes) ? meshes.filter((mesh) => mesh?.position) : [];
+  if (targets.length < 1) { return center; }
+  targets.forEach((mesh) => center.add(mesh.position));
+  center.multiplyScalar(1 / targets.length);
+  return center;
+}
+
+function applyRotateQuaternionDeltaToMeshes(meshes = [], center = null, deltaQuat = null) {
+  if (!center?.isVector3 || !deltaQuat?.isQuaternion) { return false; }
+  const targets = Array.isArray(meshes) ? meshes.filter((mesh) => mesh?.position) : [];
+  if (targets.length < 1) { return false; }
+  const curves = new Set();
+  targets.forEach((mesh) => {
+    const offset = mesh.position.clone().sub(center).applyQuaternion(deltaQuat);
+    mesh.position.copy(center.clone().add(offset));
+    if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
+      const curve = mesh.userData.guideCurve;
+      const idx = mesh.userData.guideControlIndex;
+      if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+        curve.userData.controlPoints[idx] = mesh.position.clone();
+        curves.add(curve);
+      }
+    }
+  });
+  curves.forEach((curve) => updateGuideCurve(curve));
+  if (editObject === 'STEEL_FRAME') {
+    drawingObject(targets);
+  }
+  return true;
+}
+
+function enterRotateSetYPreview(meshes = null, angles = null) {
+  if (rotateSetYPreviewState) { return true; }
+  const targets = Array.isArray(meshes)
+    ? meshes.filter((mesh) => mesh?.position)
+    : ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
+  if (targets.length < 1) { return false; }
+  const storedAngles = getNormalizedRotatePanelAngles(angles || rotatePanelState.angles);
+  const actualQuat = buildGroupQuatFromRotationAngles(storedAngles);
+  const previewAngles = { set_Y: storedAngles.set_Y, set_X: storedAngles.set_X, x: 0, y: 0, z: 0 };
+  const previewQuat = buildGroupQuatFromRotationAngles(previewAngles);
+  if (Math.abs(storedAngles.x) < 1e-6 && Math.abs(storedAngles.y) < 1e-6 && Math.abs(storedAngles.z) < 1e-6) {
+    rotateSetYPreviewState = {
+      meshes: targets,
+      center: getRotateSelectionCenter(targets),
+      storedAngles,
+      actualQuat,
+      previewQuat,
+      previewAngles,
+    };
+    syncCreateRotationGizmoAxes();
+    return true;
+  }
+  const center = getRotateSelectionCenter(targets);
+  const deltaQuat = previewQuat.clone().multiply(actualQuat.clone().invert()).normalize();
+  applyRotateQuaternionDeltaToMeshes(targets, center, deltaQuat);
+  rotateSetYPreviewState = {
+    meshes: targets,
+    center,
+    storedAngles,
+    actualQuat,
+    previewQuat,
+    previewAngles,
+  };
+  syncCreateRotationGizmoAxes();
+  return true;
+}
+
+function finalizeRotateSetYPreview(finalAngles = null) {
+  if (!rotateSetYPreviewState) { return false; }
+  const state = rotateSetYPreviewState;
+  rotateSetYPreviewState = null;
+  const targets = Array.isArray(state.meshes) ? state.meshes.filter((mesh) => mesh?.position) : [];
+  if (targets.length < 1) { return false; }
+  const nextAngles = getNormalizedRotatePanelAngles(finalAngles || rotatePanelState.angles);
+  const previewQuat = state.previewQuat?.isQuaternion
+    ? state.previewQuat.clone().normalize()
+    : buildGroupQuatFromRotationAngles(state.previewAngles || { set_Y: nextAngles.set_Y, set_X: nextAngles.set_X, x: 0, y: 0, z: 0 });
+  const targetQuat = buildGroupQuatFromRotationAngles(nextAngles);
+  const deltaQuat = targetQuat.clone().multiply(previewQuat.clone().invert()).normalize();
+  applyRotateQuaternionDeltaToMeshes(targets, state.center || getRotateSelectionCenter(targets), deltaQuat);
+  rotatePanelState.angles = nextAngles;
+  syncSavedRotationForActiveCopiedGroup(nextAngles);
+  updateRotateGizmo();
+  return true;
+}
+
+function syncCreateRotationGizmoAxes() {
+  if (!rotateGizmoGroup) { return; }
+  const axes = getCreateRotationAxesWorld();
+  const baseNormal = new THREE.Vector3(0, 0, 1);
+  rotateGizmoGroup.children.forEach((child) => {
+    if (!child?.userData?.isRotateGizmo) { return; }
+    const axis = child.userData.axis;
+    const action = child.userData.action || 'rotate_points';
+    let targetAxis = null;
+    if (axis?.x === 1) {
+      targetAxis = action === 'rotate_gizmo_x' ? axes.setXAxis : axes.xAxis;
+    } else if (axis?.y === 1) {
+      targetAxis = action === 'rotate_gizmo_y' ? axes.setYAxis : axes.yAxis;
+    } else if (axis?.z === 1) {
+      targetAxis = axes.zAxis;
+    }
+    if (!targetAxis) { return; }
+    child.quaternion.setFromUnitVectors(baseNormal, targetAxis.clone().normalize());
+    child.visible = true;
+  });
+}
+
 function ensurePointRotateGizmo() {
   if (pointRotateGizmoGroup) { return; }
   pointRotateGizmoGroup = new THREE.Group();
@@ -27256,8 +28104,7 @@ function ensurePointRotateGizmo() {
     const ringGeom = radiusScale === 1.0
       ? geom
       : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(ringGeom, mat);
+    const mesh = createDualLayerGizmoMesh(ringGeom, { color });
     const pick = new THREE.Mesh(
       ringGeom,
       createRaycastOnlyMaterial()
@@ -27267,6 +28114,7 @@ function ensurePointRotateGizmo() {
     pick.rotation.set(euler.x, euler.y, euler.z);
     pick.position.y = -GIZMO_PICK_OFFSET;
     pick.userData = { ...(pick.userData || {}), isPointRotateGizmo: true, axis, action };
+    markGizmoPickMesh(pick);
     pointRotateGizmoGroup.add(mesh);
     pointRotateGizmoGroup.add(pick);
     pointRotateGizmoMeshes.push(pick);
@@ -27285,6 +28133,7 @@ function ensurePointRotateArrow() {
   if (pointRotateArrow) { return; }
   pointRotateArrow = new THREE.ArrowHelper(pointRotateDirection.clone().normalize(), pointRotateCenter.clone(), 2, 0xf4c430, 0.45, 0.25);
   pointRotateArrow.name = 'PointRotateArrow';
+  applyDualLayerArrowStyle(pointRotateArrow, { color: 0xf4c430, opacityFront: 0.98, opacityBack: 0.22 });
   pointRotateArrow.visible = false;
   scene.add(pointRotateArrow);
 }
@@ -28469,32 +29318,90 @@ function ensureRotateGizmo() {
   const ringTube = 0.03;
   const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
 
-  const makeRing = (color, axis, euler, radiusScale = 1.0, action = 'rotate_points') => {
+  const makeRing = (
+    color,
+    axis,
+    euler,
+    radiusScale = 1.0,
+    action = 'rotate_points',
+    layerStyle = {},
+  ) => {
     const ringGeom = radiusScale === 1.0
       ? geom
       : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(ringGeom, mat);
+    const mesh = createDualLayerGizmoMesh(ringGeom, { color, ...layerStyle });
     const pick = new THREE.Mesh(
       ringGeom,
       createRaycastOnlyMaterial()
     );
     mesh.rotation.set(euler.x, euler.y, euler.z);
+    mesh.userData = { ...(mesh.userData || {}), isRotateGizmo: true, axis, action };
     pick.rotation.set(euler.x, euler.y, euler.z);
     pick.position.y = -GIZMO_PICK_OFFSET;
     pick.userData = { ...(pick.userData || {}), isRotateGizmo: true, axis, action };
+    markGizmoPickMesh(pick);
     rotateGizmoGroup.add(mesh);
     rotateGizmoGroup.add(pick);
     rotateGizmoMeshes.push(pick);
   };
 
   makeRing(0xff5c5c, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 1.0, 'rotate_points');
+  makeRing(0xff9f43, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 1.24, 'rotate_gizmo_x', {
+    opacityFront: 0.42,
+    opacityBack: 0.08,
+  });
   makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.0, 'rotate_points');
-  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.24, 'rotate_gizmo_y');
+  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 1.24, 'rotate_gizmo_y', {
+    opacityFront: 0.42,
+    opacityBack: 0.08,
+  });
   makeRing(0x5cc0ff, new THREE.Vector3(0, 0, 1), new THREE.Euler(0, 0, 0), 1.0, 'rotate_points');
 
   rotateGizmoGroup.visible = false;
+  syncCreateRotationGizmoAxes();
   scene.add(rotateGizmoGroup);
+
+  rotateSetYArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(),
+    2.1,
+    0xffee58,
+    0.42,
+    0.24
+  );
+  rotateSetYArrow.name = 'RotateSetYArrow';
+  applyDualLayerArrowStyle(rotateSetYArrow, { color: 0xffee58, opacityFront: 1.0, opacityBack: 0.34 });
+  rotateSetYArrow.visible = false;
+  scene.add(rotateSetYArrow);
+}
+
+function hideRotateSetYArrow() {
+  if (rotateSetYArrow) {
+    rotateSetYArrow.visible = false;
+  }
+}
+
+function updateRotateSetYArrow(center = null, scale = 1.8) {
+  if (!rotateSetYArrow || !rotateSetYPreviewState || !center?.isVector3) {
+    hideRotateSetYArrow();
+    return;
+  }
+  const previewAngles = getNormalizedRotatePanelAngles(rotateSetYPreviewState.previewAngles);
+  const setYQuat = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0),
+    THREE.MathUtils.degToRad(Number(previewAngles.set_Y) || 0)
+  );
+  const setXAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(setYQuat).normalize();
+  const setXQuat = new THREE.Quaternion().setFromAxisAngle(
+    setXAxis,
+    THREE.MathUtils.degToRad(Number(previewAngles.set_X) || 0)
+  );
+  const basisQuat = setXQuat.clone().multiply(setYQuat).normalize();
+  const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(basisQuat).normalize();
+  rotateSetYArrow.position.copy(center);
+  rotateSetYArrow.setDirection(dir);
+  rotateSetYArrow.setLength(Math.max(1.8, scale * 1.25), 0.42, 0.24);
+  rotateSetYArrow.visible = true;
 }
 
 function getRotateSelectionMeshes() {
@@ -28531,17 +29438,24 @@ function getRotationPanelAnglesFromTargetQuat(target, quat) {
 }
 
 function setRotationPanelAnglesDisplay(panelAngles, { writeValue = true } = {}) {
-  const zLike = Number.isFinite(Number(panelAngles?.y2))
-    ? Number(panelAngles.y2)
-    : (Number.isFinite(Number(panelAngles?.y_2))
-      ? Number(panelAngles.y_2)
-      : Number(panelAngles?.z));
-  const next = {
-    x: Number(panelAngles?.x) || 0,
-    y: Number(panelAngles?.y) || 0,
-    z: Number.isFinite(zLike) ? zLike : 0,
+  const next = parseSavedGroupRotationAngles({ rotation: panelAngles }) || {
+    set_Y: 0,
+    set_X: 0,
+    x: 0,
+    y: 0,
+    z: 0,
   };
   rotatePanelState.angles = next;
+  if (rotationInputSetY) {
+    const text = String(Number(next.set_Y.toFixed(1)));
+    rotationInputSetY.value = writeValue ? text : '';
+    rotationInputSetY.placeholder = text;
+  }
+  if (rotationInputSetX) {
+    const text = String(Number(next.set_X.toFixed(1)));
+    rotationInputSetX.value = writeValue ? text : '';
+    rotationInputSetX.placeholder = text;
+  }
   if (rotationInputX) {
     const text = String(Number(next.x.toFixed(1)));
     rotationInputX.value = writeValue ? text : '';
@@ -28558,6 +29472,76 @@ function setRotationPanelAnglesDisplay(panelAngles, { writeValue = true } = {}) 
     rotationInputZ.placeholder = text;
   }
   syncRotationInputGhostHints();
+}
+
+function resetMultiRotatePanelDeltaDisplay() {
+  rotatePanelState.angles = { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 };
+  if (rotationInputSetY) {
+    rotationInputSetY.value = '';
+    rotationInputSetY.placeholder = 'LOCK';
+  }
+  if (rotationInputSetX) {
+    rotationInputSetX.value = '';
+    rotationInputSetX.placeholder = 'LOCK';
+  }
+  if (rotationInputX) {
+    rotationInputX.value = '+=';
+    rotationInputX.placeholder = '+=0';
+  }
+  if (rotationInputY) {
+    rotationInputY.value = '+=';
+    rotationInputY.placeholder = '+=0';
+  }
+  if (rotationInputZ) {
+    rotationInputZ.value = '+=';
+    rotationInputZ.placeholder = '+=0';
+  }
+  syncRotationInputGhostHints();
+}
+
+  function applyMultiGroupRotationDelta(deltaAngles = {}, groupStates = null) {
+  const states = Array.isArray(groupStates) && groupStates.length > 0
+    ? groupStates
+    : getSelectedRotateStructureGroupIds().map((gid) => captureStructureGroupRotationState(gid));
+  if (states.length < 1) { return false; }
+  const dx = Number(deltaAngles.x) || 0;
+  const dy = Number(deltaAngles.y) || 0;
+  const dz = Number(deltaAngles.z) || 0;
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6 && Math.abs(dz) < 1e-6) {
+    return false;
+  }
+  const dirtyMeshes = [];
+  states.forEach((state) => {
+    const currentAngles = parseSavedGroupRotationAngles({ rotation: state.startSavedAngles || state.savedAngles }) || {
+      set_Y: 0,
+      set_X: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+    };
+    const nextAngles = {
+      set_Y: currentAngles.set_Y,
+      set_X: currentAngles.set_X,
+      x: currentAngles.x + dx,
+      y: currentAngles.y + dy,
+      z: currentAngles.z + dz,
+    };
+    const currentQuat = buildGroupQuatFromRotationAngles(currentAngles);
+    const nextQuat = buildGroupQuatFromRotationAngles(nextAngles);
+    const deltaQuat = nextQuat.clone().multiply(currentQuat.clone().invert()).normalize();
+    applyQuaternionDeltaToStructureGroupState(state, deltaQuat);
+    setSavedRotationForStructureGroup(state.groupId, nextAngles);
+    state.savedAngles = nextAngles;
+    state.pointEntries.forEach((entry) => {
+      if (entry?.mesh?.parent) { dirtyMeshes.push(entry.mesh); }
+    });
+  });
+  if (editObject === 'STEEL_FRAME' && dirtyMeshes.length > 0) {
+    drawingObject(dirtyMeshes);
+    syncSteelFrameTargetObjectsAfterRebuild();
+    refreshPointEditPanelUI({ clearInputs: true });
+  }
+  return true;
 }
 
 function buildDecorationQuatFromPanelAngles(target, panelAngles = { x: 0, y: 0, z: 0 }) {
@@ -28597,8 +29581,7 @@ function ensureScaleGizmo() {
     const geom = radiusScale === 1.0
       ? ringGeom
       : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = createDualLayerGizmoMesh(geom, { color });
     const pick = new THREE.Mesh(
       geom,
       createRaycastOnlyMaterial()
@@ -28621,6 +29604,7 @@ function ensureScaleGizmo() {
 
   scaleArrow = new THREE.ArrowHelper(scaleDirection.clone().normalize(), new THREE.Vector3(), 2, 0xf4c430, 0.45, 0.25);
   scaleArrow.name = 'ScaleArrow';
+  applyDualLayerArrowStyle(scaleArrow, { color: 0xf4c430, opacityFront: 0.98, opacityBack: 0.22 });
   scaleArrow.visible = false;
   scene.add(scaleArrow);
 
@@ -28915,7 +29899,9 @@ function updateRotationSelectionInfo() {
 function updateRotateGizmo() {
   ensureRotateGizmo();
   if (objectEditMode !== ROTATE_MODE) {
+    updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = false;
+    hideRotateSetYArrow();
     updateRotationSelectionInfo();
     return;
   }
@@ -28926,14 +29912,21 @@ function updateRotateGizmo() {
     rotateGizmoGroup.position.copy(rotateCenter);
     rotateGizmoGroup.quaternion.identity();
     rotateGizmoGroup.scale.setScalar(1.8);
+    updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = true;
+    hideRotateSetYArrow();
+    if (rotationInputSetY) rotationInputSetY.placeholder = '0';
+    if (rotationInputSetX) rotationInputSetX.placeholder = '0';
     if (rotationInputX) rotationInputX.placeholder = '0';
     if (rotationInputY) rotationInputY.placeholder = '+10.0';
     if (rotationInputZ) rotationInputZ.placeholder = '0';
+    syncRotationInputGhostHints();
     return;
   }
   if (pointRotateModeActive && pointRotateTarget?.userData?.decorationType) {
+    updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = false;
+    hideRotateSetYArrow();
     updateRotationSelectionInfo();
     return;
   }
@@ -28942,37 +29935,40 @@ function updateRotateGizmo() {
     rotateGizmoGroup.position.copy(rotateCenter);
     rotateGizmoGroup.quaternion.copy(rotateTargetObject.quaternion);
     rotateGizmoGroup.scale.setScalar(1.6);
+    updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = true;
+    hideRotateSetYArrow();
+    if (rotationInputSetY) rotationInputSetY.placeholder = String(Number(rotatePanelState.angles.set_Y || 0).toFixed(1));
+    if (rotationInputSetX) rotationInputSetX.placeholder = String(Number(rotatePanelState.angles.set_X || 0).toFixed(1));
     if (rotationInputX) rotationInputX.placeholder = String(Number(rotatePanelState.angles.x || 0).toFixed(1));
     if (rotationInputY) rotationInputY.placeholder = String(Number(rotatePanelState.angles.y || 0).toFixed(1));
     if (rotationInputZ) rotationInputZ.placeholder = String(Number(rotatePanelState.angles.z || 0).toFixed(1));
+    syncRotationInputGhostHints();
     return;
   }
   const meshes = getRotateSelectionMeshes();
   if (meshes.length < 2) {
+    updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = false;
+    hideRotateSetYArrow();
     updateRotationSelectionInfo();
     return;
   }
+  const isMultiGroup = isMultiRotateStructureGroupSelection();
   const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',');
   if (rotatePanelState.idsKey !== idsKey) {
     rotatePanelState.idsKey = idsKey;
-    const selectedGroupId = getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId;
-    const savedRotation = selectedGroupId
+    const selectedGroupId = isMultiGroup ? '' : (getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId);
+    const savedRotation = !isMultiGroup && selectedGroupId
       ? getSavedRotationForStructureGroup(selectedGroupId)
       : null;
-    if (savedRotation) {
+    if (savedRotation && !isMultiGroup) {
       setRotationPanelAnglesDisplay(savedRotation);
     } else {
-      rotatePanelState.angles = { x: 0, y: 0, z: 0 };
-      if (rotationInputX) rotationInputX.value = '';
-      if (rotationInputY) rotationInputY.value = '';
-      if (rotationInputZ) rotationInputZ.value = '';
-      if (rotationInputX) rotationInputX.placeholder = '0';
-      if (rotationInputY) rotationInputY.placeholder = '0';
-      if (rotationInputZ) rotationInputZ.placeholder = '0';
+      resetMultiRotatePanelDeltaDisplay();
     }
   }
+  updateRotationSetAxisLockState(isMultiGroup);
   const center = new THREE.Vector3();
   meshes.forEach((m) => center.add(m.position));
   center.multiplyScalar(1 / meshes.length);
@@ -28986,7 +29982,19 @@ function updateRotateGizmo() {
   rotateGizmoGroup.position.copy(center);
   const scale = Math.max(1.2, maxDist * 1.2);
   rotateGizmoGroup.scale.setScalar(scale);
+  syncCreateRotationGizmoAxes();
+  rotateGizmoGroup.children.forEach((child) => {
+    if (!child?.userData?.isRotateGizmo) { return; }
+    const action = String(child.userData.action || '');
+    const isSetAxis = action === 'rotate_gizmo_x' || action === 'rotate_gizmo_y';
+    child.visible = !isMultiGroup || !isSetAxis;
+  });
   rotateGizmoGroup.visible = true;
+  if (isMultiGroup) {
+    hideRotateSetYArrow();
+  } else {
+    updateRotateSetYArrow(center, scale);
+  }
   updateRotationSelectionInfo();
 }
 
@@ -29027,14 +30035,30 @@ function beginRotateDrag(axisMesh) {
     ? [rotateTargetObject]
     : ensureCopiedGroupReadyForPointEdit(getRotateSelectionMeshes());
   if (meshes.length < (isDecorationRotate ? 1 : 2)) { return; }
+  const isMultiGroup = !isDecorationRotate && isMultiRotateStructureGroupSelection();
   rotateAxisLocal = axisMesh?.userData?.axis?.clone?.()?.normalize?.() || new THREE.Vector3(0, 1, 0);
   rotateDragAction = axisMesh?.userData?.action || 'rotate_points';
+  const isSetYDrag = rotateAxisLocal?.y === 1 && rotateDragAction === 'rotate_gizmo_y';
+  const isSetXDrag = rotateAxisLocal?.x === 1 && rotateDragAction === 'rotate_gizmo_x';
+  const isBasisDrag = isSetYDrag || isSetXDrag;
+  if (isMultiGroup && isBasisDrag) { return; }
+  if (rotateSetYPreviewState && !isBasisDrag) {
+    finalizeRotateSetYPreview(rotatePanelState.angles);
+  }
   rotatePanelAnglesStart = {
+    set_Y: Number(rotatePanelState?.angles?.set_Y ?? rotatePanelState?.angles?.setY) || 0,
+    set_X: Number(rotatePanelState?.angles?.set_X ?? rotatePanelState?.angles?.setX) || 0,
     x: Number(rotatePanelState?.angles?.x) || 0,
     y: Number(rotatePanelState?.angles?.y) || 0,
     z: Number(rotatePanelState?.angles?.z) || 0,
   };
-  rotateAxis = rotateAxisLocal.clone();
+  if (isBasisDrag) {
+    enterRotateSetYPreview(meshes, rotatePanelAnglesStart);
+  }
+  rotateMultiGroupDragState = isMultiGroup
+    ? getSelectedRotateStructureGroupIds().map((gid) => captureStructureGroupRotationState(gid))
+    : [];
+  rotateAxis = getCreateRotationDragAxisWorld(rotateAxisLocal, rotateDragAction, rotatePanelAnglesStart);
   if (isDecorationRotate) {
     rotateAxis.applyQuaternion(rotateTargetObject.quaternion).normalize();
     rotateTargetStartQuaternion.copy(rotateTargetObject.quaternion);
@@ -29104,6 +30128,8 @@ function updateRotateDrag() {
       pointRotateDirection: new THREE.Vector3(0, 0, 1).applyQuaternion(rotateTargetObject.quaternion).normalize(),
       pointRotatePanelAngles: panelAngles,
     };
+    if (rotationInputSetY) { rotationInputSetY.value = '0.0'; rotationInputSetY.placeholder = '0.0'; }
+    if (rotationInputSetX) { rotationInputSetX.value = '0.0'; rotationInputSetX.placeholder = '0.0'; }
     if (rotationInputX) { rotationInputX.value = String(panelAngles.x.toFixed(1)); }
     if (rotationInputY) { rotationInputY.value = String(panelAngles.y.toFixed(1)); }
     if (rotationInputZ) { rotationInputZ.value = String(panelAngles.z.toFixed(1)); }
@@ -29113,58 +30139,107 @@ function updateRotateDrag() {
     return;
   }
 
-  rotateStartPositions.forEach(({ mesh, pos }) => {
-    const offset = pos.clone().sub(rotateCenter);
-    offset.applyAxisAngle(rotateAxis, angle);
-    mesh.position.copy(rotateCenter.clone().add(offset));
-    if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
-      const curve = mesh.userData.guideCurve;
-      const idx = mesh.userData.guideControlIndex;
-      if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
-        curve.userData.controlPoints[idx] = mesh.position.clone();
-      }
-    }
-  });
   const angleDeg = angle * (180 / Math.PI);
   const panelAngles = { ...rotatePanelAnglesStart };
+  const isSetYDrag = rotateAxisLocal?.y === 1 && rotateDragAction === 'rotate_gizmo_y';
+  const isSetXDrag = rotateAxisLocal?.x === 1 && rotateDragAction === 'rotate_gizmo_x';
+  const isBasisDrag = isSetYDrag || isSetXDrag;
+  const isMultiGroup = rotateMultiGroupDragState.length > 1;
+  if (!isBasisDrag) {
+    if (!isMultiGroup) {
+      rotateStartPositions.forEach(({ mesh, pos }) => {
+        const offset = pos.clone().sub(rotateCenter);
+        offset.applyAxisAngle(rotateAxis, angle);
+        mesh.position.copy(rotateCenter.clone().add(offset));
+        if (mesh?.userData?.guideCurve && typeof mesh.userData.guideControlIndex === 'number') {
+          const curve = mesh.userData.guideCurve;
+          const idx = mesh.userData.guideControlIndex;
+          if (curve?.userData?.controlPoints && curve.userData.controlPoints[idx]) {
+            curve.userData.controlPoints[idx] = mesh.position.clone();
+          }
+        }
+      });
+    }
+  }
   if (rotateAxisLocal?.x === 1) {
-    panelAngles.x = rotatePanelAnglesStart.x + angleDeg;
+    if (isSetXDrag) {
+      panelAngles.set_X = rotatePanelAnglesStart.set_X + angleDeg;
+    } else {
+      panelAngles.x = rotatePanelAnglesStart.x + angleDeg;
+    }
   } else if (rotateAxisLocal?.y === 1) {
-    if (rotateDragAction === 'rotate_gizmo_y') {
-      panelAngles.z = rotatePanelAnglesStart.z + angleDeg;
+    if (isSetYDrag) {
+      panelAngles.set_Y = rotatePanelAnglesStart.set_Y + angleDeg;
     } else {
       panelAngles.y = rotatePanelAnglesStart.y + angleDeg;
     }
   } else if (rotateAxisLocal?.z === 1) {
     panelAngles.z = rotatePanelAnglesStart.z + angleDeg;
   }
+  if (isBasisDrag && rotateSetYPreviewState) {
+    rotateSetYPreviewState.previewAngles = {
+      set_Y: panelAngles.set_Y,
+      set_X: panelAngles.set_X,
+      x: 0,
+      y: 0,
+      z: 0,
+    };
+  }
   rotatePanelState.angles = panelAngles;
+  if (isMultiGroup && !isBasisDrag) {
+    applyMultiGroupRotationDelta({
+      x: panelAngles.x,
+      y: panelAngles.y,
+      z: panelAngles.z,
+    }, rotateMultiGroupDragState);
+  }
+  if (rotationInputSetY) {
+    const setYText = String(panelAngles.set_Y.toFixed(1));
+    rotationInputSetY.value = setYText;
+    rotationInputSetY.placeholder = setYText;
+  }
+  if (rotationInputSetX) {
+    const setXText = String((Number(panelAngles.set_X) || 0).toFixed(1));
+    rotationInputSetX.value = setXText;
+    rotationInputSetX.placeholder = setXText;
+  }
   if (rotationInputX) {
-    const xText = String(panelAngles.x.toFixed(1));
+    const xText = isMultiGroup ? `+=${panelAngles.x.toFixed(1)}` : String(panelAngles.x.toFixed(1));
     rotationInputX.value = xText;
-    rotationInputX.placeholder = xText;
+    rotationInputX.placeholder = isMultiGroup ? '+=0' : xText;
   }
   if (rotationInputY) {
-    const yText = String(panelAngles.y.toFixed(1));
+    const yText = isMultiGroup ? `+=${panelAngles.y.toFixed(1)}` : String(panelAngles.y.toFixed(1));
     rotationInputY.value = yText;
-    rotationInputY.placeholder = yText;
+    rotationInputY.placeholder = isMultiGroup ? '+=0' : yText;
   }
   if (rotationInputZ) {
-    const zText = String(panelAngles.z.toFixed(1));
+    const zText = isMultiGroup ? `+=${panelAngles.z.toFixed(1)}` : String(panelAngles.z.toFixed(1));
     rotationInputZ.value = zText;
-    rotationInputZ.placeholder = zText;
+    rotationInputZ.placeholder = isMultiGroup ? '+=0' : zText;
   }
   syncRotationInputGhostHints();
-  // update curves once per drag step
-  const curves = new Set();
-  rotateStartPositions.forEach(({ mesh }) => {
-    if (mesh?.userData?.guideCurve) {
-      curves.add(mesh.userData.guideCurve);
+  syncCreateRotationGizmoAxes();
+  if (isMultiGroup) {
+    hideRotateSetYArrow();
+  } else {
+    updateRotateSetYArrow(rotateCenter, rotateGizmoGroup?.scale?.x || 1.8);
+  }
+  if (!isBasisDrag) {
+    if (!isMultiGroup) {
+      const curves = new Set();
+      rotateStartPositions.forEach(({ mesh }) => {
+        if (mesh?.userData?.guideCurve) {
+          curves.add(mesh.userData.guideCurve);
+        }
+      });
+      curves.forEach((curve) => updateGuideCurve(curve));
     }
-  });
-  curves.forEach((curve) => updateGuideCurve(curve));
+  } else {
+    syncSavedRotationForActiveCopiedGroup(panelAngles);
+  }
   updateRotationSelectionInfo();
-  if (editObject === 'STEEL_FRAME') {
+  if (!isBasisDrag && editObject === 'STEEL_FRAME' && !isMultiGroup) {
     drawingObject(rotateStartPositions.map((entry) => entry?.mesh).filter(Boolean));
   }
 }
@@ -29222,6 +30297,7 @@ export function UIevent (uiID, toggle){
     refreshRailSelectionTargets();
     setMeshListOpacity(targetObjects, 1);
     updateRailInsertHoverFromPointer();
+    syncRailCreateGuideGrid();
     railGroupDragState = null;
     railRotateDragState = null;
     updateRailSelectionStatus();
@@ -29244,25 +30320,56 @@ export function UIevent (uiID, toggle){
     setRailConstructionPanelVisible(false);
     hideRailInsertHoverPin();
     cancelRailStraightDraft();
+    syncRailCreateGuideGrid();
     updateRailSelectionStatus();
 
   }} else if ( uiID === 'new' ){ if ( toggle === 'active' ){
     console.log( 'new _active' )
     objectEditMode = 'CREATE_NEW'
+    railCreateGuideYModeActive = false
     search_object = false
     cancelRailStraightDraft();
     updateRailInsertHoverFromPointer();
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
 
   } else {
     console.log( 'new _inactive' )
+    railCreateGuideYModeActive = false
     hideRailInsertHoverPin();
     cancelRailStraightDraft();
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
+
+  }} else if ( uiID === 'guide_y' ){ if ( toggle === 'active' ){
+    console.log( 'guide_y _active' )
+    railCreateGuideYModeActive = true
+    editObject = 'RAIL'
+    objectEditMode = 'CREATE_NEW'
+    move_direction_y = false
+    search_object = false
+    targetObjects = []
+    syncRailCreateGuideGrid()
+    updateRailSelectionStatus()
+
+  } else {
+    console.log( 'guide_y _inactive' )
+    railCreateGuideYModeActive = false
+    move_direction_y = false
+    search_object = false
+    if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW') {
+      targetObjects = []
+      updateRailInsertHoverFromPointer();
+      syncRailCreateGuideGrid();
+      updateRailSelectionStatus();
+    }
 
   }} else if ( uiID === 'move' ){ if ( toggle === 'active' ){
     console.log( 'move _active' )
     objectEditMode = 'MOVE_EXISTING'
     hideRailInsertHoverPin();
     cancelRailStraightDraft();
+    syncRailCreateGuideGrid();
     if (editObject === 'RAIL') {
       showRailGeneratedStructures();
       refreshRailSelectionTargets();
@@ -29278,6 +30385,7 @@ export function UIevent (uiID, toggle){
     move_direction_y = false
 
     objectEditMode = 'Standby'
+    syncRailCreateGuideGrid();
     if (editObject === 'RAIL') {
       removeMeshes(targetObjects);
       clearRailSelectionLine();
@@ -29324,7 +30432,7 @@ export function UIevent (uiID, toggle){
     clearPointRotateState()
     rotateTargetObject = null
     rotatePanelState.idsKey = ''
-    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
+    rotatePanelState.angles = { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 }
     editObject = 'RAIL'
     objectEditMode = ROTATE_MODE
     search_object = true
@@ -29790,14 +30898,13 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'rotation' ){ if ( toggle === 'active' ){
   console.log( 'rotation _active' )
     movePointPanelActive = false
-    setRotationPanelMode('rotation');
     angleSearchModeActive = false
     pointRotateModeActive = false
     clearPointRotateState()
     rotateTargetObject = null
     rotateSelectionGroupId = ''
     rotatePanelState.idsKey = ''
-    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
+    rotatePanelState.angles = { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 }
     editObject = 'STEEL_FRAME'
     objectEditMode = ROTATE_MODE
     search_object = true
@@ -29805,6 +30912,7 @@ export function UIevent (uiID, toggle){
     targetObjects = getSteelFramePickTargets({ currentOnly: false })
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
+    setRotationPanelMode('rotation');
     updateRotateGizmo()
     setRotationPanelVisible(true);
     search_point()
@@ -29817,7 +30925,7 @@ export function UIevent (uiID, toggle){
     rotateTargetObject = null
     rotateSelectionGroupId = ''
     rotatePanelState.idsKey = ''
-    rotatePanelState.angles = { x: 0, y: 0, z: 0 }
+    rotatePanelState.angles = { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 }
     if (rotateGizmoGroup) {
       rotateGizmoGroup.visible = false;
     }
@@ -30798,6 +31906,30 @@ function isPanelValueInputActive() {
   return isPanelValueInputTarget(active);
 }
 
+function clearPanelInputInteractionLocks() {
+  Object.keys(keys || {}).forEach((keyName) => {
+    keys[keyName] = false;
+  });
+  key = '0';
+  moveVectorX = 0;
+  moveVectorZ = 0;
+  moveUp = false;
+  moveDown = false;
+  speedUp = false;
+  ctrl_id = null;
+  ctrl_num = null;
+  camera_num = 1;
+  if (typeof ctrl_ui !== 'undefined' && ctrl_ui) {
+    ctrl_ui.style.left = `${ctrlX}px`;
+    ctrl_ui.style.top = `${ctrlY}px`;
+  }
+}
+
+document.addEventListener('focusin', (event) => {
+  if (!isPanelValueInputTarget(event.target)) { return; }
+  clearPanelInputInteractionLocks();
+});
+
 // ジョイコン or 視点 判定 : 物体移動開始
 window.addEventListener('mousedown', (e) => {
   if (isPanelValueInputTarget(e.target) || isPanelValueInputActive()) { return; }
@@ -31265,6 +32397,7 @@ if (canvas) {
 }
 document.addEventListener('keydown', (e) => {
   // プレビュー時はキャンバス上にポインタがなければ無視
+  if (isPanelValueInputActive()) { return; }
   if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
   keys[e.key.toLowerCase()] = true;
 });
@@ -31296,6 +32429,7 @@ document.addEventListener('keydown', (e) => {
   setUiVisibleByHotkey(!uiHiddenByHotkey);
 });
 document.addEventListener('keyup', (e) => {
+  if (isPanelValueInputActive()) { return; }
   if (canvas && canvas.classList.contains('intro-canvas') && !canvasFocused) return;
   keys[e.key.toLowerCase()] = false;
 });
@@ -31405,6 +32539,7 @@ document.getElementById('btn-down').addEventListener('mouseup', () => moveDown =
 
 let key = '0'
 document.addEventListener('keydown', (e) => {
+  if (isPanelValueInputActive()) { return; }
   key = e.key.toLowerCase();
 });
 
@@ -31413,17 +32548,21 @@ function animate() {
   // console.log(b6dm.rotation)
 
   const moveSpeed = baseSpeed;
+  const panelInputLocked = isPanelValueInputActive();
+  if (panelInputLocked) {
+    clearPanelInputInteractionLocks();
+  }
 
   // キーボード移動処理
-  const strafe = (keys['a'] ? 1 : 0) - (keys['d'] ? 1 : 0);
-  const forward = (keys['w'] ? 1 : 0) - (keys['s'] ? 1 : 0);
+  const strafe = panelInputLocked ? 0 : ((keys['a'] ? 1 : 0) - (keys['d'] ? 1 : 0));
+  const forward = panelInputLocked ? 0 : ((keys['w'] ? 1 : 0) - (keys['s'] ? 1 : 0));
     
   // 数字キー押下で倍率設定
-  if (key >= '1' && key <= '9') {
+  if (!panelInputLocked && key >= '1' && key <= '9') {
     baseSpeed = parseInt(key, 10) * (parseInt(key, 10) *0.05);
   }
   // 0キーで倍率リセット
-  else if (key === '0') {
+  else if (!panelInputLocked && key === '0') {
     baseSpeed = moveSpeed;
   }
 
@@ -31453,20 +32592,20 @@ function animate() {
   }
 
   // 上下移動（Q/Eキー）
-  if (keys['q'] || moveUp) {
+  if (!panelInputLocked && (keys['q'] || moveUp)) {
     camera.position.y += moveSpeed*0.5;
   }
-  if (keys['e'] || moveDown) {
+  if (!panelInputLocked && (keys['e'] || moveDown)) {
     camera.position.y -= moveSpeed*0.5;
   }
   
   // 回転（左右）
-  if (keys['arrowleft'])  cameraAngleY += rotateSpeed;
-  if (keys['arrowright']) cameraAngleY -= rotateSpeed;
+  if (!panelInputLocked && keys['arrowleft'])  cameraAngleY += rotateSpeed;
+  if (!panelInputLocked && keys['arrowright']) cameraAngleY -= rotateSpeed;
 
   // 回転（上下）
-  if (keys['arrowup'])    cameraAngleX += rotateSpeed;
-  if (keys['arrowdown'])  cameraAngleX -= rotateSpeed;
+  if (!panelInputLocked && keys['arrowup'])    cameraAngleX += rotateSpeed;
+  if (!panelInputLocked && keys['arrowdown'])  cameraAngleX -= rotateSpeed;
   cameraAngleX = Math.max(-pitchLimit, Math.min(pitchLimit, cameraAngleX));
 
   // cameraAngleY += rotateSpeed

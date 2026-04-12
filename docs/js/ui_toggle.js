@@ -196,6 +196,11 @@ const UI_BUTTON_META = {
         svg: ADD_POINT_ICON_SVG,
         variant: 'icon-square',
     },
+    guide_y: {
+        label: 'ガイドY変更',
+        icon: '↕',
+        variant: 'icon-square',
+    },
     copy: {
         label: 'コピー',
         svg: COPY_ICON_SVG,
@@ -487,7 +492,8 @@ function buildUiGroup(uiTree, uiGroup){
                 btn.classList.add('ui-icon-button-square')
             }
             btn.setAttribute('aria-label', meta.label)
-            btn.title = meta.label
+            // A custom tooltip is rendered in index.html, so avoid the native browser tooltip.
+            btn.removeAttribute('title')
             btn.dataset.uiVariant = meta.variant
         } else {
             btn.textContent = key
@@ -512,7 +518,9 @@ const uiTree = {
     'see': '',
     'edit': {
         'rail': {
-            'new': '',
+            'new': {
+                'guide_y': '',
+            },
             'move': { 'x_z': '', 'y': '', 
                 // 'rotation_rail': '' 
             },

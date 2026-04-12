@@ -273,6 +273,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
   function createRectBarSegmentMesh(start, end, style = null) {
     const dir = end.clone().sub(start);
+    const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
     const len = dir.length();
     if (len < 0.001) { return null; }
 
@@ -295,10 +296,11 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
     const mid = start.clone().add(end).multiplyScalar(0.5);
     mesh.position.copy(mid);
-    mesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      dir.clone().normalize(),
-    );
+    // H/T/L beam と同じく、yaw + pitch のみで姿勢を作る。
+    const yaw = Math.atan2(planarDir.x, planarDir.z);
+    const planarLen = Math.max(1e-8, planarDir.length());
+    const pitch = Math.atan2(dir.y, planarLen);
+    mesh.rotation.set(-pitch, yaw, 0, 'YXZ');
     mesh.visible = active;
     return mesh;
   }

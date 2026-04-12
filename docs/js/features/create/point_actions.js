@@ -150,6 +150,13 @@ export function createPointActions(deps) {
       return getSteelFrameMode()?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || targets;
     }
 
+    const isCopiedStructurePoint = (pointMesh) => {
+      if (!pointMesh?.userData?.steelFramePoint) { return false; }
+      const sourceId = String(pointMesh?.userData?.structureGroupCopySourceId || '').trim();
+      const copyGroupId = String(pointMesh?.userData?.steelFrameCopyGroupId || '').trim();
+      return Boolean(pointMesh?.userData?.steelFrameCopied || sourceId || copyGroupId);
+    };
+
     const collectGroupCopiedPoints = (groupId) => {
       const gid = String(groupId || '').trim();
       if (!gid) { return []; }
@@ -162,6 +169,7 @@ export function createPointActions(deps) {
           getCopyStructurePointMeshes(mesh).forEach((pointMesh) => {
             if (!pointMesh?.userData?.steelFramePoint) { return; }
             if (!pointMesh?.parent) { return; }
+            if (!isCopiedStructurePoint(pointMesh)) { return; }
             const key = pointKey(pointMesh);
             if (seenPoints.has(key)) { return; }
             seenPoints.add(key);
@@ -174,6 +182,7 @@ export function createPointActions(deps) {
     const seenGroupIds = new Set();
 
     selectedPoints.forEach((pointMesh) => {
+      if (!isCopiedStructurePoint(pointMesh)) { return; }
       const gid = String(pointMesh?.userData?.structureGroupId || '').trim();
       if (!gid || seenGroupIds.has(gid)) { return; }
       seenGroupIds.add(gid);

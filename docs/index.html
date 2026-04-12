@@ -1749,6 +1749,24 @@
                   <div style="display:flex; align-items:center; gap:6px; margin:2px 0;"><span style="display:inline-block; width:18px; height:2px; background:#3f7fd6;"></span><span>Y2</span></div>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
+                  <label id="rotation-label-set-y" style="font-size: 11px; color: #b08a22; display: none;">Set Y (deg)
+                    <div class="panel-axis-row">
+                    <div class="panel-input-wrap">
+                      <span id="rotation-input-set-y-mask" class="panel-input-mask"></span>
+                      <span id="rotation-input-set-y-ghost" class="panel-input-ghost">0</span>
+                      <input id="rotation-input-set-y" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #b08a22; border: 1px solid #e8d499;">
+                    </div>
+                    </div>
+                  </label>
+                  <label id="rotation-label-set-x" style="font-size: 11px; color: #cf6f28; display: none;">Set X (deg)
+                    <div class="panel-axis-row">
+                    <div class="panel-input-wrap">
+                      <span id="rotation-input-set-x-mask" class="panel-input-mask"></span>
+                      <span id="rotation-input-set-x-ghost" class="panel-input-ghost">0</span>
+                      <input id="rotation-input-set-x" type="text" inputmode="decimal" placeholder="0" style="width: 100%; color: #cf6f28; border: 1px solid #ebc19d;">
+                    </div>
+                    </div>
+                  </label>
                   <label id="rotation-label-x" style="font-size: 11px; color: #b23b3b;">X (deg)
                     <div class="panel-axis-row">
                     <div class="panel-input-wrap">
@@ -1783,7 +1801,7 @@
                     <button id="move-point-axis-unlink-y" class="panel-axis-tool panel-axis-unlink" type="button" title="Y参照解除">x</button>
                     </div>
                   </label>
-                  <label id="rotation-label-z" style="font-size: 11px; color: #2f6fb8;">Y2 (deg)
+                  <label id="rotation-label-z" style="font-size: 11px; color: #2f6fb8;">Z (deg)
                     <div class="panel-axis-row">
                     <div class="panel-input-wrap">
                       <span id="rotation-input-z-mask" class="panel-input-mask"></span>
