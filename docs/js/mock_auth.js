@@ -96,6 +96,19 @@ function getDisplayName(user) {
     updateProtectedTargets();
   }
 
+  document.addEventListener("click", (event) => {
+    if (session?.user || !(event.target instanceof Element)) {
+      return;
+    }
+    const protectedTarget = event.target.closest("[data-auth-protected]");
+    if (!protectedTarget) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openAuthModal("この操作にはログインが必要です。");
+  }, true);
+
   function notifyAuthState() {
     window.dispatchEvent(new CustomEvent("mouse-demo-auth-change", {
       detail: {

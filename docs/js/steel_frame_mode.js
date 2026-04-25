@@ -77,6 +77,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamWidthHorizontal: 0.28,
         beamHeightVertical: 0.28,
         beamThickness: 0.0,
+        beamRollDeg: 0,
       };
     }
     if (p === 'corrugated_bar') {
@@ -92,6 +93,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamWidthHorizontal: 0.28,
         beamHeightVertical: 0.28,
         beamThickness: 0.07,
+        beamRollDeg: 0,
       };
     }
     if (p === 'panel_wall') {
@@ -113,6 +115,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       beamWidthHorizontal: Number(rawStyle?.beamWidthHorizontal),
       beamHeightVertical: Number(rawStyle?.beamHeightVertical),
       beamThickness: Number(rawStyle?.beamThickness),
+      beamRollDeg: Number(rawStyle?.beamRollDeg),
     };
     if (p === 'tubular' || p === 'tube') {
       const diameterRaw = Number.isFinite(merged.beamWidthHorizontal)
@@ -163,11 +166,27 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       p === 'rect_bar' ? 0 : 0.01,
       maxThickness,
     );
-    return {
+    const next = {
       beamWidthHorizontal: width,
       beamHeightVertical: height,
       beamThickness: thickness,
     };
+    if (p === 'rect_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam') {
+      next.beamRollDeg = Number.isFinite(merged.beamRollDeg)
+        ? THREE.MathUtils.clamp(merged.beamRollDeg, -180, 180)
+        : (Number.isFinite(base.beamRollDeg) ? base.beamRollDeg : 0);
+    }
+    return next;
+  }
+
+  function applyLocalZRoll(object3d, rollDeg) {
+    const deg = Number(rollDeg) || 0;
+    if (!object3d?.quaternion?.isQuaternion || Math.abs(deg) <= 1e-6) { return; }
+    const rollQuat = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1),
+      THREE.MathUtils.degToRad(deg),
+    );
+    object3d.quaternion.multiply(rollQuat).normalize();
   }
 
   function setMeshColorRecursive(obj, colorHex) {
@@ -281,6 +300,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const width = Number(dims?.beamWidthHorizontal) || 0.28;
     const height = Number(dims?.beamHeightVertical) || 0.28;
     const roundR = Number(dims?.beamThickness) || 0;
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
     const profileShape = createRoundedRectProfileShape(width, height, roundR);
     const geometry = new THREE.ExtrudeGeometry(profileShape, {
       depth: len,
@@ -296,11 +316,12 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
     const mid = start.clone().add(end).multiplyScalar(0.5);
     mesh.position.copy(mid);
-    // H/T/L beam と同じく、yaw + pitch のみで姿勢を作る。
+    // まず yaw + pitch で軸を合わせ、必要ならローカルZ軸まわりに断面を回す。
     const yaw = Math.atan2(planarDir.x, planarDir.z);
     const planarLen = Math.max(1e-8, planarDir.length());
     const pitch = Math.atan2(dir.y, planarLen);
     mesh.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(mesh, rollDeg);
     mesh.visible = active;
     return mesh;
   }
@@ -453,6 +474,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const totalHeight = dims.beamHeightVertical;
     const webThickness = dims.beamThickness;
     const flangeThickness = dims.beamThickness;
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
     const webHeight = Math.max(0.01, totalHeight - flangeThickness * 2);
     const flangeOffset = (totalHeight * 0.5) - (flangeThickness * 0.5);
 
@@ -483,11 +505,12 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
 
     const mid = start.clone().add(end).multiplyScalar(0.5);
     group.position.copy(mid);
-    // Apply yaw + pitch (no roll).
+    // まず yaw + pitch で軸を合わせ、必要ならローカルZ軸まわりに断面を回す。
     const yaw = Math.atan2(planarDir.x, planarDir.z);
     const planarLen = Math.max(1e-8, planarDir.length());
     const pitch = Math.atan2(dir.y, planarLen);
     group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
     group.visible = active;
     return group;
   }
@@ -503,6 +526,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const totalHeight = dims.beamHeightVertical;
     const webThickness = dims.beamThickness;
     const flangeThickness = dims.beamThickness;
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
     const webHeight = Math.max(0.01, totalHeight - flangeThickness);
 
     const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
@@ -532,6 +556,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const planarLen = Math.max(1e-8, planarDir.length());
     const pitch = Math.atan2(dir.y, planarLen);
     group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
     group.visible = active;
     return group;
   }
@@ -546,6 +571,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const totalWidth = dims.beamWidthHorizontal;
     const totalHeight = dims.beamHeightVertical;
     const legThickness = dims.beamThickness;
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
 
     const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
     const group = new THREE.Group();
@@ -571,6 +597,7 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     const planarLen = Math.max(1e-8, planarDir.length());
     const pitch = Math.atan2(dir.y, planarLen);
     group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
     group.visible = active;
     return group;
   }

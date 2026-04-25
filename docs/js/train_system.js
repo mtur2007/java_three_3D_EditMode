@@ -1101,6 +1101,23 @@ export class TrainSystem {
     return { curve: curve.clone(), reversed: false };
   }
 
+  alignTrackGroupsForLateralOrder(trackGroups) {
+    if (!Array.isArray(trackGroups) || trackGroups.length === 0) { return []; }
+    const validTracks = trackGroups.filter((group) =>
+      group?.curve && typeof group.curve.getLength === 'function'
+    );
+    if (validTracks.length === 0) { return []; }
+    const refDir = this.getCurveDirectionAtDistance(validTracks[0].curve, 0.5);
+    return validTracks.map((group) => {
+      const aligned = this.alignCurveDirection(group.curve, refDir);
+      return {
+        ...group,
+        curve: aligned.curve,
+        reversed: aligned.reversed,
+      };
+    });
+  }
+
   getRouteOrderRightToLeft(trackGroups) {
     if (trackGroups.length === 0) { return []; }
     const ref = trackGroups[0];
@@ -1402,7 +1419,9 @@ export class TrainSystem {
     }
 
     if (type === 'wall') {
-      const orderedTracks = this.getRouteOrderRightToLeft(trackGroups);
+      // margin の符号を安定させるため、隣接路線の進行方向を揃えてから左右順を判定する。
+      const alignedTracks = this.alignTrackGroupsForLateralOrder(trackGroups);
+      const orderedTracks = this.getRouteOrderRightToLeft(alignedTracks);
       for (let i = 0; i < orderedTracks.length - 1; i++) {
         const rightTrack = orderedTracks[i];
         const leftTrack = orderedTracks[i + 1];
@@ -1437,7 +1456,8 @@ export class TrainSystem {
     }
 
     if (type === 'rib_bridge') {
-      const orderedTracks = this.getRouteOrderRightToLeft(trackGroups);
+      const alignedTracks = this.alignTrackGroupsForLateralOrder(trackGroups);
+      const orderedTracks = this.getRouteOrderRightToLeft(alignedTracks);
       if (orderedTracks.length === 0) { return false; }
       let rightEdge = orderedTracks[0];
       let leftEdge = orderedTracks[orderedTracks.length - 1];

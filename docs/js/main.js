@@ -168,6 +168,9 @@ const IS_RUNTIME_LOCAL_VIEW = IS_PUBLIC_RUNTIME_LOCAL_VIEW || IS_EDIT_RUNTIME_LO
 const RUNTIME_MAP_DB_NAME = 'train-editmode-runtime-map';
 const RUNTIME_MAP_STORE_NAME = 'runtimeMaps';
 const RUNTIME_MAP_RECORD_KEY = 'public-selected-map';
+const EDITOR_SLOT_META_STORAGE_KEY = 'mouse_demo_editor_slots_v1';
+const EDITOR_ZIP_DB_NAME = 'mouse-demo-editor-slot-zips';
+const EDITOR_ZIP_STORE_NAME = 'slotZips';
 const RUNTIME_WORLD_BUCKET = 'world-files';
 let runtimeMapRecordMeta = {};
 const RUNTIME_STRUCTURE_FILE_NAME = 'st_world_data.zip';
@@ -186,6 +189,23 @@ function openRuntimeMapDb() {
   });
 }
 
+async function saveRuntimeMapRecord(record) {
+  const db = await openRuntimeMapDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RUNTIME_MAP_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(RUNTIME_MAP_STORE_NAME);
+    store.put(record, RUNTIME_MAP_RECORD_KEY);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error('IndexedDB write failed'));
+    };
+  });
+}
+
 async function readRuntimeMapRecord() {
   const db = await openRuntimeMapDb();
   return new Promise((resolve, reject) => {
@@ -201,6 +221,144 @@ async function readRuntimeMapRecord() {
       reject(request.error || new Error('IndexedDB read failed'));
     };
   });
+}
+
+function openEditorSlotZipDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(EDITOR_ZIP_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EDITOR_ZIP_STORE_NAME)) {
+        db.createObjectStore(EDITOR_ZIP_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+  });
+}
+
+async function readEditorSlotZipRecord(slotId) {
+  const db = await openEditorSlotZipDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(EDITOR_ZIP_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(EDITOR_ZIP_STORE_NAME);
+    const request = store.get(slotId);
+    request.onsuccess = () => {
+      db.close();
+      resolve(request.result || null);
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error || new Error('IndexedDB read failed'));
+    };
+  });
+}
+
+async function saveEditorSlotZipRecord(slotId, record) {
+  const db = await openEditorSlotZipDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(EDITOR_ZIP_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(EDITOR_ZIP_STORE_NAME);
+    store.put(record, slotId);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error('IndexedDB write failed'));
+    };
+  });
+}
+
+function updateEditorSlotMetaSavedAt(slotId, savedAt, files = {}) {
+  try {
+    const raw = window.localStorage.getItem(EDITOR_SLOT_META_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return;
+    }
+    const updated = parsed.map((slot) => {
+      if (String(slot?.slotId || '').trim() !== slotId) {
+        return slot;
+      }
+      return {
+        ...slot,
+        savedAt,
+        cityFileName: typeof files?.ct?.name === 'string' ? files.ct.name : (typeof slot?.cityFileName === 'string' ? slot.cityFileName : ''),
+        trainFileCount: Array.isArray(files?.tr) ? files.tr.length : (Number(slot?.trainFileCount) || 0),
+      };
+    });
+    window.localStorage.setItem(EDITOR_SLOT_META_STORAGE_KEY, JSON.stringify(updated));
+  } catch (_error) {
+    // Ignore local metadata sync errors; the downloaded file is the source of truth.
+  }
+}
+
+function triggerBlobDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function saveWorldZipToLocalSlotForEditRuntime(zipBlob) {
+  const slotId = String(runtimeMapRecordMeta?.slotId || '').trim();
+  const runtimeRecord = await readRuntimeMapRecord().catch(() => null);
+  const runtimeFiles = runtimeRecord?.files && typeof runtimeRecord.files === 'object'
+    ? runtimeRecord.files
+    : {};
+  const currentSlotRecord = slotId
+    ? await readEditorSlotZipRecord(slotId).catch(() => null)
+    : null;
+  const currentSlotFiles = currentSlotRecord?.files && typeof currentSlotRecord.files === 'object'
+    ? currentSlotRecord.files
+    : {};
+  const buffer = await zipBlob.arrayBuffer();
+  const savedAtIso = new Date().toISOString();
+  const stRecord = {
+    name: RUNTIME_STRUCTURE_FILE_NAME,
+    type: 'application/zip',
+    size: buffer.byteLength,
+    lastModified: Date.now(),
+    savedAt: Date.now(),
+    buffer,
+  };
+  const nextFiles = {
+    st: stRecord,
+    ct: currentSlotFiles.ct || runtimeFiles.ct || null,
+    tr: Array.isArray(currentSlotFiles.tr)
+      ? currentSlotFiles.tr.filter(Boolean)
+      : Array.isArray(runtimeFiles.tr)
+        ? runtimeFiles.tr.filter(Boolean)
+        : [],
+  };
+
+  await saveRuntimeMapRecord({
+    version: 2,
+    savedAt: Date.now(),
+    files: nextFiles,
+    meta: { ...runtimeMapRecordMeta },
+  });
+
+  if (!slotId) {
+    return;
+  }
+
+  await saveEditorSlotZipRecord(slotId, {
+    version: 2,
+    savedAt: savedAtIso,
+    files: nextFiles,
+    meta: { ...runtimeMapRecordMeta },
+  });
+  updateEditorSlotMetaSavedAt(slotId, savedAtIso, nextFiles);
 }
 
 async function deleteRuntimeMapRecord() {
@@ -255,6 +413,7 @@ const renderer = new THREE.WebGLRenderer({
   preserveDrawingBuffer: THUMBNAIL_CAPTURE_MODE,
 });
 const PERFORMANCE_SETTINGS_STORAGE_KEY = 'train_editmode_performance_v1';
+const SCENE_VISIBILITY_SETTINGS_STORAGE_KEY = 'train_editmode_scene_visibility_v1';
 const PERFORMANCE_QUALITY_OPTIONS = {
   low: { label: '低', pixelRatioScale: 0.5 },
   medium: { label: '標準', pixelRatioScale: 1.0 },
@@ -283,6 +442,23 @@ function loadPerformanceSettings() {
   }
 }
 const performanceSettings = loadPerformanceSettings();
+function loadSceneVisibilitySettings() {
+  const fallback = { showTrains: true, showCityModel: true, showDifferenceLineOverlapPreview: true };
+  try {
+    const raw = window.localStorage.getItem(SCENE_VISIBILITY_SETTINGS_STORAGE_KEY);
+    if (!raw) { return fallback; }
+    const parsed = JSON.parse(raw);
+    return {
+      showTrains: parsed?.showTrains !== false,
+      showCityModel: parsed?.showCityModel !== false,
+      showDifferenceLineOverlapPreview: parsed?.showDifferenceLineOverlapPreview !== false,
+    };
+  } catch (err) {
+    console.warn('failed to load scene visibility settings', err);
+    return fallback;
+  }
+}
+const sceneVisibilitySettings = loadSceneVisibilitySettings();
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
 const loadingBarFill = document.getElementById('loading-bar-fill');
@@ -606,6 +782,9 @@ const threeUi = document.getElementById('three-ui');
   const differenceLineHeightInput = document.getElementById('difference-line-height');
   const differenceLineHeightApplyButton = document.getElementById('difference-line-height-apply');
   const differenceBodySelectButton = document.getElementById('difference-body-select');
+  const differenceMoveXZButton = document.getElementById('difference-move-xz');
+  const differenceMoveYButton = document.getElementById('difference-move-y');
+  const differenceAutoMergeToggleButton = document.getElementById('difference-auto-merge-toggle');
   const differenceUnifyButton = document.getElementById('difference-unify-button');
   let differenceViewToggleButton = document.getElementById('difference-view-toggle-button');
   const differenceStatus = document.getElementById('difference-status');
@@ -1059,7 +1238,7 @@ const threeUi = document.getElementById('three-ui');
     }
 
     const targets = Array.from(document.querySelectorAll(
-      '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller, #log, #toggle-daynight, #difference-body-select, #performance-toggle-btn, #performance-panel, #UiGroup > button:not([data-ui-root-level=\"1\"]), #frontViewButtons > button, #save-buttons > button, #show-instructions-btn'
+      '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller, #log, #create-guide-y-button, #toggle-daynight, #difference-body-select, #difference-move-xz, #difference-move-y, #difference-auto-merge-toggle, #scene-toggle-btn, #scene-panel, #performance-toggle-btn, #performance-panel, #UiGroup > button:not([data-ui-root-level=\"1\"]), #frontViewButtons > button, #save-buttons > button, #show-instructions-btn'
     ));
     targets.forEach((el) => {
       if (!el) { return; }
@@ -4349,6 +4528,38 @@ let differenceSpaceTransformMode = 'none';
         }
         return false;
       }
+      if (kind === 'tunnel_circle') {
+        const tunnelSpace = addDifferenceTunnelTubeSpaceFromTrackCurves(selectedTrackCurves, {
+          innerRadius: 1.6,
+          yOffset: -1.0,
+          sideClearance: 1.2,
+          sampleStepMeters: 1.2,
+          radialSegments: 14,
+        });
+        if (!tunnelSpace?.mesh) {
+          if (railConstructionStatus) {
+            railConstructionStatus.textContent = 'tunnel_circle: Difference空間の生成に失敗しました。';
+          }
+          return false;
+        }
+        lastRailConstructionCreatedObjects = [];
+        recordStructureGenerationRun({
+          category: kind,
+          pins,
+          runtimeId,
+          params: {
+            output: 'difference_space_tube',
+            trackNames: tunnelSpace.trackNames,
+            radius: tunnelSpace.radius,
+          },
+        });
+        const trackLabel = tunnelSpace.trackNames.length > 0 ? tunnelSpace.trackNames.join(', ') : 'n/a';
+        if (railConstructionStatus) {
+          railConstructionStatus.textContent = `生成完了: tunnel_circle / Difference空間へ追加 / tracks=${trackLabel} / radius=${tunnelSpace.radius.toFixed(2)}`;
+        }
+        updateDifferenceStatus(`tunnel_circle を Difference空間へ追加: ${trackLabel}`);
+        return true;
+      }
       const built = TSys.buildStructureFromPins(kind, pins, railTrackCurveMap, {
         innerWidth: 1.4,
         innerHeight: 1.4,
@@ -4575,6 +4786,32 @@ let differenceSpaceTransformMode = 'none';
       UIevent('body_select', nextActive ? 'active' : 'inactive');
     });
   }
+  if (differenceMoveXZButton) {
+    updateDifferenceMoveAxisButtons();
+    differenceMoveXZButton.addEventListener('click', () => {
+      const nextActive = !isDifferenceMoveAxisButtonActive(false);
+      if (isDifferenceMoveAxisButtonActive(true)) {
+        UIevent('y_sf', 'inactive');
+      }
+      UIevent('x_z_sf', nextActive ? 'active' : 'inactive');
+    });
+  }
+  if (differenceMoveYButton) {
+    updateDifferenceMoveAxisButtons();
+    differenceMoveYButton.addEventListener('click', () => {
+      const nextActive = !isDifferenceMoveAxisButtonActive(true);
+      if (isDifferenceMoveAxisButtonActive(false)) {
+        UIevent('x_z_sf', 'inactive');
+      }
+      UIevent('y_sf', nextActive ? 'active' : 'inactive');
+    });
+  }
+  if (differenceAutoMergeToggleButton) {
+    updateDifferenceAutoMergeToggleButton();
+    differenceAutoMergeToggleButton.addEventListener('click', () => {
+      setDifferenceAutoMergeEnabled(!differenceAutoMergeEnabled);
+    });
+  }
 
   if (showInstructionsBtn) {
     showInstructionsBtn.addEventListener('click', () => {
@@ -4649,6 +4886,8 @@ let differenceSpaceTransformMode = 'none';
 
   function updateMovePointAxisReferenceButtons() {
     const isMovePointMode = movePointPanelActive && !scalePointPanelActive;
+    const differenceMoveContext = isDifferenceMovePointPanelContext();
+    const allowAxisButtons = isMovePointMode && !differenceMoveContext;
     const targets = isMovePointMode ? getMovePointPanelTargets() : [];
     const pickByAxis = {
       x: movePointAxisRefBtnX,
@@ -4673,18 +4912,18 @@ let differenceSpaceTransformMode = 'none';
       const hasLink = Boolean(summary);
 
       if (pickBtn) {
-        pickBtn.style.display = isMovePointMode ? 'inline-flex' : 'none';
-        pickBtn.classList.toggle('is-picking', isMovePointMode && movePointAxisReferencePickAxis === axis);
-        pickBtn.classList.toggle('is-linked', isMovePointMode && hasLink);
+        pickBtn.style.display = allowAxisButtons ? 'inline-flex' : 'none';
+        pickBtn.classList.toggle('is-picking', allowAxisButtons && movePointAxisReferencePickAxis === axis);
+        pickBtn.classList.toggle('is-linked', allowAxisButtons && hasLink);
       }
       if (unlinkBtn) {
-        unlinkBtn.style.display = isMovePointMode && hasLink ? 'inline-flex' : 'none';
+        unlinkBtn.style.display = allowAxisButtons && hasLink ? 'inline-flex' : 'none';
       }
       const lockBtn = lockByAxis[axis];
       if (lockBtn) {
         const locked = Boolean(movePointAxisLocks[axis]);
-        lockBtn.style.display = isMovePointMode ? 'inline-flex' : 'none';
-        lockBtn.classList.toggle('is-locked', isMovePointMode && locked);
+        lockBtn.style.display = allowAxisButtons ? 'inline-flex' : 'none';
+        lockBtn.classList.toggle('is-locked', allowAxisButtons && locked);
         lockBtn.textContent = locked ? '🔒' : '🔓';
       }
     });
@@ -4915,14 +5154,13 @@ let differenceSpaceTransformMode = 'none';
       && !isMovePointRotation
       && !isDecorationRotation
       && !isCopyMode
-      && !isStyleMode
       && !isDeleteMode;
     if (rotationLabelSetY) {
       rotationLabelSetY.style.display = showSetY ? '' : 'none';
-      rotationLabelSetY.childNodes[0].nodeValue = `Set Y${axisSuffix}`;
+      rotationLabelSetY.childNodes[0].nodeValue = isStyleMode ? 'Roll (deg)' : `Set Y${axisSuffix}`;
     }
     if (rotationLabelSetX) {
-      rotationLabelSetX.style.display = showSetY ? '' : 'none';
+      rotationLabelSetX.style.display = (showSetY && !isStyleMode) ? '' : 'none';
       rotationLabelSetX.childNodes[0].nodeValue = `Set X${axisSuffix}`;
     }
     if (rotationLabelX) {
@@ -6051,6 +6289,18 @@ let differenceSpaceTransformMode = 'none';
     const first = selected[0] || null;
     const style = steelFrameMode?.getSegmentStyle?.(first) || null;
     const firstProfile = String(first?.userData?.steelFrameSegmentProfile || '').toLowerCase();
+    const rollCapableProfiles = new Set(['rect_bar', 'h_beam', 't_beam', 'l_beam']);
+    const isRollCapable = rollCapableProfiles.has(firstProfile);
+    if (rotationInputSetY) {
+      if (clearInputs) { rotationInputSetY.value = ''; }
+      rotationInputSetY.placeholder = isRollCapable && style
+        ? String(Number(style.beamRollDeg || 0).toFixed(1))
+        : '0.0';
+    }
+    if (rotationInputSetX) {
+      if (clearInputs) { rotationInputSetX.value = ''; }
+      rotationInputSetX.placeholder = '0';
+    }
     if (rotationInputX) {
       if (clearInputs) { rotationInputX.value = ''; }
       rotationInputX.placeholder = style
@@ -6073,6 +6323,7 @@ let differenceSpaceTransformMode = 'none';
       rotationSelectionInfo.textContent = [
         `選択構造物: ${selected.length}`,
         '対象: Round/Rect/Corrugated/H/T/L beam, Light tube',
+        'Roll: Rect/H/T/L beam の長手軸まわり角度°',
         'X: 幅（Round / Light tube は直径）',
         'Y: 高さ（Corrugated は角度°）',
         'Z: 厚み（Rect は角丸R / Corrugated は波密度 / Light tube は直径代替）',
@@ -6098,22 +6349,31 @@ let differenceSpaceTransformMode = 'none';
       if (!Number.isFinite(n) || n <= 0) { return null; }
       return n;
     };
+    const parseAngleOrUndefined = (raw) => {
+      const text = normalizeNumericInputText(raw).trim();
+      if (!text) { return undefined; }
+      const n = Number(text);
+      if (!Number.isFinite(n)) { return null; }
+      return THREE.MathUtils.clamp(n, -180, 180);
+    };
+    const roll = parseAngleOrUndefined(rotationInputSetY?.value);
     const x = parseOrUndefined(rotationInputX?.value);
     const y = parseOrUndefined(rotationInputY?.value);
     const z = parseOrUndefined(rotationInputZ?.value);
-    if (x === null || y === null || z === null) {
+    if (roll === null || x === null || y === null || z === null) {
       if (rotationSelectionInfo) {
-        rotationSelectionInfo.textContent = '入力は正の数値のみ有効です。';
+        rotationSelectionInfo.textContent = 'Roll は -180〜180、X/Y/Z は正の数値のみ有効です。';
       }
       return;
     }
-    if (x === undefined && y === undefined && z === undefined) {
+    if (roll === undefined && x === undefined && y === undefined && z === undefined) {
       if (rotationSelectionInfo) {
         rotationSelectionInfo.textContent = '入力が空です。変更値を入力してください。';
       }
       return;
     }
     const stylePatch = {};
+    if (roll !== undefined) { stylePatch.beamRollDeg = roll; }
     if (x !== undefined) { stylePatch.beamWidthHorizontal = x; }
     if (y !== undefined) { stylePatch.beamHeightVertical = y; }
     if (z !== undefined) { stylePatch.beamThickness = z; }
@@ -8150,6 +8410,37 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     if (!differenceBodySelectButton) { return; }
     differenceBodySelectButton.style.background = active ? '#2b4f8a' : '';
     differenceBodySelectButton.style.color = active ? '#ffffff' : '';
+    updateDifferenceMoveAxisButtons();
+  }
+
+  function isDifferenceMoveAxisButtonActive(axisY = false) {
+    return editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move'
+      && movePointPanelActive
+      && Boolean(move_direction_y) === Boolean(axisY);
+  }
+
+  function setDifferenceMoveAxisButtonState(button, active) {
+    if (!button) { return; }
+    button.style.background = active ? '#2b4f8a' : '';
+    button.style.color = active ? '#ffffff' : '';
+  }
+
+  function updateDifferenceMoveAxisButtons() {
+    const visible = (
+      editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move'
+    );
+    if (differenceMoveXZButton) {
+      differenceMoveXZButton.style.display = visible ? 'block' : 'none';
+      setDifferenceMoveAxisButtonState(differenceMoveXZButton, visible && isDifferenceMoveAxisButtonActive(false));
+    }
+    if (differenceMoveYButton) {
+      differenceMoveYButton.style.display = visible ? 'block' : 'none';
+      setDifferenceMoveAxisButtonState(differenceMoveYButton, visible && isDifferenceMoveAxisButtonActive(true));
+    }
   }
 
   const pointActions = createPointActions({
@@ -8210,10 +8501,29 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
   function getAxisDisplayForTargets(targets, axis) {
     if (!Array.isArray(targets) || targets.length === 0) { return '-'; }
     if (targets.length === 1) {
-      const pos = getMovePointAxisPosition(targets[0], movePointCoordinateMode);
+      const pos = getPointEditAxisPosition(targets[0], movePointCoordinateMode);
       return Number(pos[axis]).toFixed(3);
     }
     return 'each';
+  }
+
+  function isDifferenceMovePointPanelContext() {
+    return movePointPanelActive
+      && editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move';
+  }
+
+  function getPointEditAxisPosition(mesh, mode = 'world') {
+    const worldPos = getScaleTargetWorldPosition(mesh);
+    if (mode !== 'grid') {
+      return worldPos;
+    }
+    const frame = getMovePointGridFrameForMesh(mesh);
+    if (!frame) {
+      return worldPos;
+    }
+    return worldToGridPosition(worldPos, frame);
   }
 
   function updateMovePointPanelUI({ clearInputs = false } = {}) {
@@ -8222,7 +8532,9 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     setRotationPanelVisible(true);
     updateGroupPointEditModePanel();
     const targets = getMovePointPanelTargets();
-    ensureMovePointAxisLockValues(targets);
+    if (!isDifferenceMovePointPanelContext()) {
+      ensureMovePointAxisLockValues(targets);
+    }
 
     const xDisplay = getAxisDisplayForTargets(targets, 'x');
     const yDisplay = getAxisDisplayForTargets(targets, 'y');
@@ -8247,7 +8559,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       if (targets.length === 0) {
         rotationSelectionInfo.textContent = '選択点: なし\n点をクリックで選択してください。';
       } else if (targets.length === 1) {
-        const p = getMovePointAxisPosition(targets[0], movePointCoordinateMode);
+        const p = getPointEditAxisPosition(targets[0], movePointCoordinateMode);
         const coordModeLabel = movePointCoordinateMode === 'grid' ? 'Grid' : 'World';
         rotationSelectionInfo.textContent = [
           '選択点: 1',
@@ -8294,7 +8606,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     if (!Array.isArray(targets) || targets.length < 1) { return null; }
     const center = new THREE.Vector3();
     targets.forEach((mesh) => {
-      center.add(getMovePointAxisPosition(mesh, movePointCoordinateMode));
+      center.add(getPointEditAxisPosition(mesh, movePointCoordinateMode));
     });
     center.multiplyScalar(1 / targets.length);
     return center;
@@ -8485,14 +8797,27 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       return;
     }
 
-    const beforeItems = targets.map((mesh) => ({ mesh, before: mesh.position.clone(), after: null }));
-    ensureMovePointAxisLockValues(targets);
+    const differenceContext = (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'move');
+    const beforeItems = targets.map((mesh) => ({
+      mesh,
+      before: differenceContext ? getScaleTargetWorldPosition(mesh) : mesh.position.clone(),
+      after: null,
+    }));
+    if (!differenceContext) {
+      ensureMovePointAxisLockValues(targets);
+    } else {
+      beginDifferenceHistorySession();
+      rebuildDifferenceEdgeOverlapConstraints();
+    }
+    const dirtyMeshes = new Set();
+    const movedPoints = [];
     targets.forEach((mesh) => {
       const frame = getMovePointGridFrameForMesh(mesh);
-      const useGridFrame = movePointCoordinateMode === 'grid' && Boolean(frame);
+      const useGridFrame = !differenceContext && movePointCoordinateMode === 'grid' && Boolean(frame);
+      const currentWorldPos = differenceContext ? getScaleTargetWorldPosition(mesh) : mesh.position.clone();
       const workPos = useGridFrame
-        ? worldToGridPosition(mesh.position, frame)
-        : mesh.position.clone();
+        ? worldToGridPosition(currentWorldPos, frame)
+        : currentWorldPos.clone();
       ['x', 'y', 'z'].forEach((axis) => {
         const parsed = inputs[axis];
         if (!parsed) { return; }
@@ -8502,25 +8827,59 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
           workPos[axis] = parsed.value;
         }
       });
-      const nextWorldPos = useGridFrame
+      let nextWorldPos = useGridFrame
         ? gridToWorldPosition(workPos, frame)
         : workPos;
-      mesh.position.copy(applyMovePointAxisLocksToNextWorldPosition(mesh, nextWorldPos));
-      syncGuideCurveFromPointMesh(mesh);
+      if (!differenceContext) {
+        nextWorldPos = applyMovePointAxisLocksToNextWorldPosition(mesh, nextWorldPos);
+        mesh.position.copy(nextWorldPos);
+        syncGuideCurveFromPointMesh(mesh);
+      } else {
+        setScaleTargetWorldPosition(mesh, nextWorldPos);
+        const parentMesh = mesh.userData?.parentDifferenceSpacePlane || mesh.parent;
+        if (parentMesh?.userData?.differenceSpacePlane) {
+          dirtyMeshes.add(parentMesh);
+          movedPoints.push(mesh);
+        }
+      }
     });
 
     const movedItems = beforeItems
-      .map((item) => ({ ...item, after: item.mesh.position.clone() }))
+      .map((item) => ({
+        ...item,
+        after: differenceContext ? getScaleTargetWorldPosition(item.mesh) : item.mesh.position.clone(),
+      }))
       .filter((item) => vecMoved(item.before, item.after));
     if (movedItems.length > 0) {
-      pushCreateHistory({
-        type: 'move_meshes',
-        items: movedItems,
-        includesGridHandle: movedItems.some((item) => item.mesh === addPointGridHandle),
-      });
+      if (differenceContext) {
+        if (movedPoints.length > 0) {
+          propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+        }
+        for (let i = 0; i < 3; i += 1) {
+          const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+          if (moved < 1) { break; }
+        }
+        dirtyMeshes.forEach((mesh) => {
+          syncDifferenceGeometryFromControlPoints(mesh);
+          updateDifferenceControlPointMarkerTransform(mesh);
+        });
+        autoMergeNearbyDifferencePoints(movedPoints);
+        mergeOverlappedBoundaryControlPoints();
+        refreshDifferencePreview();
+        refreshDifferenceSelectedEdgeHighlights();
+        commitDifferenceHistoryIfNeeded();
+      } else {
+        pushCreateHistory({
+          type: 'move_meshes',
+          items: movedItems,
+          includesGridHandle: movedItems.some((item) => item.mesh === addPointGridHandle),
+        });
+      }
     }
 
-    drawingObject(targets);
+    if (!differenceContext) {
+      drawingObject(targets);
+    }
     refreshPointEditPanelUI({ clearInputs: true });
   }
 
@@ -8546,9 +8905,14 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       return;
     }
     if (movePointPanelActive
-      && editObject === 'STEEL_FRAME'
-      && objectEditMode === 'MOVE_EXISTING'
-      && !pointRotateModeActive
+      && (
+        (editObject === 'STEEL_FRAME'
+          && objectEditMode === 'MOVE_EXISTING'
+          && !pointRotateModeActive)
+        || (editObject === 'DIFFERENCE_SPACE'
+          && objectEditMode === 'CONSTRUCT'
+          && differenceSpaceTransformMode === 'move')
+      )
       && movePlaneMode !== 'change_angle') {
       applyMovePointFromPanel();
       return;
@@ -8948,6 +9312,9 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
   let guidePlacementTemplate = null;
   let guidePlacementActive = false;
   let guideRailHover = null;
+  let decorationGuideHoverHit = null;
+  let decorationGuideHoverLogKey = '';
+  let createAddPointGuideHoverLogKey = '';
   let guideHoverPin = null;
   const GUIDE_TUBE_RADIUS = 0.225;
 
@@ -9097,6 +9464,251 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       }
     }
     return nearest;
+  }
+
+  function isDecorationGuidePlacementTemplate(template = guidePlacementTemplate) {
+    return template === 'led_board' || template === 'rect_spot_light';
+  }
+
+  function getDecorationCreatePointerPoint() {
+    if (decorationGuideHoverHit?.point?.isVector3) {
+      return decorationGuideHoverHit.point.clone();
+    }
+    const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+    return point?.isVector3 ? point.clone() : null;
+  }
+
+  function syncDecorationCreateGuideGrid() {
+    const active = guidePlacementActive
+      && isDecorationGuidePlacementTemplate()
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'CREATE_NEW'
+      && addPointGridActive
+      && !guideAddModeActive
+      && !move_direction_y
+      && !viewModeActive;
+    if (!active) {
+      setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
+      if (!(editObject === 'STEEL_FRAME' && addPointGridActive)) {
+        setAddPointGuideGridVisibleFromUI(false);
+      }
+      return null;
+    }
+
+    if (decorationGuideHoverHit?.point?.isVector3) {
+      setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+      setAddPointGuideGridVisibleFromUI(false);
+      return decorationGuideHoverHit.point.clone();
+    }
+
+    const point = getDecorationCreatePointerPoint() || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
+    const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
+    if (snappedPoint?.isVector3) {
+      AddPointGuideGrid.position.copy(snappedPoint);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(snappedPoint);
+      addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+      addPointGridHandle.updateMatrixWorld(true);
+      addPointGridY = point.y;
+      addPointGridInitialized = true;
+    }
+    setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+    setAddPointGuideGridVisibleFromUI(true);
+    return snappedPoint?.clone?.() || null;
+  }
+
+  function syncCreateAddPointBaseGuideGrid() {
+    const active = addPointGridActive
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'CREATE_NEW'
+      && !guidePlacementActive
+      && !move_direction_y
+      && !viewModeActive;
+    if (!active) {
+      setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
+      return null;
+    }
+    const point = coord_DisplayTo3D({ y: addPointGridY || 0 }) || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
+    const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
+    if (snappedPoint?.isVector3) {
+      AddPointGuideGrid.position.copy(snappedPoint);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(snappedPoint);
+      addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+      addPointGridHandle.updateMatrixWorld(true);
+      addPointGridY = point.y;
+      addPointGridInitialized = true;
+    }
+    setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+    setAddPointGuideGridVisibleFromUI(true);
+    return snappedPoint?.clone?.() || null;
+  }
+
+  function updateCreateAddPointBaseGuideFromPointer() {
+    const active = addPointGridActive
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'CREATE_NEW'
+      && !guidePlacementActive
+      && !move_direction_y
+      && !viewModeActive;
+    if (!active || pointerBlockedByUI || guideRailHover?.point) { return null; }
+    const basePoint = syncCreateAddPointBaseGuideGrid();
+    updateCreateAddPointGuideHoverStartLog({
+      key: 'base',
+      payload: {
+        source: 'base',
+        point: basePoint
+          ? {
+            x: basePoint.x,
+            y: basePoint.y,
+            z: basePoint.z,
+          }
+          : null,
+        guidePlacementActive,
+        guidePlacementTemplate,
+      },
+    });
+    return basePoint;
+  }
+
+  function updateDecorationGuideHoverStartLog(info = null) {
+    const nextKey = String(info?.key || '');
+    if (!nextKey) {
+      decorationGuideHoverLogKey = '';
+      return;
+    }
+    const shouldLog = nextKey === 'base' && decorationGuideHoverLogKey !== 'base';
+    decorationGuideHoverLogKey = nextKey;
+    if (!shouldLog) { return; }
+    console.log('[decoration][add_point][hover][start]', info?.payload || {});
+  }
+
+  function updateCreateAddPointGuideHoverStartLog(info = null) {
+    const nextKey = String(info?.key || '');
+    if (!nextKey) {
+      createAddPointGuideHoverLogKey = '';
+      return;
+    }
+    const shouldLog = nextKey === 'base' && createAddPointGuideHoverLogKey !== 'base';
+    createAddPointGuideHoverLogKey = nextKey;
+    if (!shouldLog) { return; }
+    console.log('[create][add_point][hover][start]', info?.payload || {});
+  }
+
+  function resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide = false } = {}) {
+    updateDecorationGuideHoverStartLog(null);
+    decorationGuideHoverHit = null;
+    guideRailHover = null;
+    setGuideHoverPin(null);
+    guideAddGrids.forEach((grid) => {
+      const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
+      setGuideAddGridColor(grid, color);
+    });
+    GuideGrid.visible = false;
+    GuideGrid.quaternion.identity();
+    setGuideGridColor(GUIDE_ADD_GRID_COLOR);
+    setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
+    if (!keepBaseGuide) {
+      setAddPointGuideGridVisibleFromUI(false);
+    }
+  }
+
+  function updateDecorationGuidePlacementHoverFromPointer() {
+    const active = guidePlacementActive
+      && isDecorationGuidePlacementTemplate()
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'CREATE_NEW'
+      && addPointGridActive
+      && !guideAddModeActive
+      && !move_direction_y
+      && !viewModeActive;
+    if (!active) {
+      resetDecorationGuidePlacementHoverVisuals({
+        keepBaseGuide: addPointGridActive && editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW',
+      });
+      return null;
+    }
+    if (pointerBlockedByUI) {
+      updateDecorationGuideHoverStartLog(null);
+      return null;
+    }
+
+    guideAddGrids.forEach((grid) => {
+      const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
+      setGuideAddGridColor(grid, color);
+    });
+
+    const intersects = getIntersectObjects();
+    const guideHit = intersects.find((hit) => hit?.object?.userData?.isGuideRail);
+    if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
+      const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
+      if (nearest) {
+        decorationGuideHoverHit = {
+          kind: 'guide_helper',
+          source: 'rail',
+          curve: guideHit.object.userData.guideCurve,
+          point: nearest.clone(),
+        };
+        updateDecorationGuideHoverStartLog(null);
+        guideRailHover = { curve: guideHit.object.userData.guideCurve, point: nearest };
+        GuideGrid.visible = true;
+        GuideGrid.position.copy(nearest);
+        GuideGrid.quaternion.identity();
+        setGuideGridColor(GUIDE_ADD_GRID_COLOR);
+        setGuideHoverPin(nearest);
+        syncDecorationCreateGuideGrid();
+        return decorationGuideHoverHit;
+      }
+    }
+
+    decorationGuideHoverHit = null;
+    updateDecorationGuideHoverStartLog(null);
+    guideRailHover = null;
+    const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
+    if (hit?.point && hitGrid) {
+      decorationGuideHoverHit = {
+        kind: 'guide_helper',
+        source: 'grid',
+        grid: hitGrid,
+        point: hit.point.clone(),
+      };
+      updateDecorationGuideHoverStartLog(null);
+      setGuideAddGridColor(hitGrid, GUIDE_ADD_GRID_SELECTED_COLOR);
+      GuideGrid.visible = true;
+      GuideGrid.position.copy(hit.point);
+      if (hitGrid.quaternion?.isQuaternion) {
+        GuideGrid.quaternion.copy(hitGrid.quaternion);
+      } else {
+        GuideGrid.quaternion.identity();
+      }
+      setGuideGridColor(GUIDE_ADD_GRID_COLOR);
+      setGuideHoverPin(hit.point);
+      syncDecorationCreateGuideGrid();
+      return decorationGuideHoverHit;
+    }
+
+    decorationGuideHoverHit = null;
+    setGuideHoverPin(null);
+    GuideGrid.visible = false;
+    GuideGrid.quaternion.identity();
+    const basePoint = syncDecorationCreateGuideGrid();
+    updateDecorationGuideHoverStartLog({
+      key: 'base',
+      payload: {
+        template: guidePlacementTemplate,
+        source: 'base',
+        point: basePoint
+          ? {
+            x: basePoint.x,
+            y: basePoint.y,
+            z: basePoint.z,
+          }
+          : null,
+      },
+    });
+    return { kind: 'base', point: basePoint };
   }
 
   function renderLedBoardTexture(board) {
@@ -9281,7 +9893,18 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     move_direction_y = false;
     search_object = false;
     steelFrameMode.setAllowPointAppend(true);
+    addPointGridActive = true;
+    syncBaseGuideGridHandleFromCurrentGrid();
+    targetObjects = getSteelFrameAddPointTargets();
+    setMeshListOpacity(targetObjects, 1);
+    guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
     setGuideGridVisibleFromUI(true);
+    setAddPointGuideGridVisibleFromUI(true);
+    if (isDecorationGuidePlacementTemplate(template)) {
+      updateDecorationGuideHoverStartLog(null);
+      updateCreateAddPointGuideHoverStartLog(null);
+      updateDecorationGuidePlacementHoverFromPointer();
+    }
   }
 
   const guideButtons = document.querySelectorAll('[data-guide-template]');
@@ -9853,6 +10476,39 @@ const performanceQualitySelect = document.getElementById('performance-quality-se
 const performanceDistanceRange = document.getElementById('performance-distance-range');
 const performanceDistanceValue = document.getElementById('performance-distance-value');
 const performancePanelClose = document.getElementById('performance-panel-close');
+const sceneToggleButton = document.getElementById('scene-toggle-btn');
+const scenePanel = document.getElementById('scene-panel');
+const scenePanelClose = document.getElementById('scene-panel-close');
+const sceneToggleTrainsButton = document.getElementById('scene-toggle-trains-btn');
+const sceneToggleCityButton = document.getElementById('scene-toggle-city-btn');
+const sceneToggleLineOverlapPreviewButton = document.getElementById('scene-toggle-line-overlap-preview-btn');
+
+function saveSceneVisibilitySettings() {
+  try {
+    window.localStorage.setItem(SCENE_VISIBILITY_SETTINGS_STORAGE_KEY, JSON.stringify(sceneVisibilitySettings));
+  } catch (err) {
+    console.warn('failed to save scene visibility settings', err);
+  }
+}
+
+function updateScenePanelToggleButton(button, active) {
+  if (!button) { return; }
+  button.textContent = active ? 'ON' : 'OFF';
+  button.setAttribute('aria-pressed', String(active));
+  button.style.border = active
+    ? '1px solid rgba(74, 222, 128, 0.55)'
+    : '1px solid rgba(255,255,255,0.16)';
+  button.style.background = active
+    ? 'rgba(74, 222, 128, 0.18)'
+    : 'rgba(255,255,255,0.06)';
+  button.style.color = active ? '#ecfff2' : '#f5f7fb';
+}
+
+function updateScenePanelUi() {
+  updateScenePanelToggleButton(sceneToggleTrainsButton, sceneVisibilitySettings.showTrains !== false);
+  updateScenePanelToggleButton(sceneToggleCityButton, sceneVisibilitySettings.showCityModel !== false);
+  updateScenePanelToggleButton(sceneToggleLineOverlapPreviewButton, sceneVisibilitySettings.showDifferenceLineOverlapPreview !== false);
+}
 
 function updatePerformancePanelUi() {
   if (performanceQualitySelect) {
@@ -9870,8 +10526,37 @@ function updatePerformancePanelUi() {
 }
 
 function setPerformancePanelVisible(visible) {
+  if (visible && scenePanel) {
+    scenePanel.style.display = 'none';
+    if (sceneToggleButton) {
+      sceneToggleButton.setAttribute('aria-expanded', 'false');
+    }
+  }
   if (!performancePanel) { return; }
   performancePanel.style.display = visible ? 'block' : 'none';
+  if (performanceToggleButton) {
+    performanceToggleButton.setAttribute('aria-expanded', String(visible));
+  }
+  if (sceneToggleButton && !visible) {
+    sceneToggleButton.setAttribute('aria-expanded', String(scenePanel?.style.display !== 'none'));
+  }
+}
+
+function setScenePanelVisible(visible) {
+  if (visible && performancePanel) {
+    performancePanel.style.display = 'none';
+    if (performanceToggleButton) {
+      performanceToggleButton.setAttribute('aria-expanded', 'false');
+    }
+  }
+  if (!scenePanel) { return; }
+  scenePanel.style.display = visible ? 'block' : 'none';
+  if (sceneToggleButton) {
+    sceneToggleButton.setAttribute('aria-expanded', String(visible));
+  }
+  if (performanceToggleButton && !visible) {
+    performanceToggleButton.setAttribute('aria-expanded', String(performancePanel?.style.display !== 'none'));
+  }
 }
 
 function applyPerformanceSettings({ save = true, resize = true } = {}) {
@@ -9887,6 +10572,27 @@ function applyPerformanceSettings({ save = true, resize = true } = {}) {
   }
 }
 
+sceneToggleButton?.addEventListener('click', () => {
+  setScenePanelVisible(scenePanel?.style.display === 'none');
+});
+scenePanelClose?.addEventListener('click', () => {
+  setScenePanelVisible(false);
+});
+sceneToggleTrainsButton?.addEventListener('click', () => {
+  sceneVisibilitySettings.showTrains = !sceneVisibilitySettings.showTrains;
+  applySceneVisibilitySettings({ save: true });
+  setMapLoadStatusText(`電車表示: ${sceneVisibilitySettings.showTrains ? 'ON' : 'OFF'}`);
+});
+sceneToggleCityButton?.addEventListener('click', () => {
+  sceneVisibilitySettings.showCityModel = !sceneVisibilitySettings.showCityModel;
+  applySceneVisibilitySettings({ save: true });
+  setMapLoadStatusText(`都市モデル表示: ${sceneVisibilitySettings.showCityModel ? 'ON' : 'OFF'}`);
+});
+sceneToggleLineOverlapPreviewButton?.addEventListener('click', () => {
+  sceneVisibilitySettings.showDifferenceLineOverlapPreview = !sceneVisibilitySettings.showDifferenceLineOverlapPreview;
+  applySceneVisibilitySettings({ save: true });
+  setMapLoadStatusText(`line重なりプレビュー: ${sceneVisibilitySettings.showDifferenceLineOverlapPreview ? 'ON' : 'OFF'}`);
+});
 performanceToggleButton?.addEventListener('click', () => {
   setPerformancePanelVisible(performancePanel?.style.display === 'none');
 });
@@ -9911,6 +10617,7 @@ performanceDistanceRange?.addEventListener('change', () => {
   performanceSettings.drawDistance = Math.min(PERFORMANCE_DRAW_DISTANCE_MAX, Math.max(PERFORMANCE_DRAW_DISTANCE_MIN, nextDistance));
   applyPerformanceSettings({ save: true, resize: false });
 });
+updateScenePanelUi();
 updatePerformancePanelUi();
 
 // 使用している canvas は既に DOM にあるため、appendChild は行わない。
@@ -10674,7 +11381,7 @@ function TrainSettings(
   }
 
   trainGroup.userData.cars = trainCars; // 必要ならアクセスしやすく保存
-  trainGroup.visible = false;   // 再表示する
+  trainGroup.visible = false;
   
   scene.add(trainGroup); // シーンに一括追加
   Trains.push(trainGroup)
@@ -10779,7 +11486,7 @@ function Sin_TrainSettings(
   }
 
   trainGroup.userData.cars = trainCars; // 必要ならアクセスしやすく保存
-  trainGroup.visible = false;   // 再表示する
+  trainGroup.visible = false;
   
   scene.add(trainGroup); // シーンに一括追加
 
@@ -10893,7 +11600,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
   let train_stoped = rapid
   if (quattro > 0){train_stoped = true}
 
-  trainCars.visible = false;   // 再表示する
+  trainCars.visible = false;
  
   let offsetT = NaN;
   let safeIndex = NaN
@@ -10913,7 +11620,7 @@ async function runTrain(trainCars, root, track_doors, door_interval, max_speed=0
     run_num -= 1;
     return;
   }
-  trainCars.visible = true;   // 再表示する
+  trainCars.visible = shouldSceneTrainsBeVisible();
 
   async function runCar() {
     if (suspendRunTrainAnimations) {
@@ -11096,6 +11803,7 @@ const railInsertHoverColor = 0x3bc9ff;
 let selectedRailPoint = null;
 let railInsertHoverPin = null;
 let railInsertHoverHit = null;
+let railInsertHoverLogKey = '';
 let railStraightDraftStart = null;
 let railStraightPreviewLine = null;
 let railCreateGuideYModeActive = false;
@@ -11127,6 +11835,293 @@ let railRotateDragState = null;
 let lastPointerScreen = null;
 let structurePointerBlockedByUI = false;
 let pointerBlockedByUI = false;
+let createAddGuideYModeActive = false;
+let differenceAddGuideYModeActive = false;
+let createGuideYButton = null;
+
+function canUseRailGuideYMode() {
+  return railModeActive
+    && editObject === 'RAIL'
+    && objectEditMode === 'CREATE_NEW'
+    && !viewModeActive;
+}
+
+function canUseCreateAddGuideYMode() {
+  return addPointGridActive
+    && editObject === 'STEEL_FRAME'
+    && objectEditMode === 'CREATE_NEW'
+    && !guideAddModeActive
+    && !viewModeActive;
+}
+
+function canUseDifferenceAddGuideYMode() {
+  return differenceSpaceModeActive
+    && differenceSpaceTransformMode === 'add'
+    && editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CREATE_NEW'
+    && !viewModeActive;
+}
+
+function ensureCreateGuideYButton() {
+  if (typeof document === 'undefined') { return createGuideYButton; }
+  if (createGuideYButton?.isConnected) { return createGuideYButton; }
+  let btn = document.getElementById('create-guide-y-button');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'create-guide-y-button';
+    btn.type = 'button';
+    btn.textContent = 'y';
+    btn.setAttribute('aria-label', 'ガイドY変更');
+    btn.className = 'control-button';
+    btn.style.position = 'fixed';
+    btn.style.left = '124px';
+    btn.style.top = '84px';
+    btn.style.width = '42px';
+    btn.style.height = '42px';
+    btn.style.borderRadius = '4px';
+    btn.style.fontSize = '19px';
+    btn.style.lineHeight = '1';
+    btn.style.zIndex = '140';
+    btn.style.display = 'none';
+    document.body.appendChild(btn);
+  }
+  if (btn.dataset.boundCreateGuideYButton !== '1') {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (canUseRailGuideYMode()) {
+        setRailGuideYModeActive(!railCreateGuideYModeActive);
+        return;
+      }
+      if (canUseDifferenceAddGuideYMode()) {
+        setDifferenceAddGuideYModeActive(!differenceAddGuideYModeActive);
+        return;
+      }
+      setCreateAddGuideYModeActive(!createAddGuideYModeActive);
+    });
+    window.addEventListener('resize', () => updateCreateGuideYButtonState());
+    window.addEventListener('scroll', () => updateCreateGuideYButtonState(), { passive: true });
+    btn.dataset.boundCreateGuideYButton = '1';
+  }
+  createGuideYButton = btn;
+  return createGuideYButton;
+}
+
+function positionCreateGuideYButton() {
+  const btn = ensureCreateGuideYButton();
+  if (!btn) { return; }
+  const anchorIds = canUseRailGuideYMode()
+    ? ['new', 'rail', 'edit', 'UiGroup']
+    : canUseDifferenceAddGuideYMode()
+      ? ['add/2', 'add_space', 'space', 'Difference', 'creat', 'edit', 'UiGroup']
+    : ['move_point', 'add_point', 'template', 'creat', 'edit', 'UiGroup'];
+  let rect = null;
+  for (const id of anchorIds) {
+    const el = document.getElementById(id);
+    const nextRect = el?.getBoundingClientRect?.();
+    if (nextRect && nextRect.width > 0 && nextRect.height > 0) {
+      rect = nextRect;
+      break;
+    }
+  }
+  const left = rect && rect.width > 0 ? rect.right + 12 : 124;
+  const top = rect && rect.height > 0 ? rect.top : 84;
+  btn.style.left = `${Math.round(left)}px`;
+  btn.style.top = `${Math.round(top)}px`;
+}
+
+function restoreCreateAddPointSearchState() {
+  const shouldSearch = addPointGridActive
+    && editObject === 'STEEL_FRAME'
+    && objectEditMode === 'CREATE_NEW'
+    && !guidePlacementActive
+    && !guideAddModeActive
+    && !createAddGuideYModeActive;
+  const wasSearching = search_object;
+  search_object = shouldSearch;
+  if (shouldSearch && !wasSearching) {
+    search_point();
+  }
+}
+
+function refreshCreateAddPointHoverAfterGuideYChange() {
+  if (!canUseCreateAddGuideYMode()) { return; }
+  if (guidePlacementActive && isDecorationGuidePlacementTemplate()) {
+    updateDecorationGuidePlacementHoverFromPointer();
+    return;
+  }
+  updateCreateAddPointBaseGuideFromPointer();
+}
+
+function refreshDifferenceAddHoverAfterGuideYChange() {
+  if (!canUseDifferenceAddGuideYMode()) { return; }
+  updateDifferenceFaceHoverFromPointer();
+  syncDifferenceAddCenterGuideFromPointer();
+}
+
+function syncDifferenceAddGuideYGridFromPointer() {
+  const active = differenceSpaceModeActive
+    && differenceSpaceTransformMode === 'add'
+    && editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CREATE_NEW'
+    && !viewModeActive;
+  if (!active) {
+    setDifferenceAddCenterGuideVisible(false);
+    return null;
+  }
+  if (!differenceAddGuideYModeActive) {
+    setAddPointGuideGridVisibleFromUI(false);
+    return null;
+  }
+  if (differenceAddGuideYModeActive && dragging === true && choice_object === addPointGridHandle) {
+    setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+    setAddPointGuideGridVisibleFromUI(true);
+    setDifferenceAddCenterGuideVisible(false);
+    return AddPointGuideGrid?.position?.clone?.() || null;
+  }
+  const facePoint = differenceHoveredFaceHit?.point?.clone?.() || null;
+  const point = getDifferenceAddPointerPoint() || AddPointGuideGrid?.position?.clone?.() || null;
+  if (!point?.isVector3) {
+    setDifferenceAddCenterGuideVisible(false);
+    return null;
+  }
+  const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
+  if (!facePoint) {
+    differenceAddGuideBaseY = point.y;
+  }
+  addPointGridY = point.y;
+  AddPointGuideGrid.position.copy(snappedPoint);
+  AddPointGuideGrid.quaternion.identity();
+  AddPointGuideGrid.updateMatrixWorld(true);
+  addPointGridHandle.position.copy(snappedPoint);
+  addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+  addPointGridHandle.updateMatrixWorld(true);
+  setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+  const usingGuideHover = Boolean(differenceGuideHoverHit?.point);
+  setAddPointGuideGridVisibleFromUI(!facePoint && !usingGuideHover);
+  if (facePoint && !usingGuideHover) {
+    DifferenceAddGuideCenter_x.position.copy(snappedPoint);
+    DifferenceAddGuideCenter_x.quaternion.identity();
+    DifferenceAddGuideCenter_z.position.copy(snappedPoint);
+    DifferenceAddGuideCenter_z.quaternion.identity();
+    setDifferenceAddCenterGuideVisible(true);
+  } else {
+    setDifferenceAddCenterGuideVisible(false);
+  }
+  return snappedPoint.clone();
+}
+
+function setRailGuideYModeActive(active) {
+  const next = Boolean(active) && canUseRailGuideYMode();
+  if (railCreateGuideYModeActive === next) {
+    updateCreateGuideYButtonState();
+    return;
+  }
+  railCreateGuideYModeActive = next;
+  search_object = false;
+  targetObjects = [];
+  if (next) {
+    editObject = 'RAIL';
+    objectEditMode = 'CREATE_NEW';
+    move_direction_y = false;
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
+    updateCreateGuideYButtonState();
+    return;
+  }
+  move_direction_y = false;
+  if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW') {
+    updateRailInsertHoverFromPointer();
+    syncRailCreateGuideGrid();
+    updateRailSelectionStatus();
+  }
+  updateCreateGuideYButtonState();
+}
+
+function setCreateAddGuideYModeActive(active) {
+  const next = Boolean(active) && canUseCreateAddGuideYMode();
+  if (createAddGuideYModeActive === next) {
+    updateCreateGuideYButtonState();
+    return;
+  }
+  createAddGuideYModeActive = next;
+  clearSteelFrameAddPending();
+  if (!next) {
+    move_direction_y = false;
+    GuideLine.visible = false;
+    if (!dragging) {
+      refreshCreateAddPointHoverAfterGuideYChange();
+    }
+  }
+  restoreCreateAddPointSearchState();
+  updateCreateGuideYButtonState();
+}
+
+function setDifferenceAddGuideYModeActive(active) {
+  const next = Boolean(active) && canUseDifferenceAddGuideYMode();
+  if (differenceAddGuideYModeActive === next) {
+    updateCreateGuideYButtonState();
+    return;
+  }
+  differenceAddGuideYModeActive = next;
+  clearDifferenceAddPending();
+  if (!next) {
+    move_direction_y = false;
+    GuideLine.visible = false;
+    setAddPointGuideGridVisibleFromUI(false);
+    if (!dragging) {
+      refreshDifferenceAddHoverAfterGuideYChange();
+    }
+    updateCreateGuideYButtonState();
+    return;
+  }
+  differenceAddGuideBaseY = Number(AddPointGuideGrid?.position?.y) || Number(addPointGridY) || 0;
+  syncDifferenceAddGuideYGridFromPointer();
+  updateCreateGuideYButtonState();
+}
+
+function updateCreateGuideYButtonState() {
+  const btn = ensureCreateGuideYButton();
+  if (!btn) { return; }
+  if (!canUseCreateAddGuideYMode() && createAddGuideYModeActive) {
+    createAddGuideYModeActive = false;
+    if (!dragging) {
+      move_direction_y = false;
+      GuideLine.visible = false;
+    }
+  }
+  if (!canUseRailGuideYMode() && railCreateGuideYModeActive) {
+    railCreateGuideYModeActive = false;
+  }
+  if (!canUseDifferenceAddGuideYMode() && differenceAddGuideYModeActive) {
+    differenceAddGuideYModeActive = false;
+    if (!dragging) {
+      move_direction_y = false;
+      GuideLine.visible = false;
+    }
+  }
+  const show = canUseCreateAddGuideYMode()
+    || canUseRailGuideYMode()
+    || canUseDifferenceAddGuideYMode();
+  btn.style.display = show ? 'inline-flex' : 'none';
+  btn.hidden = !show;
+  btn.style.visibility = show ? 'visible' : 'hidden';
+  btn.style.opacity = show ? '1' : '0';
+  if (!show) { return; }
+  positionCreateGuideYButton();
+  const active = createAddGuideYModeActive
+    || railCreateGuideYModeActive
+    || differenceAddGuideYModeActive;
+  btn.style.background = active
+    ? 'linear-gradient(180deg, rgba(63, 124, 255, 0.98), rgba(43, 79, 138, 0.98))'
+    : 'linear-gradient(180deg, rgba(58, 58, 58, 0.98), rgba(44, 44, 44, 0.98))';
+  btn.style.borderColor = active
+    ? 'rgba(143, 240, 194, 0.7)'
+    : 'rgba(118, 118, 118, 0.48)';
+  btn.style.color = active ? '#ffffff' : '#f3f3f3';
+}
+
+ensureCreateGuideYButton();
 
 function buildSquareTubeMesh(curves, {
   size = 0.35,
@@ -11316,7 +12311,10 @@ function refreshDifferenceLineOnlyPreview(force = false) {
     selectedTracks: Array.isArray(operation?.trackNames) ? operation.trackNames.slice() : [],
   });
   clearDifferencePreviewTube();
-  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks(operation) : null;
+  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks({
+    ...operation,
+    detailMode: 'preview',
+  }) : null;
   if (!cutter) {
     console.warn('[Difference][line] refresh preview failed: cutter is null');
     updateDifferenceStatus('line: カッター形状の作成に失敗しました。');
@@ -11428,6 +12426,18 @@ function ensureRailInsertHoverPin() {
   railInsertHoverPin.userData = { ...(railInsertHoverPin.userData || {}), railInsertHoverPin: true };
 }
 
+function updateRailInsertHoverStartLog(info = null) {
+  const nextKey = String(info?.key || '');
+  if (!nextKey) {
+    railInsertHoverLogKey = '';
+    return;
+  }
+  const shouldLog = nextKey === 'base' && railInsertHoverLogKey !== 'base';
+  railInsertHoverLogKey = nextKey;
+  if (!shouldLog) { return; }
+  console.log('[rail][add_point][hover][start]', info?.payload || {});
+}
+
 function hideRailInsertHoverPin() {
   railInsertHoverHit = null;
   if (railInsertHoverPin) {
@@ -11460,6 +12470,34 @@ function getRailCreatePointerPoint() {
 
 const RAIL_CREATE_GRID_COLOR = 0x3bc9ff;
 let railCreateGuideBaseY = 0;
+let differenceAddGuideBaseY = 0;
+
+function getDifferenceAddPointerPoint() {
+  if (differenceGuideHoverHit?.point?.isVector3) {
+    return differenceGuideHoverHit.point.clone();
+  }
+  if (differenceHoveredFaceHit?.point) {
+    return differenceHoveredFaceHit.point.clone();
+  }
+  const baseY = Number.isFinite(Number(differenceAddGuideBaseY))
+    ? Number(differenceAddGuideBaseY)
+    : (Number(addPointGridY) || 0);
+  const planeRef = AddPointGuideGrid || null;
+  const normal = new THREE.Vector3(0, 1, 0);
+  if (planeRef?.quaternion?.isQuaternion) {
+    normal.applyQuaternion(planeRef.quaternion).normalize();
+  }
+  const anchor = planeRef?.position?.clone?.() || new THREE.Vector3(0, baseY, 0);
+  raycaster.setFromCamera(mouse, camera);
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
+  const hit = new THREE.Vector3();
+  const ok = raycaster.ray.intersectPlane(plane, hit);
+  if (ok) {
+    return hit;
+  }
+  const point = coord_DisplayTo3D({ y: baseY });
+  return point?.isVector3 ? point.clone() : null;
+}
 
 function snapRailCreateGuideGridPosition(point) {
   if (!point?.isVector3) { return null; }
@@ -11581,9 +12619,12 @@ function updateRailInsertHoverFromPointer() {
     && editObject === 'RAIL'
     && objectEditMode === 'CREATE_NEW';
   if (railCreateGuideYModeActive && dragging === true && choice_object === addPointGridHandle) {
+    updateRailInsertHoverStartLog(null);
+    hideRailInsertHoverPin();
     return;
   }
   if (!canShow || !railTubeMesh?.parent) {
+    updateRailInsertHoverStartLog(null);
     hideRailInsertHoverPin();
     addPointGridY = railCreateGuideBaseY;
     syncRailCreateGuideGrid();
@@ -11596,6 +12637,19 @@ function updateRailInsertHoverFromPointer() {
     hideRailInsertHoverPin();
     addPointGridY = railCreateGuideBaseY;
     syncRailCreateGuideGrid();
+    updateRailInsertHoverStartLog({
+      key: 'base',
+      payload: {
+        source: 'base',
+        point: AddPointGuideGrid?.position
+          ? {
+            x: AddPointGuideGrid.position.x,
+            y: AddPointGuideGrid.position.y,
+            z: AddPointGuideGrid.position.z,
+          }
+          : null,
+      },
+    });
     updateRailSelectionStatus();
     return;
   }
@@ -11607,10 +12661,24 @@ function updateRailInsertHoverFromPointer() {
     hideRailInsertHoverPin();
     addPointGridY = railCreateGuideBaseY;
     syncRailCreateGuideGrid();
+    updateRailInsertHoverStartLog({
+      key: 'base',
+      payload: {
+        source: 'base',
+        point: AddPointGuideGrid?.position
+          ? {
+            x: AddPointGuideGrid.position.x,
+            y: AddPointGuideGrid.position.y,
+            z: AddPointGuideGrid.position.z,
+          }
+          : null,
+      },
+    });
     updateRailSelectionStatus();
     return;
   }
   railInsertHoverHit = nearestTrackHit;
+  updateRailInsertHoverStartLog(null);
   ensureRailInsertHoverPin();
   railInsertHoverPin.position.copy(nearestTrackHit.point);
   railInsertHoverPin.visible = true;
@@ -11911,6 +12979,94 @@ function showRailGeneratedStructures() {
       mesh.material.transparent = false;
     }
   });
+}
+
+function applyStructurePreviewLikeVisibility() {
+  showRailGeneratedStructures();
+  steelFrameMode.setActive(true);
+  const pointMeshes = (steelFrameMode?.getAllPointMeshes?.() || [])
+    .filter((mesh) => mesh?.userData?.steelFramePoint && mesh?.parent);
+  setMeshListOpacity(pointMeshes, 0);
+}
+
+function shouldShowDifferenceReadonlyTunnelSpaces() {
+  try {
+    return Boolean(
+      railModeActive
+      || differenceSpaceModeActive
+      || editObject === 'RAIL'
+      || editObject === 'DIFFERENCE_SPACE'
+    );
+  } catch (_err) {
+    return false;
+  }
+}
+
+function isDifferenceReadonlyTunnelMesh(mesh) {
+  return Boolean(
+    mesh?.userData?.differenceReadonlyDisplay
+    && String(mesh.userData?.differenceGeneratedBy || '') === 'rail_tunnel_circle'
+  );
+}
+
+function isDifferenceRailDerivedMesh(mesh) {
+  return Boolean(
+    mesh?.userData?.differenceRailDisplay
+    || (
+      Array.isArray(mesh?.userData?.differenceRailTrackNames)
+      && mesh.userData.differenceRailTrackNames.length > 0
+    )
+  );
+}
+
+function isDifferenceLineOverlapPreviewMesh(mesh) {
+  return isDifferenceRailDerivedMesh(mesh) || isDifferenceReadonlyTunnelMesh(mesh);
+}
+
+function shouldDifferenceMeshParticipateInSharedPointMerge(mesh) {
+  return !isDifferenceLineOverlapPreviewMesh(mesh);
+}
+
+function canDifferenceMeshesSharePoints(meshA, meshB) {
+  if (!meshA?.userData?.differenceSpacePlane || !meshB?.userData?.differenceSpacePlane) { return false; }
+  if (meshA === meshB) { return true; }
+  return shouldDifferenceMeshParticipateInSharedPointMerge(meshA)
+    && shouldDifferenceMeshParticipateInSharedPointMerge(meshB);
+}
+
+function getDifferenceReadonlyTunnelPreviewGroup(mesh) {
+  const group = mesh?.userData?.differenceReadonlyTunnelPreviewGroup;
+  return group?.isObject3D ? group : null;
+}
+
+function getDifferenceReadonlyTunnelPreviewChunkMeshes(mesh) {
+  const group = getDifferenceReadonlyTunnelPreviewGroup(mesh);
+  if (!group?.children) { return []; }
+  return group.children.filter((child) => child?.isMesh && child.userData?.differenceReadonlyTunnelPreviewChunk);
+}
+
+function clearDifferenceReadonlyTunnelPreviewChunks(mesh) {
+  const group = getDifferenceReadonlyTunnelPreviewGroup(mesh);
+  if (!group) { return; }
+  if (group.parent) {
+    group.parent.remove(group);
+  }
+  group.traverse?.((node) => {
+    node.geometry?.dispose?.();
+    if (Array.isArray(node.material)) {
+      node.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      node.material?.dispose?.();
+    }
+  });
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    differenceReadonlyTunnelPreviewGroup: null,
+  };
+}
+
+function syncDifferenceReadonlyTunnelSpaceVisibility() {
+  refreshDifferenceReadonlyTunnelPreviewChunkVisibility();
 }
 
 function collectRailStructureGroups() {
@@ -12282,7 +13438,7 @@ function placeStructurePinnedPinAt(position, trackName = null) {
     linkedStructureObjectIds: Array.from(new Set(linkedIds)),
     structureLinkedRestored: false,
   };
-  pin.visible = structureViewActive || structureModeActive || structurePinMoveModeActive || constructionModeActive;
+  pin.visible = shouldShowStructurePinnedPins();
   structurePinnedPins.push(pin);
   return pin;
 }
@@ -12312,8 +13468,15 @@ function setStructurePinnedVisibility(visible) {
   });
 }
 
+function shouldShowStructurePinnedPins() {
+  return structureViewActive
+    || structureModeActive
+    || structurePinMoveModeActive
+    || constructionModeActive;
+}
+
 function updateStructurePinnedVisibility() {
-  setStructurePinnedVisibility(structureViewActive || structureModeActive || structurePinMoveModeActive || constructionModeActive);
+  setStructurePinnedVisibility(shouldShowStructurePinnedPins());
   refreshStructurePinnedPinColors();
 }
 
@@ -13097,7 +14260,25 @@ if (saveButtonsContainer) {
   saveButtonsContainer.addEventListener('pointerdown', stopPointerPropagation);
 }
 
-function serializeDifferenceSpaceMesh(mesh) {
+function extractDifferenceSerializedRuntimeState(mesh) {
+  if (!mesh?.userData) { return null; }
+  if (isDifferenceReadonlyTunnelMesh(mesh)) {
+    return {
+      differenceGeneratedBy: 'rail_tunnel_circle',
+      differenceTunnelTrackNames: Array.isArray(mesh.userData?.differenceTunnelTrackNames)
+        ? mesh.userData.differenceTunnelTrackNames.slice()
+        : [],
+      differenceTunnelRadius: Number(mesh.userData?.differenceTunnelRadius) || 0,
+      differenceTunnelYOffset: Number(mesh.userData?.differenceTunnelYOffset) || 0,
+      differenceTunnelSideClearance: Number(mesh.userData?.differenceTunnelSideClearance) || 0,
+      differenceTunnelPreviewEdgePolylines: cloneDifferencePreviewPolylines(mesh.userData?.differenceTunnelPreviewEdgePolylines),
+      differenceTunnelPreviewChunkSpecs: cloneDifferenceTunnelPreviewChunkSpecs(mesh.userData?.differenceTunnelPreviewChunkSpecs),
+    };
+  }
+  return null;
+}
+
+function serializeDifferenceSpaceMesh(mesh, { includeRuntimeState = false } = {}) {
   const railTrackNames = Array.isArray(mesh?.userData?.differenceRailTrackNames)
     ? mesh.userData.differenceRailTrackNames
       .map((name) => String(name || '').trim())
@@ -13117,7 +14298,7 @@ function serializeDifferenceSpaceMesh(mesh) {
   if (!mesh?.geometry?.attributes?.position) { return null; }
   const positionAttr = mesh.geometry.attributes.position;
   const indexAttr = mesh.geometry.getIndex();
-  return {
+  const serialized = {
     position: [mesh.position.x, mesh.position.y, mesh.position.z],
     quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
     scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
@@ -13126,6 +14307,13 @@ function serializeDifferenceSpaceMesh(mesh) {
       index: indexAttr ? Array.from(indexAttr.array) : null,
     },
   };
+  if (includeRuntimeState) {
+    const runtimeState = extractDifferenceSerializedRuntimeState(mesh);
+    if (runtimeState) {
+      serialized.runtimeDifferenceState = runtimeState;
+    }
+  }
+  return serialized;
 }
 
 function normalizeDifferenceRailOperation(rawOperation) {
@@ -13247,11 +14435,13 @@ function normalizeSerializedSegmentStyle(profile, rawStyle) {
     beamWidthHorizontal: Number(rawStyle.beamWidthHorizontal),
     beamHeightVertical: Number(rawStyle.beamHeightVertical),
     beamThickness: Number(rawStyle.beamThickness),
+    beamRollDeg: Number(rawStyle.beamRollDeg),
   };
   const out = {};
   if (Number.isFinite(style.beamWidthHorizontal)) { out.beamWidthHorizontal = style.beamWidthHorizontal; }
   if (Number.isFinite(style.beamHeightVertical)) { out.beamHeightVertical = style.beamHeightVertical; }
   if (Number.isFinite(style.beamThickness)) { out.beamThickness = style.beamThickness; }
+  if (Number.isFinite(style.beamRollDeg)) { out.beamRollDeg = THREE.MathUtils.clamp(style.beamRollDeg, -180, 180); }
 
   if (profile === 'corrugated_bar') {
     // 旧データ互換:
@@ -13263,6 +14453,9 @@ function normalizeSerializedSegmentStyle(profile, rawStyle) {
     if (Number.isFinite(out.beamThickness) && out.beamThickness < 0.3) {
       out.beamThickness = 5.0;
     }
+    delete out.beamRollDeg;
+  } else if (profile !== 'rect_bar' && profile !== 'h_beam' && profile !== 't_beam' && profile !== 'l_beam') {
+    delete out.beamRollDeg;
   }
   return out;
 }
@@ -13708,23 +14901,29 @@ function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
   });
 }
 
-function buildDifferenceSpacesPayload() {
+function buildDifferenceSpacesPayload(options = {}) {
+  const includeRuntimeState = options?.includeRuntimeState === true;
+  const includeMeta = options?.includeMeta !== false;
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
     .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
-    .map((mesh) => serializeDifferenceSpaceMesh(mesh))
+    .filter((mesh) => !isDifferenceReadonlyTunnelMesh(mesh))
+    .map((mesh) => serializeDifferenceSpaceMesh(mesh, { includeRuntimeState }))
     .filter(Boolean);
   const railOperations = serializeDifferenceRailOperations();
-  return {
-    meta: {
+  const payload = {
+    differenceSpaces: spaces,
+    differenceRailOperations: railOperations,
+  };
+  if (includeMeta) {
+    payload.meta = {
       version: 2,
       type: 'difference_space',
       app: 'Train_EditMode_demo',
       savedAt: new Date().toISOString(),
-    },
-    differenceSpaces: spaces,
-    differenceRailOperations: railOperations,
-  };
+    };
+  }
+  return payload;
 }
 
 function buildCreateModePayload(options = {}) {
@@ -13746,6 +14945,7 @@ function buildCreateModePayload(options = {}) {
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
     .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
+    .filter((mesh) => !isDifferenceReadonlyTunnelMesh(mesh))
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
   const railOperations = serializeDifferenceRailOperations();
@@ -14213,17 +15413,9 @@ async function downloadWorldData() {
   });
 
   if (IS_EDIT_RUNTIME_LOCAL_VIEW) {
-    await saveWorldZipToSupabaseForEditRuntime(zipBlob);
-  } else {
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = RUNTIME_STRUCTURE_FILE_NAME;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    await saveWorldZipToLocalSlotForEditRuntime(zipBlob);
   }
+  triggerBlobDownload(zipBlob, RUNTIME_STRUCTURE_FILE_NAME);
 
   console.log(`[world_save] ${RUNTIME_STRUCTURE_FILE_NAME} saved:`, {
     entries: [
@@ -14246,7 +15438,7 @@ async function downloadWorldData() {
     guide_grid_total_live: liveGuideGridCount,
     guide_grid_total_saved: savedGuideGridCount,
   });
-  alert(IS_EDIT_RUNTIME_LOCAL_VIEW ? `${RUNTIME_STRUCTURE_FILE_NAME} を Supabase に保存しました。` : `${RUNTIME_STRUCTURE_FILE_NAME} を保存しました。`);
+  alert(`${RUNTIME_STRUCTURE_FILE_NAME} をPCへ保存しました。`);
 }
 
 const saveWorldButton = document.getElementById('save-world-data');
@@ -14308,8 +15500,13 @@ function clearDifferenceSpacesForImport() {
   clearDifferenceFaceSelection();
   clearDifferenceEdgeSelection();
   clearDifferenceControlPointSelection();
+  clearDifferenceSelectedEdgeHighlights();
+  clearDifferenceIntersectionVisuals();
+  clearDifferencePreviewWireframeLines();
+  clearDifferenceClassifiedSegments();
   differenceSpacePlanes.forEach((mesh) => {
     if (!mesh) { return; }
+    clearDifferenceReadonlyTunnelPreviewChunks(mesh);
     mesh.children.forEach((child) => {
       if (child?.userData?.differenceControlPoint) {
         child.geometry?.dispose?.();
@@ -14332,7 +15529,501 @@ function clearDifferenceSpacesForImport() {
 }
 
 function clearDifferenceRailOperations() {
+  differenceRailDisplayMeshesVisible = false;
+  clearDifferenceRailDisplayMeshes();
   differenceRailOperations.length = 0;
+}
+
+function clearDifferenceRailDisplayMeshes() {
+  differenceRailDisplayMeshes.forEach((mesh) => {
+    if (!mesh) { return; }
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    mesh.traverse?.((node) => {
+      node.geometry?.dispose?.();
+      if (Array.isArray(node.material)) {
+        node.material.forEach((mat) => mat?.dispose?.());
+      } else {
+        node.material?.dispose?.();
+      }
+    });
+  });
+  differenceRailDisplayMeshes.length = 0;
+}
+
+function buildDifferenceRailDisplayMeshKey(rawOperation) {
+  const operation = normalizeDifferenceRailOperation(rawOperation);
+  if (!operation) { return ''; }
+  return JSON.stringify(operation);
+}
+
+function setDifferenceRailDisplayMeshesVisible(visible = false) {
+  differenceRailDisplayMeshesVisible = visible === true;
+  differenceRailDisplayMeshes.forEach((mesh) => {
+    if (!mesh) { return; }
+    mesh.visible = differenceRailDisplayMeshesVisible;
+    if (mesh.isMesh) {
+      applyDifferenceSpaceMeshStyle(mesh, { visible: differenceRailDisplayMeshesVisible });
+      setDifferenceReadonlyControlPointsVisible(mesh, false);
+    }
+  });
+  refreshDifferenceRailDisplayChunkVisibility();
+}
+
+function setDifferenceReadonlyControlPointsVisible(mesh, visible = false) {
+  if (!mesh?.userData?.differenceReadonlyDisplay) { return; }
+  mesh.children.forEach((child) => {
+    if (!child?.userData?.differenceControlPoint) { return; }
+    child.visible = visible;
+    child.raycast = () => {};
+    applyDifferenceControlPointMeshStyle(child, { visible });
+  });
+}
+
+function buildDifferenceMeshWorldBox(mesh) {
+  const geometry = mesh?.geometry;
+  if (!geometry) { return null; }
+  geometry.computeBoundingBox?.();
+  const bbox = geometry.boundingBox?.clone?.() || null;
+  if (!bbox) { return null; }
+  mesh.updateMatrixWorld?.(true);
+  bbox.applyMatrix4(mesh.matrixWorld);
+  return bbox;
+}
+
+function buildDifferenceReadonlyTrianglesWorld(mesh) {
+  const geom = mesh?.geometry;
+  const pos = geom?.attributes?.position;
+  if (!pos) { return []; }
+  const out = [];
+  const toWorld = mesh.matrixWorld;
+  const readWorld = (i) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(toWorld);
+  if (geom.index) {
+    const arr = geom.index.array;
+    for (let i = 0; i + 2 < arr.length; i += 3) {
+      out.push([
+        readWorld(Number(arr[i])),
+        readWorld(Number(arr[i + 1])),
+        readWorld(Number(arr[i + 2])),
+      ]);
+    }
+  } else {
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      out.push([readWorld(i), readWorld(i + 1), readWorld(i + 2)]);
+    }
+  }
+  return out;
+}
+
+function buildDifferenceReadonlyEdgeWorldData(mesh, edges = null) {
+  const sourceEdges = Array.isArray(edges) ? edges : getDifferenceMeshControlPointEdges(mesh);
+  return sourceEdges.map((edge) => {
+    const p0 = edge.pointA.getWorldPosition(new THREE.Vector3());
+    const p1 = edge.pointB.getWorldPosition(new THREE.Vector3());
+    return {
+      p0,
+      p1,
+      key: getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01),
+    };
+  });
+}
+
+function buildDifferenceReadonlyEdgeWorldDataFromPolylines(polylines) {
+  if (!Array.isArray(polylines) || polylines.length < 1) { return []; }
+  const edges = [];
+  const seen = new Set();
+  const toWorldPoint = (entry) => {
+    if (entry?.isVector3) { return entry.clone(); }
+    if (!Array.isArray(entry) || entry.length < 3) { return null; }
+    return new THREE.Vector3(
+      Number(entry[0]) || 0,
+      Number(entry[1]) || 0,
+      Number(entry[2]) || 0,
+    );
+  };
+  const pushEdge = (fromEntry, toEntry) => {
+    const p0 = toWorldPoint(fromEntry);
+    const p1 = toWorldPoint(toEntry);
+    if (!p0 || !p1) { return; }
+    if (p0.distanceToSquared(p1) <= 1e-8) { return; }
+    const key = getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
+    if (seen.has(key)) { return; }
+    seen.add(key);
+    edges.push({ p0, p1, key });
+  };
+
+  polylines.forEach((polyline) => {
+    if (!Array.isArray(polyline) || polyline.length < 2) { return; }
+    for (let i = 0; i < polyline.length - 1; i += 1) {
+      pushEdge(polyline[i], polyline[i + 1]);
+    }
+  });
+
+  if (polylines.length >= 3) {
+    const startRing = polylines
+      .map((polyline) => Array.isArray(polyline) && polyline.length > 0 ? polyline[0] : null)
+      .filter(Boolean);
+    const endRing = polylines
+      .map((polyline) => Array.isArray(polyline) && polyline.length > 0 ? polyline[polyline.length - 1] : null)
+      .filter(Boolean);
+    const addRing = (ring) => {
+      if (!Array.isArray(ring) || ring.length < 3) { return; }
+      for (let i = 0; i < ring.length; i += 1) {
+        pushEdge(ring[i], ring[(i + 1) % ring.length]);
+      }
+    };
+    addRing(startRing);
+    addRing(endRing);
+  }
+  return edges;
+}
+
+function updateDifferenceReadonlyDisplayMeshCache(mesh) {
+  if (!mesh?.userData?.differenceReadonlyDisplay) { return; }
+  mesh.updateMatrixWorld(true);
+  const tunnelPreviewEdgePolylines = isDifferenceReadonlyTunnelMesh(mesh)
+    ? mesh.userData?.differenceTunnelPreviewEdgePolylines
+    : null;
+  const hasTunnelPreviewEdgePolylines = Array.isArray(tunnelPreviewEdgePolylines)
+    && tunnelPreviewEdgePolylines.some((polyline) => Array.isArray(polyline) && polyline.length >= 2);
+  const controlPointEdges = hasTunnelPreviewEdgePolylines ? [] : getDifferenceMeshControlPointEdges(mesh);
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    differenceReadonlyControlPointEdges: controlPointEdges,
+    differenceReadonlyEdgeWorldData: hasTunnelPreviewEdgePolylines
+      ? buildDifferenceReadonlyEdgeWorldDataFromPolylines(tunnelPreviewEdgePolylines)
+      : buildDifferenceReadonlyEdgeWorldData(mesh, controlPointEdges),
+    differenceReadonlyTrianglesWorld: buildDifferenceReadonlyTrianglesWorld(mesh),
+    differenceReadonlyWorldBox: buildDifferenceMeshWorldBox(mesh),
+  };
+}
+
+function createDifferenceRailDisplayMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x2ed0c9,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    metalness: 0.08,
+    roughness: 0.58,
+    flatShading: false,
+  });
+}
+
+function buildDifferenceRailDisplayChunkGeometries(sourceGeometry) {
+  const geometry = sourceGeometry?.clone?.() || null;
+  const position = geometry?.attributes?.position;
+  if (!geometry || !position || position.count < 3) { return []; }
+  geometry.computeBoundingBox?.();
+  const bbox = geometry.boundingBox?.clone?.() || null;
+  if (!bbox) {
+    return [{ key: '0:0', geometry }];
+  }
+
+  const size = bbox.getSize(new THREE.Vector3());
+  const areaXZ = Math.max(size.x, 1e-6) * Math.max(size.z, 1e-6);
+  const targetChunkArea = 36;
+  const maxChunkCount = 48;
+  let chunkCountX = THREE.MathUtils.clamp(Math.ceil(size.x / 6), 1, 12);
+  let chunkCountZ = THREE.MathUtils.clamp(Math.ceil(size.z / 6), 1, 12);
+  if (areaXZ > 1e-6) {
+    const desiredChunks = THREE.MathUtils.clamp(Math.ceil(areaXZ / targetChunkArea), 1, maxChunkCount);
+    const aspect = size.z > 1e-6 ? Math.max(size.x / size.z, 1e-6) : 1;
+    chunkCountX = THREE.MathUtils.clamp(Math.round(Math.sqrt(desiredChunks * aspect)), 1, 12);
+    chunkCountZ = THREE.MathUtils.clamp(Math.ceil(desiredChunks / chunkCountX), 1, 12);
+  }
+  while ((chunkCountX * chunkCountZ) > maxChunkCount) {
+    if (chunkCountX >= chunkCountZ && chunkCountX > 1) {
+      chunkCountX -= 1;
+    } else if (chunkCountZ > 1) {
+      chunkCountZ -= 1;
+    } else {
+      break;
+    }
+  }
+
+  if ((chunkCountX * chunkCountZ) <= 1) {
+    return [{ key: '0:0', geometry }];
+  }
+
+  const nonIndexed = geometry.index ? (geometry.toNonIndexed?.() || geometry.clone()) : geometry;
+  if (nonIndexed !== geometry) {
+    geometry.dispose?.();
+  }
+  const nonIndexedPos = nonIndexed.attributes?.position;
+  if (!nonIndexedPos || nonIndexedPos.count < 3) {
+    return [{ key: '0:0', geometry: nonIndexed }];
+  }
+
+  nonIndexed.computeBoundingBox?.();
+  const nonIndexedBox = nonIndexed.boundingBox?.clone?.() || bbox;
+  const cellSizeX = Math.max(nonIndexedBox.max.x - nonIndexedBox.min.x, 1e-6) / chunkCountX;
+  const cellSizeZ = Math.max(nonIndexedBox.max.z - nonIndexedBox.min.z, 1e-6) / chunkCountZ;
+  const buckets = new Map();
+  for (let i = 0; i + 2 < nonIndexedPos.count; i += 3) {
+    const cx = (nonIndexedPos.getX(i) + nonIndexedPos.getX(i + 1) + nonIndexedPos.getX(i + 2)) / 3;
+    const cz = (nonIndexedPos.getZ(i) + nonIndexedPos.getZ(i + 1) + nonIndexedPos.getZ(i + 2)) / 3;
+    const ix = THREE.MathUtils.clamp(Math.floor((cx - nonIndexedBox.min.x) / cellSizeX), 0, chunkCountX - 1);
+    const iz = THREE.MathUtils.clamp(Math.floor((cz - nonIndexedBox.min.z) / cellSizeZ), 0, chunkCountZ - 1);
+    const key = `${ix}:${iz}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+    }
+    const out = buckets.get(key);
+    for (let v = 0; v < 3; v += 1) {
+      const idx = i + v;
+      out.push(
+        nonIndexedPos.getX(idx),
+        nonIndexedPos.getY(idx),
+        nonIndexedPos.getZ(idx),
+      );
+    }
+  }
+  nonIndexed.dispose?.();
+
+  const chunks = [];
+  buckets.forEach((floats, key) => {
+    if (!Array.isArray(floats) || floats.length < 9) { return; }
+    const chunkGeometry = new THREE.BufferGeometry();
+    chunkGeometry.setAttribute('position', new THREE.Float32BufferAttribute(floats, 3));
+    const uv = new Float32Array((floats.length / 3) * 2);
+    chunkGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    chunkGeometry.computeVertexNormals();
+    chunkGeometry.computeBoundingBox?.();
+    chunkGeometry.computeBoundingSphere?.();
+    chunks.push({ key, geometry: chunkGeometry });
+  });
+
+  if (chunks.length < 1) {
+    return [{ key: '0:0', geometry: sourceGeometry.clone() }];
+  }
+  return chunks;
+}
+
+function buildDifferenceReadonlyTunnelChunkEdgePolylines(rootMesh, chunkGeometry) {
+  const sourcePolylines = Array.isArray(rootMesh?.userData?.differenceTunnelPreviewEdgePolylines)
+    ? rootMesh.userData.differenceTunnelPreviewEdgePolylines
+    : [];
+  if (!chunkGeometry?.boundingBox || sourcePolylines.length < 1) { return []; }
+  const chunkWorldBox = chunkGeometry.boundingBox.clone();
+  rootMesh?.updateMatrixWorld?.(true);
+  chunkWorldBox.applyMatrix4(rootMesh?.matrixWorld || new THREE.Matrix4());
+  chunkWorldBox.expandByScalar(0.05);
+  const segments = [];
+  sourcePolylines.forEach((polyline) => {
+    if (!Array.isArray(polyline) || polyline.length < 2) { return; }
+    for (let i = 0; i < polyline.length - 1; i += 1) {
+      const a = polyline[i];
+      const b = polyline[i + 1];
+      if (!Array.isArray(a) || a.length < 3 || !Array.isArray(b) || b.length < 3) { continue; }
+      const segBox = new THREE.Box3().setFromPoints([
+        new THREE.Vector3(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0),
+        new THREE.Vector3(Number(b[0]) || 0, Number(b[1]) || 0, Number(b[2]) || 0),
+      ]);
+      if (!segBox.intersectsBox(chunkWorldBox)) { continue; }
+      segments.push([
+        [Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0],
+        [Number(b[0]) || 0, Number(b[1]) || 0, Number(b[2]) || 0],
+      ]);
+    }
+  });
+  return segments;
+}
+
+function getDifferenceRailDisplayChunkMeshes(root) {
+  if (!root?.children) { return []; }
+  return root.children.filter((child) => child?.isMesh && child.userData?.differenceRailDisplayChunk);
+}
+
+function createDifferenceRailDisplayChunkMesh(parent, operation, geometry, chunkKey, chunkIndex = 0) {
+  if (!parent || !geometry) { return null; }
+  const mesh = new THREE.Mesh(geometry, createDifferenceRailDisplayMaterial());
+  mesh.name = 'DifferenceRailDisplayChunkMesh';
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    differenceSpacePlane: true,
+    differenceReadonlyDisplay: true,
+    differenceRailDisplay: true,
+    differenceRailDisplayChunk: true,
+    differenceRailDisplayChunkKey: String(chunkKey || chunkIndex),
+    differenceRailDisplayKey: buildDifferenceRailDisplayMeshKey(operation),
+    differenceRailTrackNames: operation.trackNames.slice(),
+  };
+  mesh.raycast = () => {};
+  mesh.visible = differenceRailDisplayMeshesVisible;
+  applyDifferenceSpaceMeshStyle(mesh, { visible: differenceRailDisplayMeshesVisible });
+  parent.add(mesh);
+  rebuildDifferenceControlPointsFromGeometry(mesh);
+  pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+  setDifferenceReadonlyControlPointsVisible(mesh, false);
+  updateDifferenceReadonlyDisplayMeshCache(mesh);
+  return mesh;
+}
+
+function createDifferenceRailDisplayMesh(rawOperation) {
+  const operation = normalizeDifferenceRailOperation(rawOperation);
+  if (!operation) { return null; }
+  const cutter = buildDifferenceCutterMeshFromRailTracks({
+    ...operation,
+    detailMode: 'preview',
+  });
+  const geometry = cutter?.geometry?.clone?.() || null;
+  cutter?.geometry?.dispose?.();
+  if (Array.isArray(cutter?.material)) {
+    cutter.material.forEach((mat) => mat?.dispose?.());
+  } else {
+    cutter?.material?.dispose?.();
+  }
+  if (!geometry) { return null; }
+  const chunkEntries = buildDifferenceRailDisplayChunkGeometries(geometry);
+  geometry.dispose?.();
+  if (!Array.isArray(chunkEntries) || chunkEntries.length < 1) { return null; }
+
+  const group = new THREE.Group();
+  group.name = 'DifferenceRailDisplayGroup';
+  group.visible = differenceRailDisplayMeshesVisible;
+  group.userData = {
+    ...(group.userData || {}),
+    differenceRailDisplay: true,
+    differenceRailDisplayGroup: true,
+    differenceRailDisplayKey: buildDifferenceRailDisplayMeshKey(operation),
+    differenceRailTrackNames: operation.trackNames.slice(),
+  };
+  scene.add(group);
+
+  const chunkMeshes = chunkEntries
+    .map((entry, idx) => createDifferenceRailDisplayChunkMesh(group, operation, entry.geometry, entry.key, idx))
+    .filter(Boolean);
+  if (chunkMeshes.length < 1) {
+    if (group.parent) {
+      group.parent.remove(group);
+    }
+    return null;
+  }
+  group.userData = {
+    ...(group.userData || {}),
+    differenceRailDisplayChunkCount: chunkMeshes.length,
+  };
+  differenceRailDisplayMeshes.push(group);
+  return group;
+}
+
+function createDifferenceReadonlyTunnelPreviewChunkMesh(group, rootMesh, geometry, chunkKey, chunkIndex = 0, userDataExtras = null) {
+  if (!group || !rootMesh || !geometry) { return null; }
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  const previewEdgePolylines = Array.isArray(userDataExtras?.differenceTunnelPreviewEdgePolylines)
+    ? cloneDifferencePreviewPolylines(userDataExtras.differenceTunnelPreviewEdgePolylines)
+    : buildDifferenceReadonlyTunnelChunkEdgePolylines(rootMesh, geometry);
+  const mesh = new THREE.Mesh(geometry, createDifferenceRailDisplayMaterial());
+  mesh.name = 'DifferenceReadonlyTunnelPreviewChunkMesh';
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    ...(userDataExtras && typeof userDataExtras === 'object' ? userDataExtras : {}),
+    differenceSpacePlane: true,
+    differenceReadonlyDisplay: true,
+    differenceGeneratedBy: 'rail_tunnel_circle',
+    differenceReadonlyTunnelPreviewChunk: true,
+    differenceReadonlyTunnelPreviewChunkKey: String(chunkKey || chunkIndex),
+    differenceTunnelTrackNames: Array.isArray(rootMesh.userData?.differenceTunnelTrackNames)
+      ? rootMesh.userData.differenceTunnelTrackNames.slice()
+      : [],
+    differenceTunnelPreviewEdgePolylines: previewEdgePolylines,
+  };
+  mesh.raycast = () => {};
+  mesh.visible = false;
+  applyDifferenceSpaceMeshStyle(mesh, { visible: false });
+  group.add(mesh);
+  updateDifferenceReadonlyDisplayMeshCache(mesh);
+  return mesh;
+}
+
+function ensureDifferenceReadonlyTunnelPreviewChunks(mesh) {
+  if (!isDifferenceReadonlyTunnelMesh(mesh) || !mesh?.geometry) { return []; }
+  const existing = getDifferenceReadonlyTunnelPreviewChunkMeshes(mesh);
+  if (existing.length > 0) { return existing; }
+
+  clearDifferenceReadonlyTunnelPreviewChunks(mesh);
+  const group = new THREE.Group();
+  group.name = 'DifferenceReadonlyTunnelPreviewGroup';
+  group.visible = false;
+  group.userData = {
+    ...(group.userData || {}),
+    differenceReadonlyTunnelPreviewGroup: true,
+    differenceReadonlyTunnelSourceId: mesh.id,
+  };
+  scene.add(group);
+
+  const chunkSpecs = Array.isArray(mesh.userData?.differenceTunnelPreviewChunkSpecs)
+    ? mesh.userData.differenceTunnelPreviewChunkSpecs
+    : [];
+  let chunkMeshes = [];
+  if (chunkSpecs.length > 0) {
+    chunkMeshes = chunkSpecs
+      .map((spec, idx) => {
+        const geometry = buildDifferenceTunnelPreviewChunkGeometryFromSpec(spec);
+        if (!geometry) { return null; }
+        return createDifferenceReadonlyTunnelPreviewChunkMesh(
+          group,
+          mesh,
+          geometry,
+          spec?.key,
+          idx,
+          {
+            differenceTunnelPreviewEdgePolylines: spec?.previewEdgePolylines,
+            differenceReadonlyTunnelPreviewPathAligned: true,
+          },
+        );
+      })
+      .filter(Boolean);
+  } else {
+    const chunkEntries = buildDifferenceRailDisplayChunkGeometries(mesh.geometry);
+    if (Array.isArray(chunkEntries) && chunkEntries.length > 0) {
+      chunkMeshes = chunkEntries
+        .map((entry, idx) => createDifferenceReadonlyTunnelPreviewChunkMesh(group, mesh, entry.geometry, entry.key, idx))
+        .filter(Boolean);
+    }
+  }
+  if (chunkMeshes.length < 1) {
+    clearDifferenceReadonlyTunnelPreviewChunks({ userData: { differenceReadonlyTunnelPreviewGroup: group } });
+    return [];
+  }
+
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    differenceReadonlyTunnelPreviewGroup: group,
+  };
+  group.userData = {
+    ...(group.userData || {}),
+    differenceReadonlyTunnelPreviewChunkCount: chunkMeshes.length,
+  };
+  return chunkMeshes;
+}
+
+function syncDifferenceRailDisplayMeshes() {
+  clearDifferenceRailDisplayMeshes();
+  differenceRailOperations.forEach((operation) => {
+    createDifferenceRailDisplayMesh(operation);
+  });
+  setDifferenceRailDisplayMeshesVisible(differenceRailDisplayMeshesVisible);
+}
+
+function ensureDifferenceRailDisplayMeshes() {
+  const expectedKeys = differenceRailOperations
+    .map((operation) => buildDifferenceRailDisplayMeshKey(operation))
+    .filter((key) => key.length > 0);
+  const meshesReady = expectedKeys.length === differenceRailDisplayMeshes.length
+    && differenceRailDisplayMeshes.every((mesh, idx) => {
+      if (!mesh?.isObject3D || !mesh.parent) { return false; }
+      return String(mesh.userData?.differenceRailDisplayKey || '') === expectedKeys[idx];
+    });
+  if (!meshesReady) {
+    syncDifferenceRailDisplayMeshes();
+    return;
+  }
+  setDifferenceRailDisplayMeshesVisible(differenceRailDisplayMeshesVisible);
 }
 
 function buildGeometryFromSerializedSpace(rawSpace) {
@@ -14352,9 +16043,48 @@ function buildGeometryFromSerializedSpace(rawSpace) {
   return geometry;
 }
 
+function normalizeDifferenceSerializedRuntimeState(rawState) {
+  if (!rawState || typeof rawState !== 'object') { return null; }
+  const generatedBy = String(rawState?.differenceGeneratedBy || '').trim();
+  if (generatedBy !== 'rail_tunnel_circle') { return null; }
+  return {
+    differenceGeneratedBy: 'rail_tunnel_circle',
+    differenceTunnelTrackNames: Array.isArray(rawState?.differenceTunnelTrackNames)
+      ? rawState.differenceTunnelTrackNames.map((name) => String(name || '').trim()).filter((name) => name.length > 0)
+      : [],
+    differenceTunnelRadius: Math.max(0.2, Number(rawState?.differenceTunnelRadius) || 1.6),
+    differenceTunnelYOffset: Number(rawState?.differenceTunnelYOffset) || 0,
+    differenceTunnelSideClearance: Number(rawState?.differenceTunnelSideClearance) || 0,
+    differenceTunnelPreviewEdgePolylines: cloneDifferencePreviewPolylines(rawState?.differenceTunnelPreviewEdgePolylines),
+    differenceTunnelPreviewChunkSpecs: cloneDifferenceTunnelPreviewChunkSpecs(rawState?.differenceTunnelPreviewChunkSpecs),
+  };
+}
+
+function applyTransformToSerializedDifferenceGeometry(geometry, rawSpace) {
+  if (!geometry?.attributes?.position) { return geometry; }
+  const pos = Array.isArray(rawSpace?.position) ? rawSpace.position : [0, 0, 0];
+  const quat = Array.isArray(rawSpace?.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
+  const scl = Array.isArray(rawSpace?.scale) ? rawSpace.scale : [1, 1, 1];
+  const matrix = new THREE.Matrix4().compose(
+    new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0),
+    new THREE.Quaternion(
+      Number(quat[0]) || 0,
+      Number(quat[1]) || 0,
+      Number(quat[2]) || 0,
+      Number(quat[3]) || 1,
+    ).normalize(),
+    new THREE.Vector3(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1),
+  );
+  geometry.applyMatrix4(matrix);
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  return geometry;
+}
+
 function relinkImportedDifferenceSharedPoints(eps = differenceSharedPointLinkEpsilon) {
   const points = [];
   differenceSpacePlanes.forEach((mesh) => {
+    if (!shouldDifferenceMeshParticipateInSharedPointMerge(mesh)) { return; }
     mesh?.children?.forEach((child) => {
       if (!child?.userData?.differenceControlPoint || !child.parent) { return; }
       points.push(child);
@@ -16163,8 +17893,15 @@ function handleMouseMove(x, y) {
   mouse.x = (clientX / w) * 2 - 1;
   mouse.y = -(clientY / h) * 2 + 1;
   updateDifferenceFaceHoverFromPointer();
+  updateDifferenceGuideHoverFromPointer();
+  syncDifferenceAddGuideYGridFromPointer();
+  syncDifferenceAddCenterGuideFromPointer();
   updateRailInsertHoverFromPointer();
   updateRailStraightPreview();
+  updateCreateAddPointBaseGuideFromPointer();
+  if (guidePlacementActive && isDecorationGuidePlacementTemplate()) {
+    updateDecorationGuidePlacementHoverFromPointer();
+  }
 }
 
 // 物体の表示/非表示
@@ -16192,22 +17929,7 @@ function setMeshListOpacity(list, opacity) {
     // Difference 空間ボックスは独自の透過/描画設定を維持する。
     // 汎用の opacity 上書きで material が変質して見える問題を防ぐ。
     if (mesh.userData?.differenceSpacePlane) {
-      const applyDifferenceStyle = (material) => {
-        if (!material) { return; }
-        material.opacity = 0.5;
-        material.transparent = true;
-        material.side = THREE.DoubleSide;
-        material.depthWrite = false;
-        if ('metalness' in material) { material.metalness = 0.08; }
-        if ('roughness' in material) { material.roughness = 0.58; }
-        if ('flatShading' in material) { material.flatShading = false; }
-        material.needsUpdate = true;
-      };
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(applyDifferenceStyle);
-      } else {
-        applyDifferenceStyle(mesh.material);
-      }
+      applyDifferenceSpaceMeshStyle(mesh, { visible: opacity > 0 });
       mesh.visible = opacity > 0;
       return;
     }
@@ -16530,12 +18252,38 @@ GuideGrid_Center_z.name = 'GuideLine'
 GuideGrid_Center_z.position.set(0,0,0);
 scene.add(GuideGrid_Center_z)
 
+const DifferenceAddGuideCenter_x = createLine({x:2,y:0.1,z:0}, {x:-2,y:0.1,z:0}, 0xff5555)
+DifferenceAddGuideCenter_x.name = 'DifferenceAddGuideCenterX'
+DifferenceAddGuideCenter_x.position.set(0,0,0);
+DifferenceAddGuideCenter_x.renderOrder = 9401;
+if (DifferenceAddGuideCenter_x.material) {
+  DifferenceAddGuideCenter_x.material.depthTest = false;
+  DifferenceAddGuideCenter_x.material.depthWrite = false;
+  DifferenceAddGuideCenter_x.material.transparent = true;
+  DifferenceAddGuideCenter_x.material.opacity = 0.95;
+}
+scene.add(DifferenceAddGuideCenter_x)
+
+const DifferenceAddGuideCenter_z = createLine({x:0,y:0.1,z:2}, {x:0,y:0.1,z:-2}, 0xff5555)
+DifferenceAddGuideCenter_z.name = 'DifferenceAddGuideCenterZ'
+DifferenceAddGuideCenter_z.position.set(0,0,0);
+DifferenceAddGuideCenter_z.renderOrder = 9401;
+if (DifferenceAddGuideCenter_z.material) {
+  DifferenceAddGuideCenter_z.material.depthTest = false;
+  DifferenceAddGuideCenter_z.material.depthWrite = false;
+  DifferenceAddGuideCenter_z.material.transparent = true;
+  DifferenceAddGuideCenter_z.material.opacity = 0.95;
+}
+scene.add(DifferenceAddGuideCenter_z)
+
 GuideLine.visible = false
 GuideGrid.visible = false
 GuideGridAxisGroup.visible = true
 AddPointGuideGrid.visible = false
 GuideGrid_Center_x.visible = false
 GuideGrid_Center_z.visible = false
+DifferenceAddGuideCenter_x.visible = false
+DifferenceAddGuideCenter_z.visible = false
 
 const addPointGridHandle = new THREE.Mesh(
   new THREE.PlaneGeometry(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE),
@@ -16739,6 +18487,20 @@ function applyBaseGuideGridState(state) {
       },
     };
   }
+}
+
+function syncBaseGuideGridHandleFromCurrentGrid() {
+  if (!AddPointGuideGrid || !addPointGridHandle) { return; }
+  addPointGridHandle.position.copy(AddPointGuideGrid.position);
+  if (AddPointGuideGrid.quaternion?.isQuaternion) {
+    addPointGridHandle.quaternion.copy(AddPointGuideGrid.quaternion).multiply(addPointGridBaseQuat);
+  } else {
+    addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+  }
+  applyGuideGridStoredSize(AddPointGuideGrid, null);
+  addPointGridHandle.updateMatrixWorld(true);
+  addPointGridY = Number(AddPointGuideGrid.position.y) || 0;
+  addPointGridInitialized = true;
 }
 
 function clearGuideAddGridsForImport() {
@@ -16968,6 +18730,8 @@ let baseMapRoot = null
 let differencePreviewTube = null
 const differenceSpacePlanes = []
 const differenceRailOperations = []
+const differenceRailDisplayMeshes = []
+let differenceRailDisplayMeshesVisible = false
 let differenceSelectedPlane = null
 let differenceFaceHighlight = null
 const differenceSelectedFaceHighlights = []
@@ -16986,6 +18750,8 @@ const differenceClassifiedEdgePriority = new Map()
 var differenceViewMode = 'diff'
 let differenceHoverFaceKey = null
 let differenceHoveredFaceHit = null
+let differenceGuideHoverHit = null
+let differenceAddCenterGuideActive = false
 const differenceSelectedControlPoints = new Set()
 const differenceSelectedFaces = new Map()
 const differenceSelectedEdges = new Map()
@@ -16994,6 +18760,7 @@ let differenceSelectionKind = 'none'
 const differenceSharedPointLinkEpsilon = 0.02
 const differenceAutoMergeDistance = 0.08
 const differenceBoundaryMergeDistance = 0.06
+var differenceAutoMergeEnabled = true
 const differenceMoveRangeFromStart = 30
 const differenceEdgeOverlapConstraints = []
 const differenceIntersectionPointRadius = 0.035
@@ -17182,40 +18949,42 @@ function clearCreateHistory() {
 }
 
 function captureDifferenceSnapshot() {
-  return differenceSpacePlanes
-    .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
-    .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
-    .map((mesh) => serializeDifferenceSpaceMesh(mesh))
-    .filter(Boolean);
+  return buildDifferenceSpacesPayload({
+    includeMeta: false,
+    includeRuntimeState: true,
+  });
+}
+
+function normalizeDifferenceHistorySnapshot(snapshot) {
+  if (Array.isArray(snapshot)) {
+    return {
+      differenceSpaces: snapshot,
+      differenceRailOperations: [],
+    };
+  }
+  if (!snapshot || typeof snapshot !== 'object') {
+    return {
+      differenceSpaces: [],
+      differenceRailOperations: [],
+    };
+  }
+  return {
+    differenceSpaces: Array.isArray(snapshot?.differenceSpaces) ? snapshot.differenceSpaces : [],
+    differenceRailOperations: Array.isArray(snapshot?.differenceRailOperations) ? snapshot.differenceRailOperations : [],
+  };
 }
 
 function isSameDifferenceSnapshot(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return JSON.stringify(normalizeDifferenceHistorySnapshot(a)) === JSON.stringify(normalizeDifferenceHistorySnapshot(b));
 }
 
 function applyDifferenceSnapshot(snapshot) {
-  clearDifferenceSpacesForImport();
-  clearDifferenceRailOperations();
-  const list = Array.isArray(snapshot) ? snapshot : [];
-  list.forEach((rawSpace) => {
-    const geometry = buildGeometryFromSerializedSpace(rawSpace);
-    if (!geometry) { return; }
-    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
-    const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
-    const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
-    const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
-    mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
-    mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
-    mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
-    mesh.updateMatrixWorld(true);
-    rebuildDifferenceControlPointsFromGeometry(mesh);
-    syncDifferenceGeometryFromControlPoints(mesh);
-  });
-  relinkImportedDifferenceSharedPoints();
-  targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
-  setMeshListOpacity(targetObjects, 1);
-  refreshDifferencePreview();
-  updateDifferenceStatus(`Difference履歴を適用: 空間 ${differenceSpacePlanes.length} 件`);
+  const payload = normalizeDifferenceHistorySnapshot(snapshot);
+  const restored = restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: false }) || {
+    spaceCount: Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces.length : 0,
+    railOperationCount: Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations.length : 0,
+  };
+  updateDifferenceStatus(`Difference履歴を適用: 空間 ${restored.spaceCount} 件 / line ${restored.railOperationCount} 件`);
   updateDifferenceUnifyButtonState();
 }
 
@@ -17725,16 +19494,55 @@ function setCreateModeWorldFocus(enable) {
   createModeWorldFocused = false;
 }
 
+function shouldSceneTrainsBeVisible() {
+  return sceneVisibilitySettings.showTrains !== false
+    && !Boolean(scene?.userData?.createModeWorldFocused);
+}
+
+function syncTrainGroupVisibility() {
+  const shouldShow = shouldSceneTrainsBeVisible();
+  Trains.forEach((trainGroup) => {
+    if (!trainGroup) { return; }
+    trainGroup.userData = trainGroup.userData || {};
+    if (!shouldShow) {
+      if (!trainGroup.userData.sceneVisibilityForcedHidden || trainGroup.visible) {
+        trainGroup.userData.sceneVisibilityPrevVisible = Boolean(trainGroup.visible);
+      }
+      trainGroup.userData.sceneVisibilityForcedHidden = true;
+      if (trainGroup.visible) {
+        trainGroup.visible = false;
+      }
+      return;
+    }
+    if (trainGroup.userData.sceneVisibilityForcedHidden) {
+      trainGroup.userData.sceneVisibilityForcedHidden = false;
+      trainGroup.visible = trainGroup.userData.sceneVisibilityPrevVisible !== false;
+      delete trainGroup.userData.sceneVisibilityPrevVisible;
+      return;
+    }
+    if (trainGroup.userData.sceneVisibilityPrevVisible != null) {
+      delete trainGroup.userData.sceneVisibilityPrevVisible;
+    }
+  });
+}
+
 function syncSinjyukuCityVisibility() {
-  if (!sinjyukuCity) {
-    sinjyukuCity = scene.getObjectByName('sinjyuku_city');
+  const cityRoot = getCityModelRoot();
+  if (!cityRoot) { return; }
+  const shouldShow = sceneVisibilitySettings.showCityModel !== false;
+  if (cityRoot.visible !== shouldShow) {
+    cityRoot.visible = shouldShow;
   }
-  if (!sinjyukuCity) { return; }
-  // 要件: sinjyuku.glb は常時表示
-  const shouldShow = true;
-  if (sinjyukuCity.visible !== shouldShow) {
-    sinjyukuCity.visible = shouldShow;
-  }
+}
+
+function shouldSceneShowDifferenceLineOverlapPreview() {
+  return sceneVisibilitySettings.showDifferenceLineOverlapPreview !== false;
+}
+
+function syncSceneDifferenceLineOverlapPreview() {
+  refreshDifferenceRailDisplayChunkVisibility();
+  if (!differenceSpaceModeActive) { return; }
+  refreshDifferenceSelectedEdgeHighlights();
 }
 
 function clearDifferencePreviewTube() {
@@ -17770,6 +19578,18 @@ function getGroundMeshes() {
   });
   return meshes;
 }
+
+function applySceneVisibilitySettings({ save = true } = {}) {
+  syncTrainGroupVisibility();
+  syncSinjyukuCityVisibility();
+  syncSceneDifferenceLineOverlapPreview();
+  updateScenePanelUi();
+  if (save) {
+    saveSceneVisibilitySettings();
+  }
+}
+
+applySceneVisibilitySettings({ save: false });
 
 function setMaterialOpacity(material, opacity) {
   if (!material || !('opacity' in material)) { return; }
@@ -18542,6 +20362,9 @@ function getSegmentTriangleHitTs(a, b, tris, eps = 0.012) {
 }
 
 function getDifferenceMeshTrianglesWorld(mesh) {
+  if (mesh?.userData?.differenceReadonlyDisplay && Array.isArray(mesh.userData?.differenceReadonlyTrianglesWorld)) {
+    return mesh.userData.differenceReadonlyTrianglesWorld;
+  }
   const geom = mesh?.geometry;
   const pos = geom?.attributes?.position;
   if (!pos) { return []; }
@@ -18562,6 +20385,13 @@ function getDifferenceMeshTrianglesWorld(mesh) {
     }
   }
   return out;
+}
+
+function getDifferenceMeshWorldBox(mesh) {
+  if (mesh?.userData?.differenceReadonlyDisplay && mesh.userData?.differenceReadonlyWorldBox?.isBox3) {
+    return mesh.userData.differenceReadonlyWorldBox;
+  }
+  return buildDifferenceMeshWorldBox(mesh);
 }
 
 function intersectSegmentTriangle(a, b, tri) {
@@ -18778,7 +20608,7 @@ function getSegmentKey(a, b, eps = 0.02) {
   return qa < qb ? `${qa}|${qb}` : `${qb}|${qa}`;
 }
 
-function splitYellowSegmentByOtherSpaces(segA, segB, meshA, meshB, meshes, trisCache) {
+function splitYellowSegmentByOtherSpaces(segA, segB, meshA, meshB, meshes, trisCache, boxCache = null) {
   if (!segA || !segB || !Array.isArray(meshes)) {
     return [{ a: segA?.clone?.(), b: segB?.clone?.(), cls: 'yellow' }].filter((s) => s.a && s.b);
   }
@@ -18792,7 +20622,8 @@ function splitYellowSegmentByOtherSpaces(segA, segB, meshA, meshB, meshes, trisC
   for (let i = 0; i < meshes.length; i += 1) {
     const mesh = meshes[i];
     if (!mesh?.parent || mesh === meshA || mesh === meshB) { continue; }
-    const box = new THREE.Box3().setFromObject(mesh);
+    const box = boxCache instanceof Map ? boxCache.get(mesh) : getDifferenceMeshWorldBox(mesh);
+    if (!box) { continue; }
     if (!segBox.intersectsBox(box)) { continue; }
     const tris = trisCache.get(mesh) || [];
     if (tris.length < 1) { continue; }
@@ -18864,23 +20695,14 @@ function setDifferenceEdgePriority(edgeKey, level) {
 }
 
 function setDifferenceMeshFacesVisible(visible) {
-  const spaces = getActiveDifferenceSpaces();
+  const spaces = getDifferenceDisplayMeshesForPreview({ includeRailDisplays: true });
   spaces.forEach((mesh) => {
-    const applyMaterial = (material) => {
-      if (!material) { return; }
-      material.transparent = true;
-      material.opacity = visible ? 0.5 : 0.0;
-      material.depthWrite = visible;
-      material.needsUpdate = true;
-    };
-    if (Array.isArray(mesh.material)) {
-      mesh.material.forEach(applyMaterial);
-    } else {
-      applyMaterial(mesh.material);
-    }
+    applyDifferenceSpaceMeshStyle(mesh, { visible });
+    const showControlPoints = visible && !mesh?.userData?.differenceReadonlyDisplay;
     mesh.children.forEach((child) => {
       if (!child?.userData?.differenceControlPoint) { return; }
-      child.visible = visible;
+      applyDifferenceControlPointMeshStyle(child, { visible: showControlPoints });
+      child.visible = showControlPoints;
     });
   });
 }
@@ -18984,7 +20806,9 @@ function isDifferencePreviewHiddenEdgeByOverlap(p0, p1, maxDiag = 0) {
 function drawDifferencePreviewWireframe() {
   clearDifferencePreviewWireframeLines();
   if (differenceViewMode !== 'preview') { return; }
-  const spaces = getActiveDifferenceSpaces();
+  const spaces = getDifferenceDisplayMeshesForPreview({
+    includeRailDisplays: shouldSceneShowDifferenceLineOverlapPreview(),
+  });
   if (spaces.length < 1) { return; }
   const maxDiag = spaces.reduce((acc, mesh) => {
     mesh.geometry?.computeBoundingBox?.();
@@ -19008,10 +20832,10 @@ function drawDifferencePreviewWireframe() {
     differencePreviewWireframeLines.push(line);
   };
   spaces.forEach((mesh) => {
-    const edges = getDifferenceMeshControlPointEdges(mesh);
+    const edges = getDifferenceMeshEdgeWorldData(mesh);
     edges.forEach((edge) => {
-      const p0 = edge.pointA.getWorldPosition(new THREE.Vector3());
-      const p1 = edge.pointB.getWorldPosition(new THREE.Vector3());
+      const p0 = edge.p0;
+      const p1 = edge.p1;
       const edgeKey = getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01);
       const hiddenIntervals = collectHiddenIntervalsOnEdge(p0, p1, edgeKey, maxDiag);
       if (hiddenIntervals.length < 1) {
@@ -19090,7 +20914,9 @@ function refreshDifferenceIntersectionVisuals() {
   if (differenceSpaceTransformMode !== 'move'
     && differenceSpaceTransformMode !== 'add'
     && differenceViewMode !== 'preview') { return; }
-  const meshes = differenceSpacePlanes.filter((m) => m?.parent && m?.geometry);
+  const meshes = getDifferenceDisplayMeshesForPreview({
+    includeRailDisplays: shouldSceneShowDifferenceLineOverlapPreview(),
+  });
   if (meshes.length < 2) { return; }
   const maxDiag = meshes.reduce((acc, mesh) => {
     mesh.geometry?.computeBoundingBox?.();
@@ -19101,24 +20927,22 @@ function refreshDifferenceIntersectionVisuals() {
   const insideMaxDepth = heavyDrag ? 2 : 4;
   scene.updateMatrixWorld(true);
   const trisCache = new Map();
+  const edgeWorldCache = new Map();
+  const worldBoxCache = new Map();
   meshes.forEach((mesh) => {
     trisCache.set(mesh, getDifferenceMeshTrianglesWorld(mesh));
+    edgeWorldCache.set(mesh, getDifferenceMeshEdgeWorldData(mesh));
+    worldBoxCache.set(mesh, getDifferenceMeshWorldBox(mesh));
   });
   for (let i = 0; i < meshes.length; i += 1) {
     const a = meshes[i];
-    const boxA = new THREE.Box3().setFromObject(a);
-    const edgesA = getDifferenceMeshControlPointEdges(a).map((e) => ({
-      p0: e.pointA.getWorldPosition(new THREE.Vector3()),
-      p1: e.pointB.getWorldPosition(new THREE.Vector3()),
-      key: getDifferenceSourceEdgeKeyByWorldPoints(
-        e.pointA.getWorldPosition(new THREE.Vector3()),
-        e.pointB.getWorldPosition(new THREE.Vector3()),
-        0.01,
-      ),
-    }));
+    const boxA = worldBoxCache.get(a);
+    if (!boxA) { continue; }
+    const edgesA = edgeWorldCache.get(a) || [];
     for (let j = i + 1; j < meshes.length; j += 1) {
       const b = meshes[j];
-      const boxB = new THREE.Box3().setFromObject(b);
+      const boxB = worldBoxCache.get(b);
+      if (!boxB) { continue; }
       if (!boxA.intersectsBox(boxB)) { continue; }
       const trisA = trisCache.get(a) || [];
       const trisB = trisCache.get(b) || [];
@@ -19183,15 +21007,7 @@ function refreshDifferenceIntersectionVisuals() {
         });
       };
       drawPenetrationEdges(edgesA, trisB);
-      const edgesB = getDifferenceMeshControlPointEdges(b).map((e) => ({
-        p0: e.pointA.getWorldPosition(new THREE.Vector3()),
-        p1: e.pointB.getWorldPosition(new THREE.Vector3()),
-        key: getDifferenceSourceEdgeKeyByWorldPoints(
-          e.pointA.getWorldPosition(new THREE.Vector3()),
-          e.pointB.getWorldPosition(new THREE.Vector3()),
-          0.01,
-        ),
-      }));
+      const edgesB = edgeWorldCache.get(b) || [];
       drawPenetrationEdges(edgesB, trisA);
       const pairEdges = edgesA.concat(edgesB);
 
@@ -19224,7 +21040,7 @@ function refreshDifferenceIntersectionVisuals() {
 
       segmentMap.forEach((seg) => {
         const sourceEdgeKeys = collectSourceEdgeKeysForSegment(seg.a, seg.b, pairEdges, maxDiag);
-        const pieces = splitYellowSegmentByOtherSpaces(seg.a, seg.b, a, b, meshes, trisCache);
+        const pieces = splitYellowSegmentByOtherSpaces(seg.a, seg.b, a, b, meshes, trisCache, worldBoxCache);
         pieces.forEach((piece) => {
           if (!piece?.a || !piece?.b) { return; }
           let color = 0xffea00;
@@ -19350,6 +21166,9 @@ function createDifferenceEdgeHighlightLine(pointA, pointB, color = 0x67b7ff) {
 }
 
 function getDifferenceMeshControlPointEdges(mesh) {
+  if (mesh?.userData?.differenceReadonlyDisplay && Array.isArray(mesh.userData?.differenceReadonlyControlPointEdges)) {
+    return mesh.userData.differenceReadonlyControlPointEdges;
+  }
   const pos = mesh?.geometry?.attributes?.position;
   if (!mesh?.userData?.differenceSpacePlane || !pos) { return []; }
   const cpList = mesh.children.filter((c) => c?.userData?.differenceControlPoint);
@@ -19594,9 +21413,24 @@ function getDifferenceMeshControlPointEdges(mesh) {
   return mergeSplitCollinearEdges(edges, 5.5);
 }
 
+function getDifferenceMeshEdgeWorldData(mesh) {
+  if (mesh?.userData?.differenceReadonlyDisplay && Array.isArray(mesh.userData?.differenceReadonlyEdgeWorldData)) {
+    return mesh.userData.differenceReadonlyEdgeWorldData;
+  }
+  return getDifferenceMeshControlPointEdges(mesh).map((edge) => {
+    const p0 = edge.pointA.getWorldPosition(new THREE.Vector3());
+    const p1 = edge.pointB.getWorldPosition(new THREE.Vector3());
+    return {
+      p0,
+      p1,
+      key: getDifferenceSourceEdgeKeyByWorldPoints(p0, p1, 0.01),
+    };
+  });
+}
+
 function getDifferenceMeshRawControlPointEdges(mesh) {
   const pos = mesh?.geometry?.attributes?.position;
-  if (!mesh?.userData?.differenceSpacePlane || !pos) { return []; }
+  if (!mesh?.userData?.differenceSpacePlane || !pos || !shouldDifferenceMeshParticipateInSharedPointMerge(mesh)) { return []; }
   const cpList = mesh.children.filter((c) => c?.userData?.differenceControlPoint);
   if (cpList.length < 2) { return []; }
 
@@ -19689,7 +21523,7 @@ function distancePointToInfiniteLine(point, linePoint, lineDirNorm) {
 
 function rebuildDifferenceEdgeOverlapConstraints() {
   differenceEdgeOverlapConstraints.length = 0;
-  const spaces = getActiveDifferenceSpaces();
+  const spaces = getActiveDifferenceSpaces().filter((mesh) => shouldDifferenceMeshParticipateInSharedPointMerge(mesh));
   if (spaces.length < 1) { return 0; }
   const edges = spaces
     .flatMap((mesh) => getDifferenceMeshRawControlPointEdges(mesh).map((edge) => ({ ...edge, mesh })))
@@ -19843,7 +21677,13 @@ function refreshDifferenceSelectedEdgeHighlights() {
       differenceSelectedEdges.delete(key);
     }
   }
-  const activeMeshes = differenceSpacePlanes.filter((m) => m?.parent);
+  const activeMeshes = differenceSpacePlanes.filter((mesh) => (
+    mesh?.parent
+    && (
+      shouldSceneShowDifferenceLineOverlapPreview()
+      || !isDifferenceLineOverlapPreviewMesh(mesh)
+    )
+  ));
   const selectedEdgeCount = differenceSelectedEdges.size;
   const selectedEdgeColor = selectedEdgeCount <= 1 ? 0xff8a00 : 0x0066ff;
   activeMeshes.forEach((mesh) => {
@@ -20034,7 +21874,15 @@ function updateDifferenceFaceHoverFromPointer() {
     differenceHoveredFaceHit = null;
     return;
   }
-  if (pointerBlockedByUI || differenceFaceVertexDragActive || differenceControlPointDragActive || pointRotateDragging || pointRotateMoveDragging) {
+  if (
+    (differenceAddGuideYModeActive && dragging === true && choice_object === addPointGridHandle)
+    || pointerBlockedByUI
+    || move_direction_y
+    || differenceFaceVertexDragActive
+    || differenceControlPointDragActive
+    || pointRotateDragging
+    || pointRotateMoveDragging
+  ) {
     if (differenceHoverFaceKey) {
       clearDifferenceFaceHighlight();
     }
@@ -20068,6 +21916,113 @@ function updateDifferenceFaceHoverFromPointer() {
   showDifferenceFaceHighlight(faceHit);
 }
 
+function resetDifferenceGuideHoverVisuals() {
+  differenceGuideHoverHit = null;
+  guideRailHover = null;
+  setGuideHoverPin(null);
+  GuideGrid.visible = false;
+  GuideGrid.quaternion.identity();
+  guideAddGrids.forEach((grid) => {
+    const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
+    setGuideAddGridColor(grid, color);
+  });
+}
+
+function updateDifferenceGuideHoverFromPointer() {
+  if (differenceAddGuideYModeActive && dragging === true && choice_object === addPointGridHandle) {
+    if (differenceGuideHoverHit?.point || guideRailHover?.point || GuideGrid.visible) {
+      resetDifferenceGuideHoverVisuals();
+    }
+    return null;
+  }
+  const active = differenceSpaceModeActive
+    && differenceSpaceTransformMode === 'add'
+    && editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CREATE_NEW'
+    && !viewModeActive
+    && !pointerBlockedByUI
+    && !differenceFaceVertexDragActive
+    && !differenceControlPointDragActive
+    && !pointRotateDragging
+    && !pointRotateMoveDragging;
+  if (!active) {
+    if (differenceGuideHoverHit?.point || guideRailHover?.point || GuideGrid.visible) {
+      resetDifferenceGuideHoverVisuals();
+    }
+    return null;
+  }
+
+  guideAddGrids.forEach((grid) => {
+    const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
+    setGuideAddGridColor(grid, color);
+  });
+
+  raycaster.setFromCamera(mouse, camera);
+  const guideHits = raycaster.intersectObjects(guideRailPickMeshes.filter((mesh) => mesh?.parent), true);
+  const guideHit = guideHits.find((hit) => hit?.object?.userData?.isGuideRail) || null;
+  if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
+    const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
+    if (nearest) {
+      differenceGuideHoverHit = {
+        source: 'rail',
+        curve: guideHit.object.userData.guideCurve,
+        point: nearest.clone(),
+      };
+      guideRailHover = { curve: guideHit.object.userData.guideCurve, point: nearest.clone() };
+      GuideGrid.visible = true;
+      GuideGrid.position.copy(nearest);
+      GuideGrid.quaternion.identity();
+      setGuideGridColor(GUIDE_ADD_GRID_COLOR);
+      setGuideHoverPin(nearest);
+      AddPointGuideGrid.position.copy(nearest);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(nearest);
+      addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+      addPointGridHandle.updateMatrixWorld(true);
+      addPointGridY = nearest.y;
+      differenceAddGuideBaseY = nearest.y;
+      return differenceGuideHoverHit;
+    }
+  }
+
+  guideRailHover = null;
+  const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
+  if (hit?.point && hitGrid) {
+    differenceGuideHoverHit = {
+      source: 'grid',
+      grid: hitGrid,
+      point: hit.point.clone(),
+    };
+    setGuideAddGridColor(hitGrid, GUIDE_ADD_GRID_SELECTED_COLOR);
+    GuideGrid.visible = true;
+    GuideGrid.position.copy(hit.point);
+    if (hitGrid.quaternion?.isQuaternion) {
+      GuideGrid.quaternion.copy(hitGrid.quaternion);
+    } else {
+      GuideGrid.quaternion.identity();
+    }
+    setGuideGridColor(GUIDE_ADD_GRID_COLOR);
+    setGuideHoverPin(hit.point);
+    AddPointGuideGrid.position.copy(hit.point);
+    if (hitGrid.quaternion?.isQuaternion) {
+      AddPointGuideGrid.quaternion.copy(hitGrid.quaternion);
+    } else {
+      AddPointGuideGrid.quaternion.identity();
+    }
+    AddPointGuideGrid.updateMatrixWorld(true);
+    addPointGridHandle.position.copy(hit.point);
+    addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+    addPointGridHandle.updateMatrixWorld(true);
+    addPointGridY = hit.point.y;
+    differenceAddGuideBaseY = hit.point.y;
+    return differenceGuideHoverHit;
+  }
+
+  resetDifferenceGuideHoverVisuals();
+  return null;
+}
+
 function resetDifferenceControlPointsHighlight(mesh) {
   if (!mesh) { return; }
   mesh.children.forEach((child) => {
@@ -20095,6 +22050,7 @@ function getDifferenceControlPointBaseColor(point) {
 
 function setDifferenceControlPointVisual(point, color = null) {
   if (!point?.material?.color) { return; }
+  applyDifferenceControlPointMeshStyle(point, { visible: point.visible !== false });
   point.material.color.set(color ?? getDifferenceControlPointBaseColor(point));
 }
 
@@ -20133,6 +22089,7 @@ function highlightDifferenceFaceControlPoints(mesh, localNormal, facePointLocal 
   facePoints.forEach((child) => {
     if (!child?.userData?.differenceControlPoint || !child?.material?.color) { return; }
     if (isDifferenceControlPointSelected(child)) { return; }
+    applyDifferenceControlPointMeshStyle(child, { visible: child.visible !== false });
     child.material.color.set(0xffd64d);
   });
 }
@@ -20526,9 +22483,19 @@ function performDifferenceAddFromPointer() {
     return true;
   }
 
-  const point = coord_DisplayTo3D({ y: addPointGridY });
+  const guideGridRef = differenceGuideHoverHit?.source === 'grid'
+    ? differenceGuideHoverHit.grid || null
+    : null;
+  const point = getDifferenceAddPointerPoint() || coord_DisplayTo3D({ y: addPointGridY });
   beginDifferenceHistorySession();
   const plane = createDifferenceSpacePlane(point);
+  if (guideGridRef) {
+    plane.userData = { ...(plane.userData || {}), planeRef: guideGridRef };
+    if (guideGridRef.quaternion?.isQuaternion) {
+      plane.quaternion.copy(guideGridRef.quaternion);
+      plane.updateMatrixWorld(true);
+    }
+  }
   addDifferenceControlPoints(plane);
   autoMergeNearbyDifferencePoints(plane.children.filter((child) => child?.userData?.differenceControlPoint));
   selectDifferencePlane(plane);
@@ -20610,6 +22577,40 @@ function startDifferenceMoveDragFromPending() {
       mesh.children.forEach((child) => pushUnique(child));
     });
     if (dragPoints.length < 1) { return false; }
+    if (movePointPanelActive) {
+      beginDifferenceHistorySession();
+      rebuildDifferenceEdgeOverlapConstraints();
+      choice_object = primaryMesh;
+      moveDragAnchorStart = primaryMesh.position.clone();
+      moveDragStartPositions = dragPoints.map((mesh) => ({
+        mesh,
+        posWorld: mesh.getWorldPosition(new THREE.Vector3()),
+      }));
+      const pos = camera.position;
+      if (!move_direction_y) {
+        const set_y = choice_object.position.y;
+        raycaster.setFromCamera(mouse, camera);
+        const dir = raycaster.ray.direction;
+        const t = Math.abs((pos.y - set_y) / dir.y);
+        TargetDiff = [
+          choice_object.position.x - (pos.x + dir.x * t),
+          choice_object.position.z - (pos.z + dir.z * t),
+        ];
+      } else {
+        raycaster.setFromCamera(mouse, camera);
+        const dir = raycaster.ray.direction;
+        const diff = { x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z };
+        const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x ** 2 + diff.z ** 2);
+        const t = hypotenuse / (Math.cos(cameraAngleY) * dir.z + Math.sin(cameraAngleY) * dir.x);
+        TargetDiff = choice_object.position.y - (pos.y + dir.y * t);
+      }
+      dragging = true;
+      search_object = false;
+      efficacy = false;
+      GuideLine.visible = true;
+      clearDifferenceMovePending();
+      return true;
+    }
     const ok = beginDifferenceControlPointDrag(dragPoints[0], dragPoints);
     if (ok) {
       clearDifferenceMovePending();
@@ -20730,6 +22731,64 @@ function setDifferencePlaneVisual(mesh, selected = false) {
   mesh.material.color.set(selected ? 0x4cd3ff : 0x2ed0c9);
 }
 
+function getDifferenceSpaceBoxOpacity() {
+  return 0.5;
+}
+
+function getDifferenceSpaceBoxRenderOrder() {
+  return 2280;
+}
+
+function getDifferenceControlPointOpacity() {
+  return 0.9;
+}
+
+function getDifferenceControlPointRenderOrder() {
+  return 2290;
+}
+
+function applyDifferenceSpaceMaterialStyle(material, { visible = true } = {}) {
+  if (!material) { return; }
+  material.transparent = true;
+  material.opacity = visible ? getDifferenceSpaceBoxOpacity() : 0.0;
+  material.side = THREE.DoubleSide;
+  if ('depthTest' in material) { material.depthTest = true; }
+  if ('depthWrite' in material) { material.depthWrite = visible; }
+  if ('metalness' in material) { material.metalness = 0.08; }
+  if ('roughness' in material) { material.roughness = 0.58; }
+  if ('flatShading' in material) { material.flatShading = false; }
+  material.needsUpdate = true;
+}
+
+function applyDifferenceSpaceMeshStyle(mesh, { visible = true } = {}) {
+  if (!mesh) { return; }
+  mesh.renderOrder = getDifferenceSpaceBoxRenderOrder();
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach((material) => applyDifferenceSpaceMaterialStyle(material, { visible }));
+  } else {
+    applyDifferenceSpaceMaterialStyle(mesh.material, { visible });
+  }
+}
+
+function applyDifferenceControlPointMaterialStyle(material, { visible = true } = {}) {
+  if (!material) { return; }
+  material.transparent = true;
+  material.opacity = visible ? getDifferenceControlPointOpacity() : 0.0;
+  if ('depthTest' in material) { material.depthTest = true; }
+  if ('depthWrite' in material) { material.depthWrite = visible; }
+  material.needsUpdate = true;
+}
+
+function applyDifferenceControlPointMeshStyle(point, { visible = true } = {}) {
+  if (!point) { return; }
+  point.renderOrder = getDifferenceControlPointRenderOrder();
+  if (Array.isArray(point.material)) {
+    point.material.forEach((material) => applyDifferenceControlPointMaterialStyle(material, { visible }));
+  } else {
+    applyDifferenceControlPointMaterialStyle(point.material, { visible });
+  }
+}
+
 function createDifferenceSpacePlane(position) {
   const plane = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
@@ -20750,6 +22809,7 @@ function createDifferenceSpacePlane(position) {
     ...(plane.userData || {}),
     differenceSpacePlane: true,
   };
+  applyDifferenceSpaceMeshStyle(plane, { visible: true });
   scene.add(plane);
   differenceSpacePlanes.push(plane);
   return plane;
@@ -20780,6 +22840,7 @@ function addDifferenceControlPoints(mesh) {
       parentDifferenceSpacePlane: mesh,
       differenceCornerKey: cornerKey,
     };
+    applyDifferenceControlPointMeshStyle(p, { visible: true });
     mesh.add(p);
   });
   updateDifferenceControlPointMarkerTransform(mesh);
@@ -21054,6 +23115,7 @@ function rebuildDifferenceControlPointsFromGeometry(mesh) {
       parentDifferenceSpacePlane: mesh,
       differenceVertexIndices: entry.indices.slice(),
     };
+    applyDifferenceControlPointMeshStyle(point, { visible: true });
     mesh.add(point);
   });
   updateDifferenceControlPointMarkerTransform(mesh);
@@ -21177,6 +23239,9 @@ function mergeCoincidentDifferenceControlPoints(mesh, eps = null) {
 
 function addDifferenceSharedPointLink(a, b) {
   if (!a?.userData?.differenceControlPoint || !b?.userData?.differenceControlPoint || a === b) { return; }
+  const meshA = a.userData?.parentDifferenceSpacePlane || a.parent || null;
+  const meshB = b.userData?.parentDifferenceSpacePlane || b.parent || null;
+  if (!canDifferenceMeshesSharePoints(meshA, meshB)) { return false; }
   const linksA = Array.isArray(a.userData.sharedDifferencePoints) ? a.userData.sharedDifferencePoints : [];
   if (!linksA.includes(b)) {
     linksA.push(b);
@@ -21195,6 +23260,7 @@ function addDifferenceSharedPointLink(a, b) {
   if (!isDifferenceControlPointSelected(b)) {
     setDifferenceControlPointVisual(b);
   }
+  return true;
 }
 
 function removeDifferenceSharedPointLink(a, b) {
@@ -21209,8 +23275,146 @@ function getActiveDifferenceSpaces() {
   return differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.geometry && mesh?.userData?.differenceSpacePlane);
 }
 
+function refreshDifferenceReadonlyTunnelPreviewChunkVisibility() {
+  const rootVisible = shouldShowDifferenceReadonlyTunnelSpaces();
+  const filterBoxes = getActiveDifferenceSpaces()
+    .filter((mesh) => mesh?.parent && mesh?.geometry && !isDifferenceReadonlyTunnelMesh(mesh))
+    .map((mesh) => getDifferenceMeshWorldBox(mesh))
+    .filter((box) => box?.isBox3);
+  const hasFilter = filterBoxes.length > 0;
+
+  differenceSpacePlanes.forEach((mesh) => {
+    if (!isDifferenceReadonlyTunnelMesh(mesh) || !mesh?.parent || !mesh?.geometry) { return; }
+    const chunks = ensureDifferenceReadonlyTunnelPreviewChunks(mesh);
+    const group = getDifferenceReadonlyTunnelPreviewGroup(mesh);
+    mesh.visible = rootVisible;
+    applyDifferenceSpaceMeshStyle(mesh, { visible: chunks.length < 1 && rootVisible });
+    setDifferenceReadonlyControlPointsVisible(mesh, false);
+    if (!group) { return; }
+    group.visible = rootVisible;
+    let visibleChunkCount = 0;
+    chunks.forEach((chunk) => {
+      const box = getDifferenceMeshWorldBox(chunk);
+      const visible = rootVisible && (
+        !hasFilter
+        || (
+          box?.isBox3
+          && filterBoxes.some((spaceBox) => spaceBox.intersectsBox(box))
+        )
+      );
+      chunk.visible = visible;
+      applyDifferenceSpaceMeshStyle(chunk, { visible });
+      if (visible) {
+        visibleChunkCount += 1;
+      }
+    });
+    group.userData = {
+      ...(group.userData || {}),
+      differenceReadonlyTunnelPreviewVisibleChunkCount: visibleChunkCount,
+    };
+  });
+}
+
+function refreshDifferenceRailDisplayChunkVisibility() {
+  const activeSpaces = getActiveDifferenceSpaces();
+  const activeSpaceBoxes = activeSpaces
+    .map((mesh) => getDifferenceMeshWorldBox(mesh))
+    .filter((box) => box?.isBox3);
+  const hasActiveSpaceFilter = shouldSceneShowDifferenceLineOverlapPreview() && activeSpaceBoxes.length > 0;
+
+  differenceRailDisplayMeshes.forEach((root) => {
+    if (!root?.parent) { return; }
+    const chunks = getDifferenceRailDisplayChunkMeshes(root);
+    if (chunks.length < 1) {
+      if (!root?.isMesh) { return; }
+      const box = getDifferenceMeshWorldBox(root);
+      const visible = differenceRailDisplayMeshesVisible && (
+        !hasActiveSpaceFilter
+        || (
+          box?.isBox3
+          && activeSpaceBoxes.some((spaceBox) => spaceBox.intersectsBox(box))
+        )
+      );
+      root.visible = visible;
+      applyDifferenceSpaceMeshStyle(root, { visible });
+      setDifferenceReadonlyControlPointsVisible(root, false);
+      return;
+    }
+
+    root.visible = differenceRailDisplayMeshesVisible;
+    let visibleChunkCount = 0;
+    chunks.forEach((chunk) => {
+      const box = getDifferenceMeshWorldBox(chunk);
+      const visible = differenceRailDisplayMeshesVisible && (
+        !hasActiveSpaceFilter
+        || (
+          box?.isBox3
+          && activeSpaceBoxes.some((spaceBox) => spaceBox.intersectsBox(box))
+        )
+      );
+      chunk.visible = visible;
+      applyDifferenceSpaceMeshStyle(chunk, { visible });
+      setDifferenceReadonlyControlPointsVisible(chunk, false);
+      if (visible) {
+        visibleChunkCount += 1;
+      }
+    });
+    root.userData = {
+      ...(root.userData || {}),
+      differenceRailDisplayVisibleChunkCount: visibleChunkCount,
+    };
+  });
+}
+
+function getDifferenceDisplayMeshesForPreview({ includeRailDisplays = true } = {}) {
+  const spaces = [];
+  const activeSpaces = getActiveDifferenceSpaces();
+  refreshDifferenceReadonlyTunnelPreviewChunkVisibility();
+  activeSpaces.forEach((mesh) => {
+    if (!includeRailDisplays && isDifferenceLineOverlapPreviewMesh(mesh)) {
+      return;
+    }
+    if (!isDifferenceReadonlyTunnelMesh(mesh)) {
+      spaces.push(mesh);
+      return;
+    }
+    const chunks = getDifferenceReadonlyTunnelPreviewChunkMeshes(mesh)
+      .filter((chunk) => chunk?.parent && chunk?.geometry && chunk.visible);
+    if (chunks.length > 0) {
+      spaces.push(...chunks);
+      return;
+    }
+    if (mesh.visible) {
+      spaces.push(mesh);
+    }
+  });
+  refreshDifferenceRailDisplayChunkVisibility();
+  if (!includeRailDisplays) {
+    return spaces;
+  }
+  const railDisplays = [];
+  differenceRailDisplayMeshes.forEach((root) => {
+    if (!root?.parent) { return; }
+    const chunks = getDifferenceRailDisplayChunkMeshes(root);
+    if (chunks.length > 0) {
+      chunks.forEach((chunk) => {
+        if (chunk?.parent && chunk?.geometry && chunk.visible) {
+          railDisplays.push(chunk);
+        }
+      });
+      return;
+    }
+    if (root?.geometry && root.visible) {
+      railDisplays.push(root);
+    }
+  });
+  return spaces.concat(railDisplays);
+}
+
 function getDifferenceMeshBoundaryControlPoints(mesh) {
-  if (!mesh?.userData?.differenceSpacePlane || !mesh?.geometry?.attributes?.position) { return []; }
+  if (!mesh?.userData?.differenceSpacePlane
+    || !mesh?.geometry?.attributes?.position
+    || !shouldDifferenceMeshParticipateInSharedPointMerge(mesh)) { return []; }
   const geometry = mesh.geometry;
   const pos = geometry.attributes.position;
   const idx = geometry.getIndex();
@@ -21290,8 +23494,13 @@ function getDifferenceMeshBoundaryControlPoints(mesh) {
   return Array.from(boundaryPoints);
 }
 
-function mergeOverlappedBoundaryControlPoints(threshold = differenceBoundaryMergeDistance) {
-  const spaces = getActiveDifferenceSpaces();
+function mergeOverlappedBoundaryControlPoints(threshold = differenceBoundaryMergeDistance, options = {}) {
+  if (!options?.force && !differenceAutoMergeEnabled) {
+    rebuildDifferenceEdgeOverlapConstraints();
+    return 0;
+  }
+  const spaces = getActiveDifferenceSpaces()
+    .filter((mesh) => shouldDifferenceMeshParticipateInSharedPointMerge(mesh));
   if (spaces.length < 1) { return 0; }
   const boundaryPoints = spaces
     .flatMap((mesh) => getDifferenceMeshBoundaryControlPoints(mesh))
@@ -21386,7 +23595,7 @@ function buildDifferenceIntersectGroups(spaces = getActiveDifferenceSpaces()) {
 
   const boxes = list.map((mesh) => {
     mesh.updateMatrixWorld(true);
-    return new THREE.Box3().setFromObject(mesh);
+    return getDifferenceMeshWorldBox(mesh);
   });
   for (let i = 0; i < list.length; i += 1) {
     for (let j = i + 1; j < list.length; j += 1) {
@@ -21409,6 +23618,33 @@ function buildDifferenceIntersectGroups(spaces = getActiveDifferenceSpaces()) {
   return Array.from(groups.values()).filter((group) => group.length >= 2);
 }
 
+function updateDifferenceAutoMergeToggleButton() {
+  if (!differenceAutoMergeToggleButton) { return; }
+  let isDifferenceContext = false;
+  try {
+    isDifferenceContext = (editObject === 'DIFFERENCE_SPACE') || differenceSpaceModeActive;
+  } catch (_err) {
+    isDifferenceContext = false;
+  }
+  differenceAutoMergeToggleButton.style.display = isDifferenceContext ? 'block' : 'none';
+  differenceAutoMergeToggleButton.disabled = !isDifferenceContext;
+  differenceAutoMergeToggleButton.textContent = differenceAutoMergeEnabled ? 'join[on]' : 'join[off]';
+  differenceAutoMergeToggleButton.style.background = differenceAutoMergeEnabled ? '#2b4f8a' : '';
+  differenceAutoMergeToggleButton.style.color = differenceAutoMergeEnabled ? '#ffffff' : '';
+}
+
+function setDifferenceAutoMergeEnabled(enabled = true) {
+  differenceAutoMergeEnabled = enabled !== false;
+  updateDifferenceAutoMergeToggleButton();
+  if ((editObject === 'DIFFERENCE_SPACE') || differenceSpaceModeActive) {
+    updateDifferenceStatus(
+      differenceAutoMergeEnabled
+        ? '自動結合: ON（面押し出し以外も自動結合）'
+        : '自動結合: OFF（面押し出し拡張のみ常時結合）'
+    );
+  }
+}
+
 function updateDifferenceUnifyButtonState() {
   if (!differenceUnifyButton) { return; }
   let isDifferenceContext = false;
@@ -21423,6 +23659,7 @@ function updateDifferenceUnifyButtonState() {
     differenceViewToggleButton.style.display = isDifferenceContext ? 'block' : 'none';
     differenceViewToggleButton.disabled = !isDifferenceContext;
   }
+  updateDifferenceAutoMergeToggleButton();
   let viewModeReady = true;
   try {
     void differenceViewMode;
@@ -21437,6 +23674,7 @@ function updateDifferenceUnifyButtonState() {
 
 function removeDifferenceSpaceMeshForUnify(mesh) {
   if (!mesh) { return false; }
+  clearDifferenceReadonlyTunnelPreviewChunks(mesh);
   const controlPoints = mesh.children.filter((child) => child?.userData?.differenceControlPoint);
   controlPoints.forEach((point) => {
     if (isDifferenceControlPointSelected(point)) {
@@ -21471,8 +23709,15 @@ function removeDifferenceSpaceMeshForUnify(mesh) {
   return true;
 }
 
-function cleanupDifferenceUnifiedGeometry(geometry) {
+function cleanupDifferenceUnifiedGeometry(geometry, options = {}) {
   if (!geometry?.attributes?.position) { return geometry || null; }
+  const {
+    weldScales = [6e-5, 1e-4, 1.6e-4],
+    minWeldEpsilon = 1e-6,
+    areaThresholdScale = 1e-10,
+    simplifyPlanarPatches = true,
+    simplifyOptions = null,
+  } = (options && typeof options === 'object') ? options : {};
   let geom = geometry;
   const pos = geom.attributes.position;
   if (!geom.getIndex()) {
@@ -21514,12 +23759,11 @@ function cleanupDifferenceUnifiedGeometry(geometry) {
   }
   geom.computeBoundingBox?.();
   const diag = geom.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || 1;
-  // 品質優先: 溶接を段階的に行い、微小な割れを減らす
-  const weldSteps = [
-    Math.max(1e-6, diag * 6e-5),
-    Math.max(1e-6, diag * 1e-4),
-    Math.max(1e-6, diag * 1.6e-4),
-  ];
+  const weldSteps = Array.isArray(weldScales)
+    ? weldScales
+      .map((scale) => Math.max(Number(minWeldEpsilon) || 1e-6, diag * (Number(scale) || 0)))
+      .filter((eps) => Number.isFinite(eps) && eps > 0)
+    : [];
   weldSteps.forEach((eps) => {
     const welded = mergeVertices(geom, eps) || geom;
     if (welded !== geom) {
@@ -21536,7 +23780,7 @@ function cleanupDifferenceUnifiedGeometry(geometry) {
   const idx2 = geom.getIndex();
   if (pos2 && idx2 && idx2.count >= 3) {
     const bbDiag = geom.boundingBox?.getSize?.(new THREE.Vector3())?.length?.() || diag || 1;
-    const areaThreshold = Math.max(1e-12, (bbDiag * bbDiag) * 1e-10);
+    const areaThreshold = Math.max(1e-12, (bbDiag * bbDiag) * Math.max(0, Number(areaThresholdScale) || 0));
     const p0 = new THREE.Vector3();
     const p1 = new THREE.Vector3();
     const p2 = new THREE.Vector3();
@@ -21565,14 +23809,17 @@ function cleanupDifferenceUnifiedGeometry(geometry) {
   geom.computeVertexNormals();
   geom.computeBoundingBox?.();
   geom.computeBoundingSphere?.();
-  geom = simplifyCoplanarPatchesToPlanes(geom, {
-    angleDegTol: 2.8,
-    distTolScale: 1.6e-3,
-    minTrianglesPerPatch: 3,
-  }) || geom;
-  geom.computeVertexNormals();
-  geom.computeBoundingBox?.();
-  geom.computeBoundingSphere?.();
+  if (simplifyPlanarPatches) {
+    geom = simplifyCoplanarPatchesToPlanes(geom, {
+      angleDegTol: 2.8,
+      distTolScale: 1.6e-3,
+      minTrianglesPerPatch: 3,
+      ...(simplifyOptions && typeof simplifyOptions === 'object' ? simplifyOptions : {}),
+    }) || geom;
+    geom.computeVertexNormals();
+    geom.computeBoundingBox?.();
+    geom.computeBoundingSphere?.();
+  }
   return geom;
 }
 
@@ -21923,7 +24170,12 @@ function runHighQualityDifferenceUnify() {
       .map((mesh) => {
         mesh.updateMatrixWorld(true);
         let cloned = mesh.geometry.clone();
-        cloned = cleanupDifferenceUnifiedGeometry(cloned) || cloned;
+        // union 前は形状を崩さないように cleanup をかなり弱くする。
+        cloned = cleanupDifferenceUnifiedGeometry(cloned, {
+          weldScales: [2.5e-5],
+          areaThresholdScale: 3e-11,
+          simplifyPlanarPatches: false,
+        }) || cloned;
         cloned.applyMatrix4(mesh.matrixWorld);
         return cloned;
       });
@@ -21959,7 +24211,16 @@ function runHighQualityDifferenceUnify() {
 
     const worldToRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
     mergedGeometry.applyMatrix4(worldToRoot);
-    const cleaned = cleanupDifferenceUnifiedGeometry(mergedGeometry);
+    const cleaned = cleanupDifferenceUnifiedGeometry(mergedGeometry, {
+      weldScales: [2.5e-5, 4.5e-5],
+      areaThresholdScale: 3e-11,
+      simplifyPlanarPatches: true,
+      simplifyOptions: {
+        angleDegTol: 1.35,
+        distTolScale: 5e-4,
+        minTrianglesPerPatch: 6,
+      },
+    });
     if (!cleaned) {
       mergedGeometry.dispose?.();
       return;
@@ -21969,6 +24230,14 @@ function runHighQualityDifferenceUnify() {
     root.geometry = cleaned;
     if (previousGeometry && previousGeometry !== cleaned) {
       previousGeometry.dispose?.();
+    }
+    if (isDifferenceReadonlyTunnelMesh(root)) {
+      clearDifferenceReadonlyTunnelPreviewChunks(root);
+      root.userData = {
+        ...(root.userData || {}),
+        differenceTunnelPreviewEdgePolylines: [],
+        differenceTunnelPreviewChunkSpecs: [],
+      };
     }
     root.userData = {
       ...(root.userData || {}),
@@ -21990,7 +24259,7 @@ function runHighQualityDifferenceUnify() {
   });
 
   relinkImportedDifferenceSharedPoints();
-  mergeOverlappedBoundaryControlPoints();
+  mergeOverlappedBoundaryControlPoints(differenceBoundaryMergeDistance, { force: true });
   rebuildDifferenceEdgeOverlapConstraints();
   clearDifferenceFaceSelection();
   clearDifferenceEdgeSelection();
@@ -22032,14 +24301,24 @@ function showDifferenceMergeNoticeAt(worldPos, text = '結合しました') {
   }, 1400);
 }
 
-function autoMergeNearbyDifferencePoints(changedPoints = [], threshold = differenceAutoMergeDistance) {
+function autoMergeNearbyDifferencePoints(changedPoints = [], threshold = differenceAutoMergeDistance, options = {}) {
+  if (!options?.force && !differenceAutoMergeEnabled) { return 0; }
   const candidatePoints = (Array.isArray(changedPoints) && changedPoints.length > 0)
     ? changedPoints
-    : differenceSpacePlanes.flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || []);
-  const sources = candidatePoints.filter((point) => point?.userData?.differenceControlPoint && point?.parent);
+    : differenceSpacePlanes
+      .filter((mesh) => shouldDifferenceMeshParticipateInSharedPointMerge(mesh))
+      .flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || []);
+  const sources = candidatePoints.filter((point) => {
+    const parentMesh = point?.userData?.parentDifferenceSpacePlane || point?.parent || null;
+    return point?.userData?.differenceControlPoint
+      && point?.parent
+      && shouldDifferenceMeshParticipateInSharedPointMerge(parentMesh);
+  });
   if (sources.length < 1) { return 0; }
 
-  const allPoints = differenceSpacePlanes.flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || [])
+  const allPoints = differenceSpacePlanes
+    .filter((mesh) => shouldDifferenceMeshParticipateInSharedPointMerge(mesh))
+    .flatMap((mesh) => mesh?.children?.filter?.((child) => child?.userData?.differenceControlPoint) || [])
     .filter((point) => point?.parent);
   if (allPoints.length < 2) { return 0; }
 
@@ -22056,6 +24335,9 @@ function autoMergeNearbyDifferencePoints(changedPoints = [], threshold = differe
     a.getWorldPosition(wa);
     allPoints.forEach((b) => {
       if (!b?.parent || a === b) { return; }
+      const meshA = a.userData?.parentDifferenceSpacePlane || a.parent || null;
+      const meshB = b.userData?.parentDifferenceSpacePlane || b.parent || null;
+      if (!canDifferenceMeshesSharePoints(meshA, meshB)) { return; }
       const idA = Math.min(a.id, b.id);
       const idB = Math.max(a.id, b.id);
       const pairKey = `${idA}:${idB}`;
@@ -22132,6 +24414,12 @@ function propagateDifferenceSharedPoints(points, dirtyMeshes = null) {
     point.getWorldPosition(worldPos);
     links.forEach((linkedPoint) => {
       if (!linkedPoint?.userData?.differenceControlPoint || !linkedPoint.parent) { return; }
+      const pointMesh = point.userData?.parentDifferenceSpacePlane || point.parent || null;
+      const linkedMesh = linkedPoint.userData?.parentDifferenceSpacePlane || linkedPoint.parent || null;
+      if (!canDifferenceMeshesSharePoints(pointMesh, linkedMesh)) {
+        removeDifferenceSharedPointLink(point, linkedPoint);
+        return;
+      }
       const local = worldPos.clone().applyMatrix4(new THREE.Matrix4().copy(linkedPoint.parent.matrixWorld).invert());
       linkedPoint.position.copy(local);
       if (dirtyMeshes) {
@@ -22220,16 +24508,6 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
       roughness: 0.58,
       flatShading: false,
     });
-  if (mat) {
-    mat.opacity = 0.5;
-    mat.transparent = true;
-    mat.side = THREE.DoubleSide;
-    mat.depthWrite = false;
-    if ('metalness' in mat) { mat.metalness = 0.08; }
-    if ('roughness' in mat) { mat.roughness = 0.58; }
-    if ('flatShading' in mat) { mat.flatShading = false; }
-    mat.needsUpdate = true;
-  }
   const mesh = new THREE.Mesh(geometry, mat);
   mesh.name = 'DifferenceSpacePlane';
   mesh.userData = {
@@ -22241,6 +24519,7 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
     mesh.quaternion.copy(referenceMesh.quaternion);
     mesh.scale.copy(referenceMesh.scale);
   }
+  applyDifferenceSpaceMeshStyle(mesh, { visible: true });
   scene.add(mesh);
   differenceSpacePlanes.push(mesh);
   return mesh;
@@ -22375,7 +24654,7 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   autoMergeNearbyDifferencePoints([
     ...sourceMesh.children.filter((child) => child?.userData?.differenceControlPoint),
     ...newMesh.children.filter((child) => child?.userData?.differenceControlPoint),
-  ]);
+  ], differenceAutoMergeDistance, { force: true });
   selectDifferencePlane(newMesh);
   return { mesh: newMesh, error: null, facePointCount: localFacePoints.length };
 }
@@ -22541,6 +24820,7 @@ function buildDifferenceCutterMeshFromSerializedSpace(rawSpace) {
   if (String(rawSpace?.mode || '').trim() === 'rail_track_names' && railTrackNames.length > 0) {
     const cutter = buildDifferenceCutterMeshFromRailTracks({
       trackNames: railTrackNames,
+      detailMode: 'final',
       bandHeight: Number(rawSpace?.bandHeight),
       sidePadding: Number(rawSpace?.sidePadding),
       innerPadding: Number(rawSpace?.innerPadding),
@@ -22598,6 +24878,7 @@ function buildDifferenceCutterMeshFromSerializedSpace(rawSpace) {
 function updateDifferenceStatus(text) {
   if (!differenceStatus) { return; }
   differenceStatus.textContent = text;
+  updateDifferenceUnifyButtonState();
 }
 
 function refreshDifferencePreview() {
@@ -22745,7 +25026,10 @@ function applySavedDifferenceRailOperationsToSinjyuku(rawOperations, { updateSta
   let totalChangedCount = 0;
   let appliedCount = 0;
   operations.forEach((operation) => {
-    const cutter = buildDifferenceCutterMeshFromRailTracks(operation);
+    const cutter = buildDifferenceCutterMeshFromRailTracks({
+      ...operation,
+      detailMode: 'final',
+    });
     if (!cutter) { return; }
     const changedCount = applyDifferenceToSinjyuku(cutter);
     cutter.geometry?.dispose?.();
@@ -22861,6 +25145,7 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
     if (String(rawSpace?.mode || '').trim() === 'rail_track_names' && railTrackNames.length > 0) {
       const cutter = buildDifferenceCutterMeshFromRailTracks({
         trackNames: railTrackNames,
+        detailMode: 'final',
         bandHeight: Number(rawSpace?.bandHeight),
         sidePadding: Number(rawSpace?.sidePadding),
         innerPadding: Number(rawSpace?.innerPadding),
@@ -22895,6 +25180,17 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
       pruneDifferenceControlPointsByMeaningfulEdges(mesh);
       return;
     }
+    const runtimeState = normalizeDifferenceSerializedRuntimeState(rawSpace?.runtimeDifferenceState);
+    if (runtimeState) {
+      const geometry = buildGeometryFromSerializedSpace(rawSpace);
+      if (!geometry) { return; }
+      applyTransformToSerializedDifferenceGeometry(geometry, rawSpace);
+      createDifferenceSpaceMeshFromWorldGeometry(geometry, {
+        readonly: true,
+        userData: runtimeState,
+      });
+      return;
+    }
     const geometry = buildGeometryFromSerializedSpace(rawSpace);
     if (!geometry) { return; }
     const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
@@ -22911,11 +25207,13 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
     pruneDifferenceControlPointsByMeaningfulEdges(mesh);
   });
   relinkImportedDifferenceSharedPoints();
-  mergeOverlappedBoundaryControlPoints();
+  mergeOverlappedBoundaryControlPoints(differenceBoundaryMergeDistance, { force: true });
   rebuildDifferenceEdgeOverlapConstraints();
   railOperations.forEach((operation) => {
     differenceRailOperations.push(operation);
   });
+  syncDifferenceRailDisplayMeshes();
+  syncDifferenceReadonlyTunnelSpaceVisibility();
   if (applyToCity) {
     const changedCount = applySavedDifferenceSpacesToSinjyuku(spaces, { updateStatus: false });
     const railChangedCount = applySavedDifferenceRailOperationsToSinjyuku(railOperations, { updateStatus: false });
@@ -22929,9 +25227,303 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
   targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
   setMeshListOpacity(targetObjects, 1);
   refreshDifferencePreview();
+  refreshDifferenceSelectedEdgeHighlights();
   return {
     spaceCount: spaces.length,
     railOperationCount: railOperations.length,
+  };
+}
+
+function buildDifferenceTunnelEnvelopeFromTrackCurves(trackCurves, { sampleStepMeters = 2.0 } = {}) {
+  const validTracks = Array.isArray(trackCurves)
+    ? trackCurves.filter((entry) => entry?.curve && typeof entry.curve.getLength === 'function' && entry.curve.getLength() > 0)
+    : [];
+  if (validTracks.length < 1) { return null; }
+  try {
+    if (typeof TSys?.buildTunnelEnvelopeFromTracks === 'function') {
+      const maxLen = validTracks.reduce((acc, entry) => Math.max(acc, Number(entry?.curve?.getLength?.()) || 0), 0);
+      const step = Math.max(0.5, Number(sampleStepMeters) || 2.0);
+      const sampleCount = THREE.MathUtils.clamp(Math.ceil(maxLen / step), 24, 180);
+      const envelope = TSys.buildTunnelEnvelopeFromTracks(validTracks, { sampleCount });
+      if (envelope?.centerCurve) {
+        return envelope;
+      }
+    }
+  } catch (err) {
+    console.warn('Difference tunnel envelope helper fallback', err);
+  }
+
+  const orderedTracks = getOrderedTracksByLateralPosition(validTracks, 0.5);
+  if (!Array.isArray(orderedTracks) || orderedTracks.length < 1) { return null; }
+  const rightEdge = orderedTracks[0];
+  const leftEdge = orderedTracks[orderedTracks.length - 1];
+  if (!rightEdge?.curve || !leftEdge?.curve) { return null; }
+  const maxLen = Math.max(
+    Number(rightEdge.curve.getLength?.()) || 0,
+    Number(leftEdge.curve.getLength?.()) || 0,
+    1,
+  );
+  const step = Math.max(0.5, Number(sampleStepMeters) || 2.0);
+  const sampleCount = THREE.MathUtils.clamp(Math.ceil(maxLen / step), 24, 180);
+  const centerPoints = [];
+  let maxSpan = 0;
+  for (let i = 0; i <= sampleCount; i += 1) {
+    const t = sampleCount > 0 ? i / sampleCount : 0;
+    const rightPoint = rightEdge.curve.getPointAt(t).clone();
+    const leftPoint = leftEdge.curve.getPointAt(t).clone();
+    centerPoints.push(rightPoint.clone().lerp(leftPoint, 0.5));
+    const dx = rightPoint.x - leftPoint.x;
+    const dz = rightPoint.z - leftPoint.z;
+    maxSpan = Math.max(maxSpan, Math.sqrt((dx * dx) + (dz * dz)));
+  }
+  return {
+    orderedTracks,
+    rightEdge,
+    leftEdge,
+    maxSpan,
+    centerCurve: centerPoints.length > 1 ? new THREE.CatmullRomCurve3(centerPoints) : rightEdge.curve.clone(),
+  };
+}
+
+function buildDifferenceTunnelPreviewEdgePolylines(curve, radius, tubularSegments, radialSampleRatios = [0, 0.25, 0.5, 0.75]) {
+  if (!curve || typeof curve.getPointAt !== 'function' || typeof curve.computeFrenetFrames !== 'function') { return []; }
+  const segCount = Math.max(1, Math.floor(Number(tubularSegments) || 0));
+  const tunnelRadius = Math.max(1e-4, Number(radius) || 0);
+  const sampleRatios = Array.isArray(radialSampleRatios) && radialSampleRatios.length > 0
+    ? radialSampleRatios
+    : [0, 0.25, 0.5, 0.75];
+  const frames = curve.computeFrenetFrames(segCount, false);
+  const polylines = sampleRatios.map(() => []);
+  for (let i = 0; i <= segCount; i += 1) {
+    const t = segCount > 0 ? (i / segCount) : 0;
+    const center = curve.getPointAt(THREE.MathUtils.clamp(t, 0, 1)).clone();
+    const normal = frames?.normals?.[i]?.clone?.() || new THREE.Vector3(1, 0, 0);
+    const binormal = frames?.binormals?.[i]?.clone?.() || new THREE.Vector3(0, 0, 1);
+    if (normal.lengthSq() <= 1e-10 || binormal.lengthSq() <= 1e-10) { continue; }
+    normal.normalize();
+    binormal.normalize();
+    sampleRatios.forEach((ratio, idx) => {
+      const theta = (Number(ratio) || 0) * Math.PI * 2;
+      const point = center.clone()
+        .add(normal.clone().multiplyScalar(Math.cos(theta) * tunnelRadius))
+        .add(binormal.clone().multiplyScalar(Math.sin(theta) * tunnelRadius));
+      polylines[idx].push([point.x, point.y, point.z]);
+    });
+  }
+  return polylines.filter((polyline) => Array.isArray(polyline) && polyline.length >= 2);
+}
+
+function cloneDifferencePreviewPolylines(polylines) {
+  if (!Array.isArray(polylines)) { return []; }
+  return polylines.map((polyline) => (
+    Array.isArray(polyline)
+      ? polyline.map((point) => Array.isArray(point) ? point.slice(0, 3) : point)
+      : polyline
+  ));
+}
+
+function cloneDifferenceTunnelPreviewChunkSpecs(specs) {
+  if (!Array.isArray(specs)) { return []; }
+  return specs.map((spec) => ({
+    key: String(spec?.key || ''),
+    tubularSegments: Math.max(1, Number(spec?.tubularSegments) || 1),
+    radius: Math.max(0.2, Number(spec?.radius) || 1.6),
+    radialSegments: THREE.MathUtils.clamp(Math.round(Number(spec?.radialSegments) || 14), 8, 24),
+    points: Array.isArray(spec?.points)
+      ? spec.points.map((point) => Array.isArray(point) ? point.slice(0, 3) : point)
+      : [],
+    previewEdgePolylines: cloneDifferencePreviewPolylines(spec?.previewEdgePolylines),
+  }));
+}
+
+function buildDifferenceTunnelPreviewChunkSpecs(curve, radius, tubularSegments, radialSegments = 14, {
+  targetSegmentsPerChunk = 12,
+  maxChunkCount = 24,
+} = {}) {
+  if (!curve || typeof curve.getPointAt !== 'function') { return []; }
+  const totalSegments = Math.max(1, Math.floor(Number(tubularSegments) || 0));
+  const desiredChunkCount = THREE.MathUtils.clamp(
+    Math.ceil(totalSegments / Math.max(1, Number(targetSegmentsPerChunk) || 12)),
+    1,
+    Math.max(1, Number(maxChunkCount) || 24),
+  );
+  const chunkSegmentSpan = Math.max(1, Math.ceil(totalSegments / desiredChunkCount));
+  const chunkSpecs = [];
+
+  for (let segStart = 0; segStart < totalSegments; segStart += chunkSegmentSpan) {
+    const segEnd = Math.min(totalSegments, segStart + chunkSegmentSpan);
+    const localSegments = Math.max(1, segEnd - segStart);
+    const startT = segStart / totalSegments;
+    const endT = segEnd / totalSegments;
+    const points = [];
+    for (let i = 0; i <= localSegments; i += 1) {
+      const localT = localSegments > 0 ? (i / localSegments) : 0;
+      const worldT = THREE.MathUtils.lerp(startT, endT, localT);
+      const point = curve.getPointAt(THREE.MathUtils.clamp(worldT, 0, 1))?.clone?.() || null;
+      if (point?.isVector3) {
+        points.push(point);
+      }
+    }
+    if (points.length < 2) { continue; }
+    const localCurve = new THREE.CatmullRomCurve3(points.map((point) => point.clone()));
+    chunkSpecs.push({
+      key: `${segStart}:${segEnd}`,
+      points: points.map((point) => [point.x, point.y, point.z]),
+      tubularSegments: localSegments,
+      radius: Math.max(0.2, Number(radius) || 1.6),
+      radialSegments: THREE.MathUtils.clamp(Math.round(Number(radialSegments) || 14), 8, 24),
+      previewEdgePolylines: buildDifferenceTunnelPreviewEdgePolylines(localCurve, radius, localSegments),
+    });
+  }
+
+  return chunkSpecs;
+}
+
+function buildDifferenceTunnelPreviewChunkGeometryFromSpec(spec) {
+  const rawPoints = Array.isArray(spec?.points) ? spec.points : [];
+  const points = rawPoints
+    .map((point) => Array.isArray(point) && point.length >= 3
+      ? new THREE.Vector3(Number(point[0]) || 0, Number(point[1]) || 0, Number(point[2]) || 0)
+      : null)
+    .filter((point) => point?.isVector3);
+  if (points.length < 2) { return null; }
+  const tubularSegments = Math.max(1, Number(spec?.tubularSegments) || (points.length - 1));
+  const radius = Math.max(0.2, Number(spec?.radius) || 1.6);
+  const radialSegments = THREE.MathUtils.clamp(Math.round(Number(spec?.radialSegments) || 14), 8, 24);
+  const curve = new THREE.CatmullRomCurve3(points.map((point) => point.clone()));
+  const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  return geometry;
+}
+
+function getDifferenceRailCutterDetailProfile(detailMode = 'standard') {
+  const mode = String(detailMode || 'standard').trim().toLowerCase();
+  if (mode === 'final' || mode === 'high' || mode === 'unify') {
+    return {
+      sampleDensityScale: 1.7,
+      solidMinSteps: 18,
+      solidMaxSteps: 360,
+      tubeMinSegments: 24,
+      tubeMaxSegments: 320,
+      tubeRadialScale: 1.5,
+      tubeRadialMin: 12,
+      tubeRadialMax: 32,
+      minEffectiveStepMeters: 0.3,
+    };
+  }
+  return {
+    sampleDensityScale: 1.0,
+    solidMinSteps: 12,
+    solidMaxSteps: 240,
+    tubeMinSegments: 16,
+    tubeMaxSegments: 180,
+    tubeRadialScale: 1.0,
+    tubeRadialMin: 8,
+    tubeRadialMax: 24,
+    minEffectiveStepMeters: 0.5,
+  };
+}
+
+function createDifferenceSpaceMeshFromWorldGeometry(geometry, {
+  readonly = false,
+  userData = null,
+} = {}) {
+  if (!geometry?.attributes?.position) { return null; }
+  geometry.computeVertexNormals?.();
+  geometry.computeBoundingBox?.();
+  geometry.computeBoundingSphere?.();
+  const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
+  if (!mesh) { return null; }
+  mesh.position.set(0, 0, 0);
+  mesh.quaternion.identity();
+  mesh.scale.set(1, 1, 1);
+  mesh.updateMatrixWorld(true);
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    ...(userData && typeof userData === 'object' ? userData : {}),
+  };
+  if (readonly) {
+    const readonlyTunnel = String(userData?.differenceGeneratedBy || '') === 'rail_tunnel_circle';
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      differenceReadonlyDisplay: true,
+    };
+    mesh.raycast = () => {};
+    if (!readonlyTunnel) {
+      rebuildDifferenceControlPointsFromGeometry(mesh);
+      mergeCoincidentDifferenceControlPoints(mesh);
+      pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+      setDifferenceReadonlyControlPointsVisible(mesh, false);
+    }
+    updateDifferenceReadonlyDisplayMeshCache(mesh);
+  }
+  structureSamplesDirty = true;
+  return mesh;
+}
+
+function addDifferenceTunnelTubeSpaceFromTrackCurves(trackCurves, {
+  innerRadius = 1.6,
+  yOffset = -1.0,
+  sideClearance = 1.2,
+  sampleStepMeters = 1.2,
+  radialSegments = 14,
+} = {}) {
+  const cutter = buildDifferenceCutterMeshFromRailTracks({
+    trackCurves,
+    shapeType: 'tube',
+    detailMode: 'final',
+    tubeRadius: innerRadius,
+    tunnelYOffset: yOffset,
+    tunnelSideClearance: sideClearance,
+    sampleStepMeters,
+    radialSegments,
+  });
+  if (!cutter?.geometry) { return null; }
+
+  const geometry = cutter.geometry.clone();
+  geometry.applyMatrix4(cutter.matrixWorld);
+  const mesh = createDifferenceSpaceMeshFromWorldGeometry(geometry, {
+    readonly: true,
+    userData: {
+      differenceGeneratedBy: 'rail_tunnel_circle',
+      differenceTunnelTrackNames: Array.isArray(cutter.userData?.differenceTunnelTrackNames)
+        ? cutter.userData.differenceTunnelTrackNames.slice()
+        : [],
+      differenceTunnelRadius: Number(cutter.userData?.differenceTunnelRadius) || Math.max(0.2, Number(innerRadius) || 1.6),
+      differenceTunnelYOffset: Number(cutter.userData?.differenceTunnelYOffset) || yOffset,
+      differenceTunnelSideClearance: Number(cutter.userData?.differenceTunnelSideClearance) || sideClearance,
+      differenceTunnelPreviewEdgePolylines: cloneDifferencePreviewPolylines(cutter.userData?.differenceTunnelPreviewEdgePolylines),
+      differenceTunnelPreviewChunkSpecs: cloneDifferenceTunnelPreviewChunkSpecs(cutter.userData?.differenceTunnelPreviewChunkSpecs),
+    },
+  });
+
+  cutter.geometry.dispose?.();
+  if (Array.isArray(cutter.material)) {
+    cutter.material.forEach((mat) => mat?.dispose?.());
+  } else {
+    cutter.material?.dispose?.();
+  }
+  if (!mesh) { return null; }
+
+  relinkImportedDifferenceSharedPoints();
+  mergeOverlappedBoundaryControlPoints(differenceBoundaryMergeDistance, { force: true });
+  rebuildDifferenceEdgeOverlapConstraints();
+  updateDifferenceUnifyButtonState();
+  if (differenceSpaceModeActive) {
+    targetObjects = differenceSpacePlanes.filter((m) => m?.parent);
+    setMeshListOpacity(targetObjects, 1);
+    refreshDifferencePreview();
+    refreshDifferenceSelectedEdgeHighlights();
+  }
+  syncDifferenceReadonlyTunnelSpaceVisibility();
+  return {
+    mesh,
+    trackNames: Array.isArray(mesh.userData?.differenceTunnelTrackNames)
+      ? mesh.userData.differenceTunnelTrackNames.slice()
+      : [],
+    radius: Number(mesh.userData?.differenceTunnelRadius) || 0,
   };
 }
 
@@ -22964,6 +25556,7 @@ function persistDifferenceSpaceFromMesh(sourceMesh) {
     const railOperation = buildDifferenceRailOperationFromCutter(sourceMesh);
     if (!railOperation) { return null; }
     differenceRailOperations.push(railOperation);
+    syncDifferenceRailDisplayMeshes();
     structureSamplesDirty = true;
     return {
       userData: {
@@ -23180,6 +25773,13 @@ function runDifferenceOnSinjyukuFromSelectedPoints() {
 
 function buildDifferenceCutterMeshFromRailTracks({
   trackNames = null,
+  trackCurves = null,
+  shapeType = 'solid',
+  detailMode = 'standard',
+  tubeRadius = null,
+  tunnelYOffset = -1.0,
+  tunnelSideClearance = 1.2,
+  radialSegments = 14,
   sidePadding = 0.6,
   innerPadding = 0.6,
   minBandWidth = 1.2,
@@ -23192,7 +25792,6 @@ function buildDifferenceCutterMeshFromRailTracks({
   } catch (_err) {
     trackDefs = null;
   }
-  if (!Array.isArray(trackDefs) || trackDefs.length < 1) { return null; }
   const selectedByPanel = (!Array.isArray(trackNames) || trackNames.length < 1)
     ? (Array.isArray(differenceLineTrackNames) && differenceLineTrackNames.length > 0
       ? differenceLineTrackNames
@@ -23205,8 +25804,16 @@ function buildDifferenceCutterMeshFromRailTracks({
     ? new Set(names.map((name) => String(name)))
     : null;
 
-  const selectedTrackCurves = getSelectedTrackCurvesForConstruction()
-    .filter((entry) => !allowedNames || allowedNames.has(String(entry.trackName || '')));
+  const explicitTrackCurves = Array.isArray(trackCurves)
+    ? trackCurves
+      .filter((entry) => entry?.curve)
+      .map((entry) => ({ trackName: entry.trackName, curve: entry.curve.clone?.() || entry.curve }))
+    : [];
+  if (explicitTrackCurves.length < 1 && (!Array.isArray(trackDefs) || trackDefs.length < 1)) { return null; }
+  const selectedTrackCurves = explicitTrackCurves.length > 0
+    ? explicitTrackCurves
+    : getSelectedTrackCurvesForConstruction()
+      .filter((entry) => !allowedNames || allowedNames.has(String(entry.trackName || '')));
 
   const sourceTrackCurves = selectedTrackCurves.length > 0
     ? selectedTrackCurves
@@ -23214,17 +25821,109 @@ function buildDifferenceCutterMeshFromRailTracks({
       .filter((track) => track?.curve && (!allowedNames || allowedNames.has(String(track.name || ''))))
       .map((track) => ({ trackName: track.name, curve: track.curve.clone() }));
 
+  const detailProfile = getDifferenceRailCutterDetailProfile(detailMode);
+  const stepMeters = Math.max(0.5, Number(sampleStepMeters) || 2.0);
+  const effectiveStepMeters = Math.max(
+    Number(detailProfile.minEffectiveStepMeters) || 0.5,
+    stepMeters / Math.max(1, Number(detailProfile.sampleDensityScale) || 1),
+  );
+  const resolvedTubeRadialSegments = THREE.MathUtils.clamp(
+    Math.round((Number(radialSegments) || 14) * (Number(detailProfile.tubeRadialScale) || 1)),
+    Math.max(8, Number(detailProfile.tubeRadialMin) || 8),
+    Math.max(8, Number(detailProfile.tubeRadialMax) || 24),
+  );
+  if (shapeType === 'tube') {
+    const envelope = buildDifferenceTunnelEnvelopeFromTrackCurves(sourceTrackCurves, {
+      sampleStepMeters: effectiveStepMeters,
+    });
+    if (!envelope?.centerCurve) { return null; }
+    const trackCount = Array.isArray(envelope.orderedTracks) ? envelope.orderedTracks.length : 0;
+    if (trackCount !== 1 && trackCount !== 2) { return null; }
+    const radiusBase = Math.max(0.2, Number(tubeRadius) || 1.6);
+    const sideClearance = Math.max(0, Number(tunnelSideClearance) || 0);
+    const resolvedRadius = trackCount === 2
+      ? Math.max(radiusBase, ((Number(envelope.maxSpan) || 0) * 0.5) + sideClearance)
+      : radiusBase;
+    const yOffsetValue = Number.isFinite(Number(tunnelYOffset)) ? Number(tunnelYOffset) : -1.0;
+    const centerCurve = envelope.centerCurve;
+    const centerLength = Number(centerCurve.getLength?.()) || 0;
+    const tubularSegments = THREE.MathUtils.clamp(
+      Math.ceil(Math.max(centerLength, effectiveStepMeters) / effectiveStepMeters),
+      Math.max(16, Number(detailProfile.tubeMinSegments) || 16),
+      Math.max(16, Number(detailProfile.tubeMaxSegments) || 180),
+    );
+    const shiftedPoints = centerCurve.getPoints(tubularSegments)
+      .map((point) => point.clone().setY(point.y + yOffsetValue + resolvedRadius));
+    if (shiftedPoints.length < 2) { return null; }
+    const shiftedCurve = new THREE.CatmullRomCurve3(shiftedPoints);
+    const geometry = new THREE.TubeGeometry(
+      shiftedCurve,
+      tubularSegments,
+      resolvedRadius,
+      resolvedTubeRadialSegments,
+      false,
+    );
+    const previewEdgePolylines = buildDifferenceTunnelPreviewEdgePolylines(
+      shiftedCurve,
+      resolvedRadius,
+      tubularSegments,
+    );
+    const previewChunkSpecs = buildDifferenceTunnelPreviewChunkSpecs(
+      shiftedCurve,
+      resolvedRadius,
+      tubularSegments,
+      resolvedTubeRadialSegments,
+      {
+        targetSegmentsPerChunk: 12,
+        maxChunkCount: 24,
+      },
+    );
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox?.();
+    geometry.computeBoundingSphere?.();
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x2ed0c9,
+      transparent: true,
+      opacity: 0.5,
+      metalness: 0.1,
+      roughness: 0.42,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cutter = new THREE.Mesh(geometry, material);
+    cutter.name = 'DifferencePreviewCutter';
+    cutter.renderOrder = 1200;
+    cutter.userData = {
+      ...(cutter.userData || {}),
+      differenceCutterSource: 'rail_track_tunnel_tube',
+      railTrackCount: trackCount,
+      differenceTunnelTrackNames: envelope.orderedTracks
+        .map((entry) => String(entry?.trackName || '').trim())
+        .filter((name) => name.length > 0),
+      differenceTunnelRadius: resolvedRadius,
+      differenceTunnelYOffset: yOffsetValue,
+      differenceTunnelSideClearance: sideClearance,
+      differenceRailSampleStepMeters: stepMeters,
+      differenceRailDetailMode: String(detailMode || 'standard'),
+      differenceTunnelPreviewEdgePolylines: previewEdgePolylines,
+      differenceTunnelPreviewChunkSpecs: previewChunkSpecs,
+    };
+    return cutter;
+  }
+
   const ordered = getOrderedTracksByLateralPosition(sourceTrackCurves, 0.5);
   if (!Array.isArray(ordered) || ordered.length < 1) { return null; }
   const rightEdge = ordered[0];
   const leftEdge = ordered[ordered.length - 1];
   if (!rightEdge?.curve || !leftEdge?.curve) { return null; }
-
-  const stepMeters = Math.max(0.5, Number(sampleStepMeters) || 2.0);
   const rightLen = Number(rightEdge.curve.getLength?.()) || 0;
   const leftLen = Number(leftEdge.curve.getLength?.()) || 0;
   const baseLen = Math.max(rightLen, leftLen, 1);
-  const steps = THREE.MathUtils.clamp(Math.floor(baseLen / stepMeters), 12, 240);
+  const steps = THREE.MathUtils.clamp(
+    Math.floor(baseLen / effectiveStepMeters),
+    Math.max(12, Number(detailProfile.solidMinSteps) || 12),
+    Math.max(12, Number(detailProfile.solidMaxSteps) || 240),
+  );
 
   const outerOffset = Math.max(0, Number(sidePadding) || 0);
   const innerOffset = Math.max(0, Number(innerPadding) || 0);
@@ -23446,13 +26145,14 @@ function buildDifferenceCutterMeshFromRailTracks({
       startOutward: [startForward.x * -1, startForward.y * -1, startForward.z * -1],
       endOutward: [endForward.x, endForward.y, endForward.z],
     },
-    differenceRailTrackNames: ordered.map((entry) => String(entry?.trackName || '').trim()).filter((name) => name.length > 0),
-    differenceRailBandHeight: height,
-    differenceRailSidePadding: outerOffset,
-    differenceRailInnerPadding: innerOffset,
-    differenceRailMinBandWidth: minWidth,
-    differenceRailSampleStepMeters: stepMeters,
-  };
+      differenceRailTrackNames: ordered.map((entry) => String(entry?.trackName || '').trim()).filter((name) => name.length > 0),
+      differenceRailBandHeight: height,
+      differenceRailSidePadding: outerOffset,
+      differenceRailInnerPadding: innerOffset,
+      differenceRailMinBandWidth: minWidth,
+      differenceRailSampleStepMeters: stepMeters,
+      differenceRailDetailMode: String(detailMode || 'standard'),
+    };
   return cutter;
 }
 
@@ -23460,7 +26160,10 @@ function runDifferenceOnSinjyukuFromRailTracks(options = {}) {
   const keepPreview = options?.keepPreview !== false;
   const appliedHeight = readDifferenceLineBandHeight();
   const operation = buildDifferenceRailOperationFromTrackNames(null, { bandHeight: appliedHeight });
-  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks(operation) : null;
+  const cutter = operation ? buildDifferenceCutterMeshFromRailTracks({
+    ...operation,
+    detailMode: 'final',
+  }) : null;
   if (!cutter) {
     updateDifferenceStatus('線路カッターの作成に失敗しました。');
     return false;
@@ -23564,6 +26267,37 @@ function getIntersectObjects(){
 
 let TargetDiff = [0,0]
 
+function beginAddPointGuideYDrag() {
+  if (!addPointGridHandle || !AddPointGuideGrid) { return false; }
+  if (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'add') {
+    if (differenceHoverFaceKey) {
+      clearDifferenceFaceHighlight();
+    }
+    differenceHoveredFaceHit = null;
+    setDifferenceAddCenterGuideVisible(false);
+  }
+  choice_object = addPointGridHandle;
+  addPointGridHandle.position.copy(AddPointGuideGrid.position);
+  addPointGridHandle.updateMatrixWorld(true);
+  setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+  setAddPointGuideGridVisibleFromUI(true);
+  move_direction_y = true;
+  const pos = camera.position;
+  raycaster.setFromCamera(mouse, camera);
+  const dir = raycaster.ray.direction;
+  const diff = { x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z };
+  const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x ** 2 + diff.z ** 2);
+  const t = hypotenuse / (Math.cos(cameraAngleY) * dir.z + Math.sin(cameraAngleY) * dir.x);
+  TargetDiff = choice_object.position.y - (pos.y + dir.y * t);
+  dragging = true;
+  efficacy = false;
+  GuideLine.position.copy(choice_object.position);
+  GuideLine.quaternion.identity();
+  GuideLine.visible = true;
+  updateCreateGuideYButtonState();
+  return true;
+}
+
 function setGuideGridColor(color) {
   if (!GuideGrid || !GuideGrid.material) { return; }
   if (Array.isArray(GuideGrid.material)) {
@@ -23588,6 +26322,66 @@ function setGuideGridVisibleFromUI(visible) {
 
 function setAddPointGuideGridVisibleFromUI(visible) {
   AddPointGuideGrid.visible = Boolean(visible);
+  updateCreateGuideYButtonState();
+}
+
+function setDifferenceAddCenterGuideVisible(visible) {
+  const next = Boolean(visible);
+  differenceAddCenterGuideActive = next;
+  if (DifferenceAddGuideCenter_x) { DifferenceAddGuideCenter_x.visible = next; }
+  if (DifferenceAddGuideCenter_z) { DifferenceAddGuideCenter_z.visible = next; }
+}
+
+function syncDifferenceAddCenterGuideFromPointer() {
+  const active = differenceSpaceModeActive
+    && differenceSpaceTransformMode === 'add'
+    && editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CREATE_NEW'
+    && !differenceAddGuideYModeActive
+    && !move_direction_y
+    && !viewModeActive
+    && !pointerBlockedByUI
+    && !differenceFaceVertexDragActive
+    && !differenceControlPointDragActive
+    && !pointRotateDragging
+    && !pointRotateMoveDragging;
+  if (!active) {
+    setDifferenceAddCenterGuideVisible(false);
+    return null;
+  }
+
+  if (differenceGuideHoverHit?.point?.isVector3) {
+    setDifferenceAddCenterGuideVisible(false);
+    setAddPointGuideGridVisibleFromUI(false);
+    return differenceGuideHoverHit.point.clone();
+  }
+
+  const facePoint = differenceHoveredFaceHit?.point?.clone?.() || null;
+  let point = getDifferenceAddPointerPoint();
+  if (!point?.isVector3) {
+    setDifferenceAddCenterGuideVisible(false);
+    return null;
+  }
+
+  const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
+  if (!facePoint) {
+    differenceAddGuideBaseY = point.y;
+  }
+  addPointGridY = point.y;
+  AddPointGuideGrid.position.copy(snappedPoint);
+  AddPointGuideGrid.quaternion.identity();
+  AddPointGuideGrid.updateMatrixWorld(true);
+  addPointGridHandle.position.copy(snappedPoint);
+  addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+  addPointGridHandle.updateMatrixWorld(true);
+  setAddPointGuideGridVisibleFromUI(false);
+
+  DifferenceAddGuideCenter_x.position.copy(snappedPoint);
+  DifferenceAddGuideCenter_x.quaternion.identity();
+  DifferenceAddGuideCenter_z.position.copy(snappedPoint);
+  DifferenceAddGuideCenter_z.quaternion.identity();
+  setDifferenceAddCenterGuideVisible(true);
+  return snappedPoint.clone();
 }
 
 let publicRuntimeGuideGridsVisible = false;
@@ -24916,6 +27710,12 @@ async function search_point() {
 
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
+  const usingDecorationGuidePlacement = guidePlacementActive && isDecorationGuidePlacementTemplate();
+  const shouldToggleBaseGuideOnGuideHover = addPointGridActive
+    && editObject === 'STEEL_FRAME'
+    && objectEditMode === 'CREATE_NEW'
+    && !move_direction_y
+    && !usingDecorationGuidePlacement;
   
   await sleep(80);
 
@@ -24924,20 +27724,45 @@ async function search_point() {
     if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
       guideRailHover = null;
       setGuideHoverPin(null);
+      updateCreateAddPointGuideHoverStartLog(null);
     } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
       const curve = guideHit.object.userData.guideCurve;
       const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
       guideRailHover = nearest ? { curve, point: nearest } : null;
       if (guideRailHover) {
+        if (shouldToggleBaseGuideOnGuideHover) {
+          updateCreateAddPointGuideHoverStartLog(null);
+        }
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
         GuideGrid.quaternion.identity();
         GuideGrid.material.color.set(0x88aa88);
         setGuideHoverPin(guideRailHover.point);
+        if (shouldToggleBaseGuideOnGuideHover) {
+          setAddPointGuideGridVisibleFromUI(false);
+        }
       }
     } else {
       guideRailHover = null;
       setGuideHoverPin(null);
+      if (shouldToggleBaseGuideOnGuideHover) {
+        const basePoint = syncCreateAddPointBaseGuideGrid();
+        updateCreateAddPointGuideHoverStartLog({
+          key: 'base',
+          payload: {
+            source: 'base',
+            point: basePoint
+              ? {
+                x: basePoint.x,
+                y: basePoint.y,
+                z: basePoint.z,
+              }
+              : null,
+            guidePlacementActive,
+            guidePlacementTemplate,
+          },
+        });
+      }
     }
     // console.log('hit')
     // console.log(intersects.length)
@@ -25003,6 +27828,24 @@ async function search_point() {
     choice_object = false;
     guideRailHover = null;
     setGuideHoverPin(null);
+    if (shouldToggleBaseGuideOnGuideHover) {
+      const basePoint = syncCreateAddPointBaseGuideGrid();
+      updateCreateAddPointGuideHoverStartLog({
+        key: 'base',
+        payload: {
+          source: 'base',
+          point: basePoint
+            ? {
+              x: basePoint.x,
+              y: basePoint.y,
+              z: basePoint.z,
+            }
+            : null,
+          guidePlacementActive,
+          guidePlacementTemplate,
+        },
+      });
+    }
     // dragging = false;
     GuideLine.visible = false
     GuideGrid.visible = false
@@ -25035,6 +27878,12 @@ async function onerun_search_point() {
   
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
+  const usingDecorationGuidePlacement = guidePlacementActive && isDecorationGuidePlacementTemplate();
+  const shouldToggleBaseGuideOnGuideHover = addPointGridActive
+    && editObject === 'STEEL_FRAME'
+    && objectEditMode === 'CREATE_NEW'
+    && !move_direction_y
+    && !usingDecorationGuidePlacement;
   
 
   if (intersects.length > 0) {
@@ -25042,20 +27891,45 @@ async function onerun_search_point() {
     if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
       guideRailHover = null;
       setGuideHoverPin(null);
+      updateCreateAddPointGuideHoverStartLog(null);
     } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
       const curve = guideHit.object.userData.guideCurve;
       const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
       guideRailHover = nearest ? { curve, point: nearest } : null;
       if (guideRailHover) {
+        if (shouldToggleBaseGuideOnGuideHover) {
+          updateCreateAddPointGuideHoverStartLog(null);
+        }
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
         GuideGrid.quaternion.identity();
         GuideGrid.material.color.set(0x88aa88);
         setGuideHoverPin(guideRailHover.point);
+        if (shouldToggleBaseGuideOnGuideHover) {
+          setAddPointGuideGridVisibleFromUI(false);
+        }
       }
     } else {
       guideRailHover = null;
       setGuideHoverPin(null);
+      if (shouldToggleBaseGuideOnGuideHover) {
+        const basePoint = syncCreateAddPointBaseGuideGrid();
+        updateCreateAddPointGuideHoverStartLog({
+          key: 'base',
+          payload: {
+            source: 'base',
+            point: basePoint
+              ? {
+                x: basePoint.x,
+                y: basePoint.y,
+                z: basePoint.z,
+              }
+              : null,
+            guidePlacementActive,
+            guidePlacementTemplate,
+          },
+        });
+      }
     }
     console.log(intersects.length)
     const firstHit = intersects[0];
@@ -25114,6 +27988,24 @@ async function onerun_search_point() {
     choice_object = false;
     guideRailHover = null;
     setGuideHoverPin(null);
+    if (shouldToggleBaseGuideOnGuideHover) {
+      const basePoint = syncCreateAddPointBaseGuideGrid();
+      updateCreateAddPointGuideHoverStartLog({
+        key: 'base',
+        payload: {
+          source: 'base',
+          point: basePoint
+            ? {
+              x: basePoint.x,
+              y: basePoint.y,
+              z: basePoint.z,
+            }
+            : null,
+          guidePlacementActive,
+          guidePlacementTemplate,
+        },
+      });
+    }
     GuideLine.visible = false
     GuideGrid.visible = false
     GuideGrid.quaternion.identity();
@@ -25179,13 +28071,11 @@ function coord_DisplayTo3D(Axis_num=false){
       return hit;
     }
   }
-  // add_point(create) 中は、親元ガイドグリッドの面を優先。
-  // guideAddModeActive 中は直前ターゲット(changeAngleGridTarget)を使わず、
-  // 常に親元(AddPointGuideGrid)を使って角度の持ち越しを防ぐ。
+  // add_point(create) 中は、常に親元ガイドグリッド(AddPointGuideGrid)を基準面にする。
+  // これで Rail から引き継いだ追加面の位置・角度・高さを SteelFrame 側でも
+  // 同じ基準として扱えるようにし、changeAngleGridTarget の持ち越しを避ける。
   if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && addPointGridActive && !move_direction_y) {
-    const planeRef = guideAddModeActive
-      ? (AddPointGuideGrid || null)
-      : (changeAngleGridTarget || AddPointGuideGrid || null);
+    const planeRef = AddPointGuideGrid || null;
     const normal = new THREE.Vector3(0, 1, 0);
     if (planeRef?.quaternion?.isQuaternion) {
       normal.applyQuaternion(planeRef.quaternion).normalize();
@@ -25997,6 +28887,46 @@ function handleDrag() {
     drawingObject();
     return;
   }
+  if (editObject === 'DIFFERENCE_SPACE'
+    && differenceSpaceTransformMode === 'move'
+    && movePointPanelActive
+    && moveDragStartPositions.length > 0
+    && moveDragStartPositions.some((entry) => entry?.mesh?.userData?.differenceControlPoint)) {
+    const delta = new THREE.Vector3(
+      point.x - moveDragAnchorStart.x,
+      point.y - moveDragAnchorStart.y,
+      point.z - moveDragAnchorStart.z
+    );
+    const dirtyMeshes = new Set();
+    const movedPoints = [];
+    moveDragStartPositions.forEach(({ mesh, posWorld }) => {
+      if (!mesh?.userData?.differenceControlPoint || !mesh?.parent) { return; }
+      const startWorld = posWorld?.isVector3 ? posWorld : mesh.getWorldPosition(new THREE.Vector3());
+      const nextWorld = startWorld.clone().add(delta);
+      mesh.position.copy(mesh.parent.worldToLocal(nextWorld));
+      const parentMesh = mesh.userData?.parentDifferenceSpacePlane || mesh.parent;
+      if (parentMesh?.userData?.differenceSpacePlane) {
+        dirtyMeshes.add(parentMesh);
+        movedPoints.push(mesh);
+      }
+    });
+    if (movedPoints.length > 0) {
+      propagateDifferenceSharedPoints(movedPoints, dirtyMeshes);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const moved = applyDifferenceEdgeOverlapConstraints(dirtyMeshes);
+      if (moved < 1) { break; }
+    }
+    dirtyMeshes.forEach((mesh) => {
+      syncDifferenceGeometryFromControlPoints(mesh);
+      updateDifferenceControlPointMarkerTransform(mesh);
+    });
+    pointRotateCenter.copy(moveDragAnchorStart.clone().add(delta));
+    refreshDifferenceSelectedEdgeHighlights();
+    refreshDifferencePreview();
+    updatePointRotateVisuals();
+    return;
+  }
   if (editObject === 'STEEL_FRAME' && objectEditMode === 'MOVE_EXISTING' && moveDragStartPositions.length > 0) {
     ensureMovePointAxisLockValues(moveDragStartPositions.map((entry) => entry?.mesh).filter(Boolean));
     const delta = new THREE.Vector3(
@@ -26045,6 +28975,23 @@ function handleDrag() {
     if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW' && railCreateGuideYModeActive) {
       addPointGridY = point.y;
       railCreateGuideBaseY = point.y;
+      AddPointGuideGrid.position.set(AddPointGuideGrid.position.x, point.y, AddPointGuideGrid.position.z);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(AddPointGuideGrid.position);
+      addPointGridHandle.updateMatrixWorld(true);
+    }
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && createAddGuideYModeActive) {
+      addPointGridY = point.y;
+      AddPointGuideGrid.position.set(AddPointGuideGrid.position.x, point.y, AddPointGuideGrid.position.z);
+      AddPointGuideGrid.quaternion.identity();
+      AddPointGuideGrid.updateMatrixWorld(true);
+      addPointGridHandle.position.copy(AddPointGuideGrid.position);
+      addPointGridHandle.updateMatrixWorld(true);
+    }
+    if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CREATE_NEW' && differenceAddGuideYModeActive) {
+      addPointGridY = point.y;
+      differenceAddGuideBaseY = point.y;
       AddPointGuideGrid.position.set(AddPointGuideGrid.position.x, point.y, AddPointGuideGrid.position.z);
       AddPointGuideGrid.quaternion.identity();
       AddPointGuideGrid.updateMatrixWorld(true);
@@ -26258,6 +29205,30 @@ async function handleMouseUp(mobile = false) {
     return;
   }
 
+  if (dragging === true
+    && editObject === 'DIFFERENCE_SPACE'
+    && differenceSpaceTransformMode === 'move'
+    && movePointPanelActive
+    && moveDragStartPositions.some((entry) => entry?.mesh?.userData?.differenceControlPoint)) {
+    const draggedPoints = moveDragStartPositions
+      .map((entry) => entry?.mesh)
+      .filter((mesh) => mesh?.userData?.differenceControlPoint);
+    dragging = false;
+    autoMergeNearbyDifferencePoints(draggedPoints);
+    mergeOverlappedBoundaryControlPoints();
+    refreshDifferencePreview();
+    refreshDifferenceSelectedEdgeHighlights();
+    commitDifferenceHistoryIfNeeded();
+    moveClickPending = false;
+    shouldToggle = false;
+    moveDragStartPositions = [];
+    moveDragAnchorStart = null;
+    GuideLine.visible = false;
+    refreshPointEditPanelUI({ clearInputs: true });
+    efficacy = true;
+    return;
+  }
+
   if (dragging === true) {
     // ドラッグ中なら必ずここで終了処理
     commitMoveHistoryIfNeeded();
@@ -26272,6 +29243,16 @@ async function handleMouseUp(mobile = false) {
     if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW' && railCreateGuideYModeActive) {
       move_direction_y = false;
       syncRailCreateGuideGrid();
+    }
+    if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && createAddGuideYModeActive) {
+      move_direction_y = false;
+      refreshCreateAddPointHoverAfterGuideYChange();
+      updateCreateGuideYButtonState();
+    }
+    if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CREATE_NEW' && differenceAddGuideYModeActive) {
+      move_direction_y = false;
+      syncDifferenceAddGuideYGridFromPointer();
+      updateCreateGuideYButtonState();
     }
     efficacy = true;
     if (objectEditMode === 'MOVE_EXISTING') {
@@ -26537,6 +29518,20 @@ async function handleMouseDown() {
 
   if (objectEditMode === 'CREATE_NEW'
     && editObject === 'STEEL_FRAME'
+    && createAddGuideYModeActive) {
+    beginAddPointGuideYDrag();
+    return;
+  }
+
+  if (objectEditMode === 'CREATE_NEW'
+    && editObject === 'DIFFERENCE_SPACE'
+    && differenceAddGuideYModeActive) {
+    beginAddPointGuideYDrag();
+    return;
+  }
+
+  if (objectEditMode === 'CREATE_NEW'
+    && editObject === 'STEEL_FRAME'
     && guideAddModeActive) {
     guideGridAddClickPending = true;
     guideGridAddShouldCreate = true;
@@ -26705,9 +29700,9 @@ async function handleMouseDown() {
   }
 
   if (pointRotateModeActive) {
-    ensurePointRotateGizmo();
-    raycaster.setFromCamera(mouse, camera);
-    const gizmoHit = raycaster.intersectObjects(pointRotateGizmoMeshes, true)[0] || null;
+    const gizmoHit = isDifferencePointRotateMode()
+      ? pickDifferencePointRotateGizmoHit()
+      : pickPointRotateGizmoHit();
     if (gizmoHit && pointRotateTarget) {
       if (gizmoHit.object?.userData?.action === 'rotate_gizmo_y') {
         beginPointRotateDrag(gizmoHit.object, {
@@ -27075,22 +30070,17 @@ async function handleMouseDown() {
     }
 
     if (editObject === 'RAIL' && railCreateGuideYModeActive) {
-      choice_object = addPointGridHandle;
-      addPointGridHandle.position.copy(AddPointGuideGrid.position);
-      addPointGridHandle.updateMatrixWorld(true);
-      move_direction_y = true;
-      const pos = camera.position;
-      raycaster.setFromCamera(mouse, camera);
-      const dir = raycaster.ray.direction;
-      const diff = { x: choice_object.position.x - pos.x, z: choice_object.position.z - pos.z };
-      const hypotenuse = Math.cos(Math.atan2(diff.x, diff.z) - cameraAngleY) * Math.sqrt(diff.x ** 2 + diff.z ** 2);
-      const t = hypotenuse / (Math.cos(cameraAngleY) * dir.z + Math.sin(cameraAngleY) * dir.x);
-      TargetDiff = choice_object.position.y - (pos.y + dir.y * t);
-      dragging = true;
-      efficacy = false;
-      GuideLine.position.copy(choice_object.position);
-      GuideLine.quaternion.identity();
-      GuideLine.visible = true;
+      beginAddPointGuideYDrag();
+      return;
+    }
+
+    if (editObject === 'STEEL_FRAME' && createAddGuideYModeActive) {
+      beginAddPointGuideYDrag();
+      return;
+    }
+
+    if (editObject === 'DIFFERENCE_SPACE' && differenceAddGuideYModeActive) {
+      beginAddPointGuideYDrag();
       return;
     }
 
@@ -27100,9 +30090,18 @@ async function handleMouseDown() {
     }
 
     if (guidePlacementActive && guidePlacementTemplate) {
-      let basePoint = coord_DisplayTo3D({ y: addPointGridY || 0 });
+      let basePoint = getDecorationCreatePointerPoint() || coord_DisplayTo3D({ y: addPointGridY || 0 });
       let basisQuat = (changeAngleGridTarget?.quaternion || AddPointGuideGrid?.quaternion || null);
       let basisPlaneRef = changeAngleGridTarget || AddPointGuideGrid || null;
+      if (decorationGuideHoverHit?.source === 'rail' && guideRailHover?.point) {
+        basePoint = guideRailHover.point.clone();
+      } else if (decorationGuideHoverHit?.source === 'grid' && decorationGuideHoverHit?.grid) {
+        basePoint = decorationGuideHoverHit.point.clone();
+        basisQuat = decorationGuideHoverHit.grid.quaternion || basisQuat;
+        basisPlaneRef = decorationGuideHoverHit.grid;
+      } else if (isDecorationGuidePlacementTemplate() && AddPointGuideGrid?.position?.isVector3) {
+        basePoint = AddPointGuideGrid.position.clone();
+      }
       if (guideAddGridPicks.length > 0) {
         const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
         if (hit?.point) {
@@ -27630,6 +30629,9 @@ const rotationInfoVisuals = [];
 let pointRotateGizmoGroup = null;
 const pointRotateGizmoMeshes = [];
 let pointRotateArrow = null;
+let differencePointRotateGizmoGroup = null;
+const differencePointRotateGizmoMeshes = [];
+let differencePointRotateArrow = null;
 let pointRotateTarget = null;
 let pointRotateCenter = new THREE.Vector3();
 let pointRotateDirection = new THREE.Vector3(0, 0, 1);
@@ -27859,6 +30861,13 @@ function pickPointRotateGizmoHit() {
   );
 }
 
+function pickDifferencePointRotateGizmoHit() {
+  raycaster.setFromCamera(mouse, camera);
+  return withGizmoPickLayerRaycast(() =>
+    raycaster.intersectObjects(differencePointRotateGizmoMeshes, true)[0] || null
+  );
+}
+
 function setDualLayerGizmoColor(target, color) {
   target?.traverse?.((child) => {
     if (!child?.material?.color) { return; }
@@ -27946,6 +30955,30 @@ function getCreateRotationSetYAxisWorld(panelAngles = rotatePanelState?.angles) 
 
 function getCreateRotationZAxisWorld(panelAngles = rotatePanelState?.angles) {
   return getCreateRotationAxesWorld(panelAngles).zAxis.clone();
+}
+
+function isDifferencePointRotateMode() {
+  return editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'CONSTRUCT'
+    && ['move', 'rotation'].includes(differenceSpaceTransformMode);
+}
+
+function hidePointRotateLegacyVisuals() {
+  if (pointRotateGizmoGroup) {
+    pointRotateGizmoGroup.visible = false;
+  }
+  if (pointRotateArrow) {
+    pointRotateArrow.visible = false;
+  }
+}
+
+function hideDifferencePointRotateVisuals() {
+  if (differencePointRotateGizmoGroup) {
+    differencePointRotateGizmoGroup.visible = false;
+  }
+  if (differencePointRotateArrow) {
+    differencePointRotateArrow.visible = false;
+  }
 }
 
 function getCreateRotationDragAxisWorld(axisLocal, action = 'rotate_points', panelAngles = rotatePanelState?.angles) {
@@ -28121,12 +31154,46 @@ function ensurePointRotateGizmo() {
   };
   // 緑: Yリング（点を回転）
   makeRing(0x5cff88, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_points', 1.0);
-  // 黄: 2本目Yリング（Difference rotation のみ使用）
+  // 黄: 2本目Yリング（legacy 側では decoration 系コンテキストのみ使用）
   makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_gizmo_y', 1.24);
   // 赤: Xリング（点を回転）
   makeRing(0xe63946, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 'rotate_points', 1.0);
   pointRotateGizmoGroup.visible = false;
   scene.add(pointRotateGizmoGroup);
+}
+
+function ensureDifferencePointRotateGizmo() {
+  if (differencePointRotateGizmoGroup) { return; }
+  differencePointRotateGizmoGroup = new THREE.Group();
+  differencePointRotateGizmoGroup.name = 'DifferencePointRotateGizmo';
+  const ringRadius = 1.0;
+  const ringTube = 0.03;
+  const geom = new THREE.TorusGeometry(ringRadius, ringTube, 12, 64);
+  const makeRing = (color, axis, euler, action = 'rotate_gizmo', radiusScale = 1.0) => {
+    const ringGeom = radiusScale === 1.0
+      ? geom
+      : new THREE.TorusGeometry(ringRadius * radiusScale, ringTube, 12, 64);
+    const mesh = createDualLayerGizmoMesh(ringGeom, { color });
+    const pick = new THREE.Mesh(
+      ringGeom,
+      createRaycastOnlyMaterial()
+    );
+    mesh.rotation.set(euler.x, euler.y, euler.z);
+    mesh.userData = { ...(mesh.userData || {}), isPointRotateGizmo: true, axis, action };
+    pick.rotation.set(euler.x, euler.y, euler.z);
+    pick.position.y = -GIZMO_PICK_OFFSET;
+    pick.userData = { ...(pick.userData || {}), isPointRotateGizmo: true, axis, action };
+    markGizmoPickMesh(pick);
+    differencePointRotateGizmoGroup.add(mesh);
+    differencePointRotateGizmoGroup.add(pick);
+    differencePointRotateGizmoMeshes.push(pick);
+  };
+  // Difference は専用ギズモとして分離し、decoration 側には触れない。
+  makeRing(0x32d9ff, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_points', 1.0);
+  makeRing(0xffc857, new THREE.Vector3(0, 1, 0), new THREE.Euler(Math.PI / 2, 0, 0), 'rotate_gizmo_y', 1.24);
+  makeRing(0xff6b6b, new THREE.Vector3(1, 0, 0), new THREE.Euler(0, Math.PI / 2, 0), 'rotate_points', 1.0);
+  differencePointRotateGizmoGroup.visible = false;
+  scene.add(differencePointRotateGizmoGroup);
 }
 
 function ensurePointRotateArrow() {
@@ -28136,6 +31203,15 @@ function ensurePointRotateArrow() {
   applyDualLayerArrowStyle(pointRotateArrow, { color: 0xf4c430, opacityFront: 0.98, opacityBack: 0.22 });
   pointRotateArrow.visible = false;
   scene.add(pointRotateArrow);
+}
+
+function ensureDifferencePointRotateArrow() {
+  if (differencePointRotateArrow) { return; }
+  differencePointRotateArrow = new THREE.ArrowHelper(pointRotateDirection.clone().normalize(), pointRotateCenter.clone(), 2, 0xf4c430, 0.45, 0.25);
+  differencePointRotateArrow.name = 'DifferencePointRotateArrow';
+  applyDualLayerArrowStyle(differencePointRotateArrow, { color: 0xf4c430, opacityFront: 0.98, opacityBack: 0.22 });
+  differencePointRotateArrow.visible = false;
+  scene.add(differencePointRotateArrow);
 }
 
 function syncPointRotatePanelFromTarget() {
@@ -28301,23 +31377,31 @@ function loadPointRotateBasisFromTarget(target) {
 }
 
 function updatePointRotateVisuals() {
-  ensurePointRotateGizmo();
-  ensurePointRotateArrow();
+  const useDifferenceGizmo = isDifferencePointRotateMode();
+  if (useDifferenceGizmo) {
+    ensureDifferencePointRotateGizmo();
+    ensureDifferencePointRotateArrow();
+    hidePointRotateLegacyVisuals();
+  } else {
+    ensurePointRotateGizmo();
+    ensurePointRotateArrow();
+    hideDifferencePointRotateVisuals();
+  }
+  const activeGizmoGroup = useDifferenceGizmo ? differencePointRotateGizmoGroup : pointRotateGizmoGroup;
+  const activeArrow = useDifferenceGizmo ? differencePointRotateArrow : pointRotateArrow;
   const active = pointRotateModeActive && Boolean(pointRotateTarget);
-  pointRotateGizmoGroup.visible = active;
-  pointRotateArrow.visible = active;
+  activeGizmoGroup.visible = active;
+  activeArrow.visible = active;
   if (!active) { return; }
-  const showSecondaryY = (
-    editObject === 'DIFFERENCE_SPACE'
-    && objectEditMode === 'CONSTRUCT'
-    && differenceSpaceTransformMode === 'rotation'
-  ) || (
-    editObject === 'STEEL_FRAME'
-    && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)
-    && pointRotateModeActive
-    && Boolean(pointRotateTarget?.userData?.decorationType)
-  );
-  pointRotateGizmoGroup.children.forEach((child) => {
+  const showSecondaryY = useDifferenceGizmo
+    ? differenceSpaceTransformMode === 'rotation'
+    : (
+      editObject === 'STEEL_FRAME'
+      && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)
+      && pointRotateModeActive
+      && Boolean(pointRotateTarget?.userData?.decorationType)
+    );
+  activeGizmoGroup.children.forEach((child) => {
     if (!child?.userData?.isPointRotateGizmo) { return; }
     if (child.userData.action === 'rotate_gizmo_y') {
       child.visible = showSecondaryY;
@@ -28325,12 +31409,12 @@ function updatePointRotateVisuals() {
       child.visible = true;
     }
   });
-  pointRotateGizmoGroup.position.copy(pointRotateCenter);
-  pointRotateGizmoGroup.quaternion.copy(pointRotateGizmoQuat);
-  pointRotateGizmoGroup.scale.setScalar(1.2);
-  pointRotateArrow.position.copy(pointRotateCenter);
-  pointRotateArrow.setDirection(pointRotateDirection.clone().normalize());
-  pointRotateArrow.setLength(2, 0.45, 0.25);
+  activeGizmoGroup.position.copy(pointRotateCenter);
+  activeGizmoGroup.quaternion.copy(pointRotateGizmoQuat);
+  activeGizmoGroup.scale.setScalar(1.2);
+  activeArrow.position.copy(pointRotateCenter);
+  activeArrow.setDirection(pointRotateDirection.clone().normalize());
+  activeArrow.setLength(2, 0.45, 0.25);
 }
 
 function getYawOnlyQuatFromDirection(direction) {
@@ -28979,18 +32063,14 @@ function clearPointRotateState() {
   pointRotateGizmoYawStart = 0;
   pointRotateLastSelectionKey = null;
   pointRotateLastSelectionMode = null;
-  if (pointRotateGizmoGroup) {
-    pointRotateGizmoGroup.visible = false;
-  }
+  hidePointRotateLegacyVisuals();
+  hideDifferencePointRotateVisuals();
   clearDifferenceFaceHighlight();
   clearDifferenceFaceSelection();
   clearDifferenceEdgeSelection();
   clearDifferenceBodySelection();
   clearDifferenceIntersectionVisuals();
   setDifferenceControlPointSelected(null);
-  if (pointRotateArrow) {
-    pointRotateArrow.visible = false;
-  }
   GuideLine.visible = false;
   GuideLine.quaternion.identity();
 }
@@ -30284,6 +33364,9 @@ export function UIevent (uiID, toggle){
     setCreateModeUtilityButtonsRightAligned(false);
   }} else if ( uiID === 'rail' ){ if ( toggle === 'active' ){
     console.log( 'rail _active' +'_'+ search_object)
+    updateRailInsertHoverStartLog(null);
+    setCreateAddGuideYModeActive(false);
+    setRailGuideYModeActive(false);
     move_direction_y = false
     editObject = 'RAIL'
     // objectEditMode = EDIT_RAIL;
@@ -30304,6 +33387,7 @@ export function UIevent (uiID, toggle){
  
   } else {
     console.log( 'rail _inactive' )
+    setRailGuideYModeActive(false);
     removeMeshes(targetObjects);
     clearRailSelectionLine();
     selectedRailPoint = null;
@@ -30325,8 +33409,9 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'new' ){ if ( toggle === 'active' ){
     console.log( 'new _active' )
+    updateRailInsertHoverStartLog(null);
     objectEditMode = 'CREATE_NEW'
-    railCreateGuideYModeActive = false
+    setRailGuideYModeActive(false)
     search_object = false
     cancelRailStraightDraft();
     updateRailInsertHoverFromPointer();
@@ -30335,7 +33420,7 @@ export function UIevent (uiID, toggle){
 
   } else {
     console.log( 'new _inactive' )
-    railCreateGuideYModeActive = false
+    setRailGuideYModeActive(false)
     hideRailInsertHoverPin();
     cancelRailStraightDraft();
     syncRailCreateGuideGrid();
@@ -30343,26 +33428,11 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'guide_y' ){ if ( toggle === 'active' ){
     console.log( 'guide_y _active' )
-    railCreateGuideYModeActive = true
-    editObject = 'RAIL'
-    objectEditMode = 'CREATE_NEW'
-    move_direction_y = false
-    search_object = false
-    targetObjects = []
-    syncRailCreateGuideGrid()
-    updateRailSelectionStatus()
+    setRailGuideYModeActive(true)
 
   } else {
     console.log( 'guide_y _inactive' )
-    railCreateGuideYModeActive = false
-    move_direction_y = false
-    search_object = false
-    if (editObject === 'RAIL' && objectEditMode === 'CREATE_NEW') {
-      targetObjects = []
-      updateRailInsertHoverFromPointer();
-      syncRailCreateGuideGrid();
-      updateRailSelectionStatus();
-    }
+    setRailGuideYModeActive(false)
 
   }} else if ( uiID === 'move' ){ if ( toggle === 'active' ){
     console.log( 'move _active' )
@@ -30685,6 +33755,9 @@ export function UIevent (uiID, toggle){
 
   }} else if ( uiID === 'add_point' ){ if ( toggle === 'active' ){
   console.log( 'add_point _active' )
+    updateCreateAddPointGuideHoverStartLog(null);
+    updateDecorationGuideHoverStartLog(null);
+    setCreateAddGuideYModeActive(false);
     editObject = 'STEEL_FRAME'
     steelFrameMode.setAllowPointAppend(true)
     objectEditMode = 'CREATE_NEW'
@@ -30693,42 +33766,39 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     addPointGridActive = true
-    if (!addPointGridInitialized) {
-      addPointGridHandle.position.set(0, 0, 0);
-      addPointGridInitialized = true;
-    }
-    addPointGridY = addPointGridHandle.position.y
-    AddPointGuideGrid.position.copy(addPointGridHandle.position);
+    syncBaseGuideGridHandleFromCurrentGrid();
     setAddPointGuideGridVisibleFromUI(true);
     search_point();
     guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
   } else {
   console.log( 'add_point _inactive' )
+    setCreateAddGuideYModeActive(false);
     search_object = false
     steelFrameMode.setAllowPointAppend(false)
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
     addPointGridActive = false
-    guideRailHover = null
+    resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide: false });
     // setGuideGridVisibleFromUI(false)
     setAddPointGuideGridVisibleFromUI(false);
     guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = false; });
 
   }} else if ( uiID === 'template' ){ if ( toggle === 'active' ){
   console.log( 'template _active' )
+    setCreateAddGuideYModeActive(false);
     if (guideWindow) {
       guideWindow.style.display = 'block';
     }
   } else {
   console.log( 'template _inactive' )
+    setCreateAddGuideYModeActive(false);
     if (guideWindow) {
       guideWindow.style.display = 'none';
     }
     guidePlacementTemplate = null;
     guidePlacementActive = false;
-    guideRailHover = null;
-    setGuideHoverPin(null);
+    resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide: false });
     // template を閉じたら add_point の状態を再適用する
     UIevent('add_point', 'active');
   }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
@@ -30792,6 +33862,7 @@ export function UIevent (uiID, toggle){
     updateGuideMillerApplyButtonVisibility();
   }} else if ( uiID === 'add' ){ if ( toggle === 'active' ){
   console.log( 'add _active' )
+    setCreateAddGuideYModeActive(false);
     guideAddModeActive = true;
     if (guideWindow) {
       guideWindow.style.display = 'none';
@@ -30801,12 +33872,7 @@ export function UIevent (uiID, toggle){
     search_object = true;
     // 平面指定でガイド用グリッドを表示
     addPointGridActive = true;
-    if (!addPointGridInitialized) {
-      addPointGridHandle.position.set(0, 0, 0);
-      addPointGridInitialized = true;
-    }
-    addPointGridY = addPointGridHandle.position.y;
-    AddPointGuideGrid.position.copy(addPointGridHandle.position);
+    syncBaseGuideGridHandleFromCurrentGrid();
     // 追加モードでは実体グリッド(newGrid)のみ表示し、親元グリッドの二重表示を防ぐ。
     setAddPointGuideGridVisibleFromUI(false);
   } else {
@@ -30814,8 +33880,7 @@ export function UIevent (uiID, toggle){
     guideAddModeActive = false;
     guidePlacementTemplate = null;
     guidePlacementActive = false;
-    guideRailHover = null;
-    setGuideHoverPin(null);
+    resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide: false });
     // add を閉じたら add_point の状態を再適用する
     UIevent('add_point', 'active');
 
@@ -30827,13 +33892,7 @@ export function UIevent (uiID, toggle){
     search_object = true
     addPointGridActive = true
     steelFrameMode.setAllowPointAppend(false)
-    if (!addPointGridInitialized) {
-      addPointGridHandle.position.set(0, 0, 0);
-      addPointGridInitialized = true;
-    }
-    addPointGridY = addPointGridHandle.position.y;
-    addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
-    AddPointGuideGrid.position.copy(addPointGridHandle.position);
+    syncBaseGuideGridHandleFromCurrentGrid();
     targetObjects = guideAddGridPicks
       .filter((pick) => pick?.userData?.guideAddGrid)
       .concat([addPointGridHandle])
@@ -30852,7 +33911,7 @@ export function UIevent (uiID, toggle){
       setMeshListOpacity(targetObjects, 1)
       steelFrameMode.setActive(true)
       addPointGridActive = true
-      addPointGridY = addPointGridHandle.position.y
+      syncBaseGuideGridHandleFromCurrentGrid();
       setAddPointGuideGridVisibleFromUI(true);
     }
 
@@ -30864,12 +33923,7 @@ export function UIevent (uiID, toggle){
     search_object = true
     addPointGridActive = true
     steelFrameMode.setAllowPointAppend(false)
-    if (!addPointGridInitialized) {
-      addPointGridHandle.position.set(0, 0, 0);
-      addPointGridInitialized = true;
-    }
-    addPointGridHandle.position.set(addPointGridHandle.position.x, addPointGridY, addPointGridHandle.position.z);
-    AddPointGuideGrid.position.copy(addPointGridHandle.position);
+    syncBaseGuideGridHandleFromCurrentGrid();
     // setAddPointGuideGridVisibleFromUI(true);
     targetObjects = guideAddGridPicks
       .filter((pick) => pick?.userData?.guideAddGrid)
@@ -30890,7 +33944,7 @@ export function UIevent (uiID, toggle){
       setMeshListOpacity(targetObjects, 1)
       steelFrameMode.setActive(true)
       addPointGridActive = true
-      addPointGridY = addPointGridY || 0
+      syncBaseGuideGridHandleFromCurrentGrid();
       setAddPointGuideGridVisibleFromUI(true);
     }
     // setAddPointGuideGridVisibleFromUI(false);
@@ -31059,7 +34113,7 @@ export function UIevent (uiID, toggle){
     editObject = 'STEEL_FRAME'
     steelFrameMode.setAllowPointAppend(false)
     objectEditMode = 'STYLE'
-    targetObjects = getConstructionCopyTargets()
+    targetObjects = getSteelFramePickTargets({ currentOnly: false })
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     search_object = true
@@ -31195,40 +34249,92 @@ export function UIevent (uiID, toggle){
     }
   }} else if ( uiID === 'x_z_sf' ){ if ( toggle === 'active' ){
   console.log( 'x_z_sf _active' )
+    const useDifferenceMove = (
+      editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move'
+    );
     movePointPanelActive = true
     scalePointPanelActive = false
-    pointRotateModeActive = false
-    clearPointRotateState()
-    editObject = 'STEEL_FRAME'
     move_direction_y = false
-    objectEditMode = 'MOVE_EXISTING'
-    targetObjects = getSteelFramePickTargets({ currentOnly: true })
-    setMeshListOpacity(targetObjects, 1)
-    search_object = true
-    search_point()
+    if (useDifferenceMove) {
+      pointRotateModeActive = true
+      targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+      setMeshListOpacity(targetObjects, 1)
+      search_object = false
+      setRotationPanelMode('move_point');
+      setRotationPanelVisible(true);
+      updatePointRotateVisuals()
+    } else {
+      pointRotateModeActive = false
+      clearPointRotateState()
+      editObject = 'STEEL_FRAME'
+      objectEditMode = 'MOVE_EXISTING'
+      targetObjects = getSteelFramePickTargets({ currentOnly: true })
+      setMeshListOpacity(targetObjects, 1)
+      search_object = true
+      search_point()
+    }
     updateMovePointPanelUI({ clearInputs: true });
+    updateDifferenceMoveAxisButtons();
 
   } else {
   console.log( 'x_z_sf _inactive' )
-    search_object = false
+    if (editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move') {
+      movePointPanelActive = false
+      setRotationPanelMode('rotation');
+      setRotationPanelVisible(true);
+      updatePointRotateVisuals()
+    } else {
+      search_object = false
+    }
+    updateDifferenceMoveAxisButtons();
   }} else if ( uiID === 'y_sf' ){ if ( toggle === 'active' ){
   console.log( 'y_sf _active' )
+    const useDifferenceMove = (
+      editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move'
+    );
     movePointPanelActive = true
     scalePointPanelActive = false
-    pointRotateModeActive = false
-    clearPointRotateState()
-    editObject = 'STEEL_FRAME'
     move_direction_y = true
-    objectEditMode = 'MOVE_EXISTING'
-    targetObjects = getSteelFramePickTargets({ currentOnly: true })
-    setMeshListOpacity(targetObjects, 1)
-    search_object = true
-    search_point()
+    if (useDifferenceMove) {
+      pointRotateModeActive = true
+      targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+      setMeshListOpacity(targetObjects, 1)
+      search_object = false
+      setRotationPanelMode('move_point');
+      setRotationPanelVisible(true);
+      updatePointRotateVisuals()
+    } else {
+      pointRotateModeActive = false
+      clearPointRotateState()
+      editObject = 'STEEL_FRAME'
+      objectEditMode = 'MOVE_EXISTING'
+      targetObjects = getSteelFramePickTargets({ currentOnly: true })
+      setMeshListOpacity(targetObjects, 1)
+      search_object = true
+      search_point()
+    }
     updateMovePointPanelUI({ clearInputs: true });
+    updateDifferenceMoveAxisButtons();
 
   } else {
   console.log( 'y_sf _inactive' )
-    search_object = false
+    if (editObject === 'DIFFERENCE_SPACE'
+      && objectEditMode === 'CONSTRUCT'
+      && differenceSpaceTransformMode === 'move') {
+      movePointPanelActive = false
+      setRotationPanelMode('rotation');
+      setRotationPanelVisible(true);
+      updatePointRotateVisuals()
+    } else {
+      search_object = false
+    }
+    updateDifferenceMoveAxisButtons();
   }} else if ( uiID === 'rotation/2' ){ if ( toggle === 'active' ){
   console.log( 'rotation/2 _active' )
     movePointPanelActive = false
@@ -31357,11 +34463,15 @@ export function UIevent (uiID, toggle){
   console.log( 'Difference _active' )
     if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceTransformMode = 'none'
+    ensureDifferenceRailDisplayMeshes();
+    setDifferenceRailDisplayMeshesVisible(true);
     if (differenceBodySelectButton) { differenceBodySelectButton.style.display = 'none'; }
     setDifferenceBodySelectionMode(false);
     if (differencePanel) {
       differencePanel.style.display = 'none';
     }
+    applyStructurePreviewLikeVisibility();
+    updateStructurePinnedVisibility();
     updateDifferenceStatus('spaceで平面を配置し、カテゴリ指定後に excavation を実行してください。');
   } else {
   console.log( 'Difference _inactive' )
@@ -31389,10 +34499,12 @@ export function UIevent (uiID, toggle){
       editObject = 'Standby';
       objectEditMode = 'Standby';
     }
+    setDifferenceRailDisplayMeshesVisible(false);
     clearDifferencePreviewTube();
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
     clearDifferenceSelectedBodyHighlights();
+    updateStructurePinnedVisibility();
   }} else if ( uiID === 'body_select' ){ if ( toggle === 'active' ){
   console.log( 'body_select _active' )
     setDifferenceBodySelectionMode(true);
@@ -31405,6 +34517,8 @@ export function UIevent (uiID, toggle){
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'none'
     differenceShapeType = 'box'
+    ensureDifferenceRailDisplayMeshes();
+    setDifferenceRailDisplayMeshesVisible(true);
     if (differenceShapeSelect) {
       differenceShapeSelect.value = 'box';
     }
@@ -31413,7 +34527,7 @@ export function UIevent (uiID, toggle){
     search_object = false
     targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
     setMeshListOpacity(targetObjects, 1)
-    steelFrameMode.setActive(false)
+    applyStructurePreviewLikeVisibility();
     if (differencePanel) {
       differencePanel.style.display = 'none';
     }
@@ -31450,6 +34564,7 @@ export function UIevent (uiID, toggle){
     if (blockManualDioramaSpaceMode()) { return; }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'add'
+    differenceAddGuideBaseY = Number(AddPointGuideGrid?.position?.y) || Number(addPointGridY) || 0
     if (differenceBodySelectButton) { differenceBodySelectButton.style.display = 'none'; }
     setDifferenceBodySelectionMode(false);
     pointRotateModeActive = false
@@ -31821,6 +34936,11 @@ export function UIevent (uiID, toggle){
 
   }}
   updateUndoRedoButtons();
+  updateCreateGuideYButtonState();
+  updateDifferenceGuideHoverFromPointer();
+  syncDifferenceAddGuideYGridFromPointer();
+  syncDifferenceAddCenterGuideFromPointer();
+  syncDifferenceReadonlyTunnelSpaceVisibility();
 }
 
 // 視点操作
@@ -31890,7 +35010,8 @@ function isInteractionAllowed(clientX, clientY){
   return pointInCanvas(clientX, clientY);
 }
 
-const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel, #group-point-edit-mode-panel, #performance-panel';
+const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel, #group-point-edit-mode-panel, #train-panel, #scene-panel, #performance-panel';
+const OVERLAY_UI_TARGET_SELECTOR = '#save-buttons, #show-instructions-btn, #instructions-panel, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #train-panel, #performance-panel, #performance-toggle-btn, #scene-panel, #scene-toggle-btn, #create-mode-utility-buttons, #create-guide-y-button, #UiGroup, #frontViewButtons, #guide-window';
 const PANEL_INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [contenteditable]:not([contenteditable="false"])';
 
 function isPanelValueInputTarget(target) {
@@ -31904,6 +35025,11 @@ function isPanelValueInputActive() {
   const active = document.activeElement;
   if (!(active instanceof Element)) { return false; }
   return isPanelValueInputTarget(active);
+}
+
+function isOverlayUiTarget(target) {
+  if (!(target instanceof Element)) { return false; }
+  return Boolean(target.closest(OVERLAY_UI_TARGET_SELECTOR));
 }
 
 function clearPanelInputInteractionLocks() {
@@ -31933,6 +35059,7 @@ document.addEventListener('focusin', (event) => {
 // ジョイコン or 視点 判定 : 物体移動開始
 window.addEventListener('mousedown', (e) => {
   if (isPanelValueInputTarget(e.target) || isPanelValueInputActive()) { return; }
+  if (isOverlayUiTarget(e.target)) { return; }
   if (!isInteractionAllowed(e.clientX, e.clientY)) return; // outside canvas in preview -> ignore (allow page interactions)
   handleMouseMove(e.clientX, e.clientY);
   handleMouseDown(e);
@@ -31940,10 +35067,7 @@ window.addEventListener('mousedown', (e) => {
 
 window.addEventListener('touchstart', (e) => {
   if (isPanelValueInputTarget(e.target) || isPanelValueInputActive()) { return; }
-  const uiTarget = e.target instanceof Element
-    ? e.target.closest('#save-buttons, #show-instructions-btn, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #performance-panel, #performance-toggle-btn')
-    : null;
-  if (uiTarget) { return; }
+  if (isOverlayUiTarget(e.target)) { return; }
 
   // UI監視
   const touch = e.touches[0];
@@ -32657,6 +35781,7 @@ function animate() {
     if (scaleArrowPick) { scaleArrowPick.visible = false; }
   }
   syncMovePointAxisReferences();
+  syncTrainGroupVisibility();
   syncSinjyukuCityVisibility();
 
   renderer.render(scene, camera);

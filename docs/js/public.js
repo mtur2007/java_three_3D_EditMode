@@ -459,15 +459,22 @@ async function readEditorSlotThumbnailRecord(slotId) {
     if (!activeSlot) {
       return;
     }
-    const slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null));
+    const rawSlotRecord = await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null);
+    const slotRecord = normalizeEditorSlotRuntimeRecord(rawSlotRecord);
     runtimeFiles = {
       st: slotRecord.st || null,
       ct: slotRecord.ct || null,
       tr: Array.isArray(slotRecord.tr) ? slotRecord.tr : [],
     };
+    activeSlot.fileName = String(slotRecord.st?.name || "").trim();
+    activeSlot.fileSize = Number(slotRecord.st?.size) || 0;
+    activeSlot.cityFileName = String(slotRecord.ct?.name || "").trim();
+    activeSlot.trainFileCount = Array.isArray(slotRecord.tr) ? slotRecord.tr.length : 0;
+    activeSlot.savedAt = typeof rawSlotRecord?.savedAt === "string" ? rawSlotRecord.savedAt : String(activeSlot.savedAt || "");
     if (structureWorldIdInput) {
       structureWorldIdInput.value = activeSlot.originId && activeSlot.originId !== "self" ? activeSlot.originId : "";
     }
+    renderEditorSlots();
     updateLocalMapSummary();
   }
 
@@ -515,6 +522,17 @@ async function readEditorSlotThumbnailRecord(slotId) {
       hour: "2-digit",
       minute: "2-digit",
     }).format(date);
+  }
+
+  function triggerBrowserDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   function setEditSaveNote(message, type = "info") {
@@ -808,17 +826,11 @@ async function readEditorSlotThumbnailRecord(slotId) {
       const remoteInfo = activeSlot.remoteWorldId
         ? `${titleInfo}<br>公開情報: ${statusLabel}${activeSlot.remoteUpdatedAt ? `<br>最終更新: ${formatSavedAt(activeSlot.remoteUpdatedAt)}` : ""}`
         : "";
-      const effectiveOriginId = String(
-        activeSlot.fileName
-          ? activeSlot.originId
-          : activeSlot.remoteOriginId || activeSlot.originId || "self"
-      ).trim() || "self";
-      const originInfo = `<br>origin_id: ${effectiveOriginId}`;
       detailDesc.innerHTML = activeSlot.fileName
-        ? `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}${originInfo}<br>構造物: ${activeSlot.fileName}${activeSlot.cityFileName ? `<br>都市: ${activeSlot.cityFileName}` : `<br>都市: 未保存`}<br>車両: ${activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存"}${activeSlot.thumbnailCapturedAt ? `<br>サムネ設定: ${formatSavedAt(activeSlot.thumbnailCapturedAt)}` : String(activeSlot.remoteThumbnailPath || "").trim() ? `<br>サムネ設定: Supabase 保存済み` : `<br>サムネ設定: 未設定`}${activeSlot.uploadedAt ? `<br>Supabase 保存先: ${activeSlot.uploadedPath}` : ""}`
+        ? `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}<br>構造物: ${activeSlot.fileName}${activeSlot.cityFileName ? `<br>都市: ${activeSlot.cityFileName}` : `<br>都市: 未保存`}<br>車両: ${activeSlot.trainFileCount > 0 ? `${activeSlot.trainFileCount}件` : "未保存"}${activeSlot.thumbnailCapturedAt ? `<br>サムネ設定: ${formatSavedAt(activeSlot.thumbnailCapturedAt)}` : String(activeSlot.remoteThumbnailPath || "").trim() ? `<br>サムネ設定: Supabase 保存済み` : `<br>サムネ設定: 未設定`}${activeSlot.uploadedAt ? `<br>Supabase 保存先: ${activeSlot.uploadedPath}` : ""}`
         : activeSlot.remoteWorldId
-          ? `自分の投稿情報を読み込みました。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}${originInfo}<br>このスロットに構造物データはまだ取り込まれていません。`
-          : `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${originInfo}<br>このスロットにはまだ構造物データが取り込まれていません。`;
+          ? `自分の投稿情報を読み込みました。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span>${remoteInfo}<br>このスロットに構造物データはまだ取り込まれていません。`
+          : `公開前の編集ワールドです。現在の状態: <span class="${detailStatusClass}">${statusLabel}</span><br>このスロットにはまだ構造物データが取り込まれていません。`;
     }
     if (slotZipName) {
       slotZipName.textContent = activeSlot.fileName || "未保存";
@@ -1139,10 +1151,33 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
     setEditSaveNote(
       publish
-        ? `${activeSlot.label} を公開しました。origin_id: ${activeSlot.originId || "self"}`
-        : `${activeSlot.label} の構造物データを Supabase に保存しました。origin_id: ${activeSlot.originId || "self"}`,
+        ? `${activeSlot.label} を公開しました。`
+        : `${activeSlot.label} の構造物データを Supabase に保存しました。`,
       "success",
     );
+  }
+
+  async function downloadActiveEditorSlotToLocal() {
+    const activeSlot = getEditorSlotById(activeEditorSlotId);
+    if (!activeSlot) {
+      throw new Error("保存先スロットが見つかりません。");
+    }
+    const rawSlotRecord = await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null);
+    const slotRecord = normalizeEditorSlotRuntimeRecord(rawSlotRecord);
+    const zipRecord = slotRecord.st;
+    if (!zipRecord?.buffer) {
+      throw new Error("保存済みワールドデータが見つかりません。ワールド編集画面で先にワールド保存してください。");
+    }
+    const fileName = String(zipRecord.name || SUPABASE_STRUCTURE_FILE_NAME).trim() || SUPABASE_STRUCTURE_FILE_NAME;
+    const blob = new Blob([zipRecord.buffer], {
+      type: zipRecord.type || "application/zip",
+    });
+    triggerBrowserDownload(blob, fileName);
+    activeSlot.fileName = fileName;
+    activeSlot.fileSize = Number(zipRecord.size) || blob.size;
+    activeSlot.savedAt = typeof rawSlotRecord?.savedAt === "string" ? rawSlotRecord.savedAt : String(activeSlot.savedAt || "");
+    renderEditorSlots();
+    setEditSaveNote(`${activeSlot.label} のワールドデータをPCへ保存しました。`, "success");
   }
 
   async function loadStructureWorldFromSupabaseById(worldIdInput, options = {}) {
@@ -1229,7 +1264,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     await syncActiveEditorSlotRuntimeFilesToLoader();
     persistEditorSlotsMeta();
     renderEditorSlots();
-    setEditSaveNote(`${activeSlot.label} に構造物ワールド ${worldId} を読み込みました。`, "success");
+    setEditSaveNote(`${activeSlot.label} に構造物データを読み込みました。`, "success");
   }
 
   async function resumeRemoteWorldEditingForActiveSlot() {
@@ -1354,7 +1389,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       editorAuthLocked.hidden = signedIn;
     }
     if (editLab) {
-      editLab.hidden = !signedIn;
+      editLab.hidden = false;
     }
   }
 
@@ -2179,7 +2214,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       void fetchAndBindOwnWorldSummaries();
       void syncActiveEditorSlotRuntimeFilesToLoader();
     });
-    setEditSaveNote("構造物は world_id 指定で取得し、都市 / 車両は LOCAL MAP LOADER から読み込みます。", "info");
+    setEditSaveNote("ローカルの構造物・都市・車両データを読み込んで編集を開始できます。", "info");
     void loadPublicStructureQuotaStatus();
   }
   syncFeaturesGuideButtonLabel();
@@ -2354,9 +2389,9 @@ async function readEditorSlotThumbnailRecord(slotId) {
 
   if (saveSlotZipBtn) {
     saveSlotZipBtn.addEventListener("click", async () => {
-      setEditSaveNote("Supabase に下書き保存中です...", "info");
+      setEditSaveNote("PCへ保存するワールドデータを準備中です...", "info");
       try {
-        await saveActiveEditorSlotToSupabase({ publish: false });
+        await downloadActiveEditorSlotToLocal();
       } catch (error) {
         setEditSaveNote(`保存に失敗しました: ${error?.message || error}`, "error");
       }

@@ -1663,6 +1663,7 @@
               <button id="controller" class="circle-ctrl" style="left: 160px; bottom: 110px; width: 30px; height: 30px"></button>
 
               <button id="log" class="control-button" style="right: 20px; top: 40px; display: none;">📤</button>
+              <button id="create-guide-y-button" class="control-button" style="position: fixed; left: 124px; top: 84px; width: 42px; height: 42px; border-radius: 4px; font-size: 19px; line-height: 1; z-index: 140; display: none;">y</button>
 
               <div id="UiGroup" style="position: fixed; top: 0px; left: 20px; z-index: 100;">
                 <button id = 'see' style = 'top: 10px;' > 🎦 </button>
@@ -1678,6 +1679,9 @@
 
               </div>
               <button id="difference-body-select" class="control-square-button" style="position: fixed; left: 20px; top: 104px; z-index: 120; padding: 6px 10px; font-size: 12px; display: none;">body</button>
+              <button id="difference-move-xz" class="control-square-button" style="position: fixed; left: 76px; top: 104px; z-index: 120; padding: 6px 10px; font-size: 12px; display: none;">x_z_sf</button>
+              <button id="difference-move-y" class="control-square-button" style="position: fixed; left: 146px; top: 104px; z-index: 120; padding: 6px 10px; font-size: 12px; display: none;">y_sf</button>
+              <button id="difference-auto-merge-toggle" class="control-square-button" style="position: fixed; left: 206px; top: 104px; z-index: 120; padding: 6px 10px; font-size: 12px; display: none;">join[on]</button>
 
               <!-- ランダム立体交差ボタンは非表示に変更 -->
 
@@ -1699,8 +1703,29 @@
               <button id = "logwindow" class="log-control-square-button" style="position: absolute; left: 420px; top: 20px; padding: 10px; font-size: 14px; color: #000; z-index: 10; backdrop-filter: blur(4px);">モバイル出力用</button>
               
               <button id="show-instructions-btn">操作説明</button>
-              <button id="performance-toggle-btn" type="button" style="position: fixed; right: 14px; bottom: 14px; z-index: 2700; border: 1px solid rgba(255,255,255,0.24); border-radius: 999px; background: rgba(11,17,29,0.84); color: #f4f7fb; padding: 10px 14px; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0,0,0,0.24); cursor: pointer;">Performance</button>
-              <section id="performance-panel" style="position: fixed; right: 14px; bottom: 62px; z-index: 2700; width: 220px; padding: 14px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.18); background: rgba(7,12,20,0.9); color: #f5f7fb; box-shadow: 0 18px 36px rgba(0,0,0,0.28); backdrop-filter: blur(14px); display: none; font-size: 13px; line-height: 1.45;">
+              <button id="scene-toggle-btn" type="button" aria-expanded="false" style="position: fixed; right: 14px; bottom: 62px; z-index: 2700; border: 1px solid rgba(255,255,255,0.24); border-radius: 999px; background: rgba(11,17,29,0.84); color: #f4f7fb; padding: 10px 14px; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0,0,0,0.24); cursor: pointer;">シーン</button>
+              <section id="scene-panel" style="position: fixed; right: 14px; bottom: 110px; z-index: 2700; width: 220px; padding: 14px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.18); background: rgba(7,12,20,0.9); color: #f5f7fb; box-shadow: 0 18px 36px rgba(0,0,0,0.28); backdrop-filter: blur(14px); display: none; font-size: 13px; line-height: 1.45;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
+                  <strong style="font-size:13px;letter-spacing:0.04em;">シーン</strong>
+                  <button type="button" id="scene-panel-close" style="border:none;background:transparent;color:#d5dbe7;font-size:18px;line-height:1;cursor:pointer;">×</button>
+                </div>
+                <div style="display:grid;gap:10px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <span style="color:#b7c3d9;">電車</span>
+                    <button type="button" id="scene-toggle-trains-btn" aria-pressed="true" style="min-width:58px;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#f5f7fb;font-size:12px;font-weight:700;letter-spacing:0.04em;cursor:pointer;">ON</button>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <span style="color:#b7c3d9;">都市モデル</span>
+                    <button type="button" id="scene-toggle-city-btn" aria-pressed="true" style="min-width:58px;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#f5f7fb;font-size:12px;font-weight:700;letter-spacing:0.04em;cursor:pointer;">ON</button>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <span style="color:#b7c3d9;">line重なり</span>
+                    <button type="button" id="scene-toggle-line-overlap-preview-btn" aria-pressed="true" style="min-width:58px;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#f5f7fb;font-size:12px;font-weight:700;letter-spacing:0.04em;cursor:pointer;">ON</button>
+                  </div>
+                </div>
+              </section>
+              <button id="performance-toggle-btn" type="button" aria-expanded="false" style="position: fixed; right: 14px; bottom: 14px; z-index: 2700; border: 1px solid rgba(255,255,255,0.24); border-radius: 999px; background: rgba(11,17,29,0.84); color: #f4f7fb; padding: 10px 14px; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0,0,0,0.24); cursor: pointer;">Performance</button>
+              <section id="performance-panel" style="position: fixed; right: 14px; bottom: 110px; z-index: 2700; width: 220px; padding: 14px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.18); background: rgba(7,12,20,0.9); color: #f5f7fb; box-shadow: 0 18px 36px rgba(0,0,0,0.28); backdrop-filter: blur(14px); display: none; font-size: 13px; line-height: 1.45;">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
                   <strong style="font-size:13px;letter-spacing:0.04em;">Performance</strong>
                   <button type="button" id="performance-panel-close" style="border:none;background:transparent;color:#d5dbe7;font-size:18px;line-height:1;cursor:pointer;">×</button>

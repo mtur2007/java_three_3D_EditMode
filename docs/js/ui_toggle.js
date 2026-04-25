@@ -518,9 +518,7 @@ const uiTree = {
     'see': '',
     'edit': {
         'rail': {
-            'new': {
-                'guide_y': '',
-            },
+            'new': '',
             'move': { 'x_z': '', 'y': '', 
                 // 'rotation_rail': '' 
             },

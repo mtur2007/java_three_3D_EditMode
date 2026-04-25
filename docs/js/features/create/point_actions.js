@@ -41,7 +41,7 @@ export function createPointActions(deps) {
       return [];
     }
     if (editObject === 'DIFFERENCE_SPACE'
-      && (getDifferenceSpaceTransformMode() === 'scale' || getDifferenceSpaceTransformMode() === 'rotation')) {
+      && ['move', 'scale', 'rotation'].includes(getDifferenceSpaceTransformMode())) {
       const selectedDiffPoints = getDifferenceSelectedPointsForTransform();
       if (selectedDiffPoints.length > 0) {
         return selectedDiffPoints;
