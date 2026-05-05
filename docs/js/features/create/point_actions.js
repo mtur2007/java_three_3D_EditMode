@@ -12,7 +12,7 @@ export function createPointActions(deps) {
     getNormalStructureGroupPointEditMode,
     getCopiedStructureGroupPointEditMode,
     detachCopiedStructureGroup,
-    syncCopiedGroupRotationPanel,
+    syncStructureGroupRotationPanel,
     refreshPointEditPanelUI,
   } = deps;
 
@@ -263,7 +263,7 @@ export function createPointActions(deps) {
       .filter(Boolean)
       .find(Boolean);
     if (syncGroupId) {
-      syncCopiedGroupRotationPanel?.(syncGroupId);
+      syncStructureGroupRotationPanel?.(syncGroupId);
     }
 
     // 既存選択は維持し、対象のみを加算選択する。

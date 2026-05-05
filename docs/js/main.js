@@ -755,6 +755,7 @@ const threeUi = document.getElementById('three-ui');
   const rotationInputYMask = document.getElementById('rotation-input-y-mask');
   const rotationInputZMask = document.getElementById('rotation-input-z-mask');
   const rotationApplyBtn = document.getElementById('rotation-apply');
+  const rotationDecorationZeroBaseBtn = document.getElementById('rotation-decoration-zero-base');
   const rotationSelectionInfo = document.getElementById('rotation-selection-info');
   const movePointCoordinateModeRow = document.getElementById('move-point-coordinate-mode');
   const copyTargetModeRow = document.getElementById('copy-target-mode');
@@ -813,6 +814,7 @@ const threeUi = document.getElementById('three-ui');
   const railConstructionVerticalOffsetInput = document.getElementById('rail-construction-vertical-offset');
   const railConstructionYawOffsetInput = document.getElementById('rail-construction-yaw-offset');
   const railConstructionSpacingInput = document.getElementById('rail-construction-spacing');
+  const railConstructionSnapPinsButton = document.getElementById('rail-construction-snap-pins-button');
   const railConstructionGenerateButton = document.getElementById('rail-construction-generate-button');
   const railConstructionStatus = document.getElementById('rail-construction-status');
   const structureGenerationListPanel = document.getElementById('structure-generation-list-panel');
@@ -1292,7 +1294,7 @@ const CONFIGURED_COMMUTER_TRAIN_MAX_SPEED = 0.006;
 const CONFIGURED_SHINKANSEN_TRAIN_MAX_SPEED = 0.009;
 const CONFIGURED_TRAIN_ACCELERATION = 0.00001;
 const CONFIGURED_TRAIN_MIN_SPEED = 0.001;
-const CONFIGURED_TRAIN_MAX_SPEED = 0.1;
+const CONFIGURED_TRAIN_MAX_SPEED = 10;
 let differenceSpaceTransformMode = 'none';
   let differenceBodySelectModeActive = false;
   let movePointPanelActive = false;
@@ -1331,6 +1333,9 @@ let differenceSpaceTransformMode = 'none';
   const STRUCTURE_LINK_REBUILD_RETRY_MS = 180;
   let structureGenerationRuns = [];
   let selectedStructureGenerationRunKey = '';
+  let openedStructureGenerationPinDetailKey = '';
+  let openedStructureGenerationDiagnosticKey = '';
+  let openedStructureGenerationAdjustKey = '';
   let pinGenerationRuntimeSeq = 1;
   let structureGenerationReplayActive = false;
   let structureGenerationReplayPending = false;
@@ -1586,6 +1591,148 @@ let differenceSpaceTransformMode = 'none';
       .find((run) => buildGenerationRunDedupKey(run) === selectedStructureGenerationRunKey) || null;
   }
 
+  function formatStructureGenerationPinDetailLines(runLike) {
+    const pins = normalizePinsPayload(runLike?.pins);
+    if (pins.length < 1) {
+      return ['ピン情報はありません。'];
+    }
+    return pins.map((pin, index) => {
+      const trackName = String(pin?.trackName || '').trim() || '未設定';
+      return [
+        `#${index + 1}`,
+        `track=${trackName}`,
+        `x=${roundTo(pin?.x, 3)}`,
+        `y=${roundTo(pin?.y, 3)}`,
+        `z=${roundTo(pin?.z, 3)}`,
+      ].join(' / ');
+    });
+  }
+
+  function createPinPayloadFromScenePin(pin) {
+    return {
+      x: Number(pin?.position?.x) || 0,
+      y: Number(pin?.position?.y) || 0,
+      z: Number(pin?.position?.z) || 0,
+      trackName: String(pin?.userData?.trackName || '').trim(),
+    };
+  }
+
+  function formatPinSummaryLine(pinLike, index = null) {
+    const prefix = Number.isInteger(index) ? `#${index + 1} / ` : '';
+    const trackName = String(pinLike?.trackName || '').trim() || '未設定';
+    return `${prefix}track=${trackName} / x=${roundTo(pinLike?.x, 3)} / y=${roundTo(pinLike?.y, 3)} / z=${roundTo(pinLike?.z, 3)}`;
+  }
+
+  function analyzeStructureGenerationRunPinCoverage(runLike) {
+    const runPins = normalizePinsPayload(runLike?.pins);
+    const scenePins = structurePinnedPins
+      .filter((pin) => pin?.position && pin?.userData)
+      .map((pin) => ({
+        pin,
+        payload: createPinPayloadFromScenePin(pin),
+        key: getStructurePinMatchKey(createPinPayloadFromScenePin(pin)),
+        visible: pin.visible !== false,
+      }));
+    const remainingSceneEntries = scenePins.slice();
+    const matchedSceneEntries = [];
+    const missingRunPins = [];
+
+    runPins.forEach((runPin) => {
+      const key = getStructurePinMatchKey(runPin);
+      const matchIndex = remainingSceneEntries.findIndex((entry) => entry.key === key);
+      if (matchIndex < 0) {
+        missingRunPins.push(runPin);
+        return;
+      }
+      matchedSceneEntries.push(remainingSceneEntries[matchIndex]);
+      remainingSceneEntries.splice(matchIndex, 1);
+    });
+
+    const visibleMatchedCount = matchedSceneEntries.filter((entry) => entry.visible).length;
+    const extraScenePins = remainingSceneEntries.map((entry) => entry.payload);
+    return {
+      runPinCount: runPins.length,
+      scenePinCount: scenePins.length,
+      matchedCount: matchedSceneEntries.length,
+      visibleMatchedCount,
+      missingRunPins,
+      extraScenePins,
+    };
+  }
+
+  function formatStructureGenerationDiagnosticLines(runLike) {
+    const report = analyzeStructureGenerationRunPinCoverage(runLike);
+    const lines = [
+      `run pins: ${report.runPinCount}`,
+      `scene pins: ${report.scenePinCount}`,
+      `matched in scene: ${report.matchedCount}`,
+      `matched and visible: ${report.visibleMatchedCount}`,
+    ];
+    if (report.missingRunPins.length > 0) {
+      lines.push('missing from scene:');
+      report.missingRunPins.forEach((pin, index) => {
+        lines.push(`  ${formatPinSummaryLine(pin, index)}`);
+      });
+    }
+    if (report.extraScenePins.length > 0) {
+      lines.push('unmatched scene pins:');
+      report.extraScenePins.slice(0, 12).forEach((pin, index) => {
+        lines.push(`  ${formatPinSummaryLine(pin, index)}`);
+      });
+      if (report.extraScenePins.length > 12) {
+        lines.push(`  ... ${report.extraScenePins.length - 12} more`);
+      }
+    }
+    if (report.missingRunPins.length < 1 && report.runPinCount === report.matchedCount) {
+      lines.push('status: run pins are all present in scene');
+    }
+    return lines;
+  }
+
+  function canAdjustStructureGenerationRun(runLike) {
+    return String(runLike?.category || '').trim() === 'group';
+  }
+
+  function updateStructureGenerationRunGroupParams(runLike, nextParams = {}) {
+    if (!runLike || typeof runLike !== 'object') { return false; }
+    const prevParams = (runLike?.params && typeof runLike.params === 'object') ? runLike.params : {};
+    runLike.params = {
+      ...prevParams,
+      lateralOffset: Number.isFinite(Number(nextParams?.lateralOffset)) ? Number(nextParams.lateralOffset) : Number(prevParams?.lateralOffset) || 0,
+      verticalOffset: Number.isFinite(Number(nextParams?.verticalOffset)) ? Number(nextParams.verticalOffset) : Number(prevParams?.verticalOffset) || 0,
+      yawOffsetDeg: Number.isFinite(Number(nextParams?.yawOffsetDeg)) ? Number(nextParams.yawOffsetDeg) : Number(prevParams?.yawOffsetDeg) || 0,
+      spacing: Number.isFinite(Number(nextParams?.spacing)) ? Number(nextParams.spacing) : Number(prevParams?.spacing) || 0,
+    };
+    return true;
+  }
+
+  function rerunAdjustedStructureGenerationRun(runLike, nextParams = {}) {
+    if (!canAdjustStructureGenerationRun(runLike)) { return false; }
+    updateStructureGenerationRunGroupParams(runLike, nextParams);
+    const ok = rerunStructureGenerationRun(runLike);
+    renderStructureGenerationList();
+    return ok;
+  }
+
+  function focusCameraOnStructurePin(pinLike) {
+    const x = Number(pinLike?.x);
+    const y = Number(pinLike?.y);
+    const z = Number(pinLike?.z);
+    if (![x, y, z].every((value) => Number.isFinite(value))) { return false; }
+    const target = new THREE.Vector3(x, y, z);
+    const offset = new THREE.Vector3(0, 4.5, 7.5);
+    const nextPosition = target.clone().add(offset);
+    camera.position.copy(nextPosition);
+    const diff = target.clone().sub(camera.position);
+    const horizontalLength = Math.sqrt((diff.x ** 2) + (diff.z ** 2));
+    cameraAngleY = Math.atan2(diff.x, diff.z);
+    cameraAngleX = Math.atan2(diff.y, Math.max(1e-6, horizontalLength));
+    cameraAngleX = Math.max(-pitchLimit, Math.min(pitchLimit, cameraAngleX));
+    persistCameraViewStateToLocalStorage({ force: true });
+    showTopNotice(`ピンへ移動: x=${roundTo(x, 3)}, y=${roundTo(y, 3)}, z=${roundTo(z, 3)}`, 1800);
+    return true;
+  }
+
   function refreshStructurePinnedPinColors() {
     const selectedRun = getSelectedStructureGenerationRun();
     const selectedPinKeys = new Set(
@@ -1602,8 +1749,10 @@ let differenceSpaceTransformMode = 'none';
       const isRunSelectedPin = selectedPinKeys.has(pinKey);
       if (isConstructionPinSelected(pin)) {
         setPinColor(pin, structureSelectedColor);
+        setStructurePinForeground(pin, true);
         return;
       }
+      setStructurePinForeground(pin, isRunSelectedPin);
       setPinColor(pin, isRunSelectedPin ? structureGenerationListSelectedColor : structurePinnedColor);
     });
   }
@@ -1623,6 +1772,24 @@ let differenceSpaceTransformMode = 'none';
         selectedStructureGenerationRunKey = '';
       }
     }
+    if (openedStructureGenerationPinDetailKey) {
+      const hasOpened = runs.some((run) => buildGenerationRunDedupKey(run) === openedStructureGenerationPinDetailKey);
+      if (!hasOpened) {
+        openedStructureGenerationPinDetailKey = '';
+      }
+    }
+    if (openedStructureGenerationDiagnosticKey) {
+      const hasOpenedDiagnostic = runs.some((run) => buildGenerationRunDedupKey(run) === openedStructureGenerationDiagnosticKey);
+      if (!hasOpenedDiagnostic) {
+        openedStructureGenerationDiagnosticKey = '';
+      }
+    }
+    if (openedStructureGenerationAdjustKey) {
+      const hasOpenedAdjust = runs.some((run) => buildGenerationRunDedupKey(run) === openedStructureGenerationAdjustKey);
+      if (!hasOpenedAdjust) {
+        openedStructureGenerationAdjustKey = '';
+      }
+    }
     const orderedRuns = runs.slice().reverse();
     structureGenerationList.replaceChildren();
     structureGenerationListSummary.textContent = runs.length > 0
@@ -1640,6 +1807,9 @@ let differenceSpaceTransformMode = 'none';
       const row = formatStructureGenerationRunSummary(run, index, orderedRuns.length);
       const runKey = buildGenerationRunDedupKey(run);
       const isSelected = selectedStructureGenerationRunKey === runKey;
+      const detailOpened = openedStructureGenerationPinDetailKey === runKey;
+      const diagnosticOpened = openedStructureGenerationDiagnosticKey === runKey;
+      const adjustOpened = openedStructureGenerationAdjustKey === runKey;
       const item = document.createElement('div');
       item.className = 'structure-generation-list-item';
       item.classList.toggle('is-selected', isSelected);
@@ -1672,6 +1842,35 @@ let differenceSpaceTransformMode = 'none';
 
       const actions = document.createElement('div');
       actions.className = 'structure-generation-list-item-actions';
+      const pinDetailButton = document.createElement('button');
+      pinDetailButton.type = 'button';
+      pinDetailButton.textContent = detailOpened ? 'ピン情報を隠す' : 'ピン情報';
+      pinDetailButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openedStructureGenerationPinDetailKey = detailOpened ? '' : runKey;
+        renderStructureGenerationList();
+      });
+      actions.appendChild(pinDetailButton);
+      const diagnosticButton = document.createElement('button');
+      diagnosticButton.type = 'button';
+      diagnosticButton.textContent = diagnosticOpened ? '照合を隠す' : '照合';
+      diagnosticButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openedStructureGenerationDiagnosticKey = diagnosticOpened ? '' : runKey;
+        renderStructureGenerationList();
+      });
+      actions.appendChild(diagnosticButton);
+      if (canAdjustStructureGenerationRun(run)) {
+        const adjustButton = document.createElement('button');
+        adjustButton.type = 'button';
+        adjustButton.textContent = adjustOpened ? '調整を隠す' : '調整';
+        adjustButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openedStructureGenerationAdjustKey = adjustOpened ? '' : runKey;
+          renderStructureGenerationList();
+        });
+        actions.appendChild(adjustButton);
+      }
       if (canRegenerateStructureRun(run)) {
         const regenerateButton = document.createElement('button');
         regenerateButton.type = 'button';
@@ -1694,6 +1893,93 @@ let differenceSpaceTransformMode = 'none';
       actions.appendChild(deleteButton);
 
       item.append(head, meta, actions);
+      if (detailOpened) {
+        const detail = document.createElement('div');
+        detail.className = 'structure-generation-list-item-pin-detail';
+        const pins = normalizePinsPayload(run?.pins);
+        if (pins.length < 1) {
+          detail.textContent = 'ピン情報はありません。';
+        } else {
+          formatStructureGenerationPinDetailLines(run).forEach((line, pinIndex) => {
+            const pin = pins[pinIndex];
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = line;
+            button.addEventListener('click', (event) => {
+              event.stopPropagation();
+              focusCameraOnStructurePin(pin);
+            });
+            detail.appendChild(button);
+          });
+        }
+        item.appendChild(detail);
+      }
+      if (diagnosticOpened) {
+        const diagnostic = document.createElement('div');
+        diagnostic.className = 'structure-generation-list-item-diagnostic';
+        diagnostic.textContent = formatStructureGenerationDiagnosticLines(run).join('\n');
+        item.appendChild(diagnostic);
+      }
+      if (adjustOpened && canAdjustStructureGenerationRun(run)) {
+        const adjust = document.createElement('div');
+        adjust.className = 'structure-generation-list-item-adjust';
+        adjust.addEventListener('click', (event) => event.stopPropagation());
+        const params = (run?.params && typeof run.params === 'object') ? run.params : {};
+        const grid = document.createElement('div');
+        grid.className = 'structure-generation-list-item-adjust-grid';
+        const fields = [
+          { key: 'lateralOffset', label: '線路からの横オフセット', step: '0.1' },
+          { key: 'verticalOffset', label: '上下オフセット(Y)', step: '0.1' },
+          { key: 'yawOffsetDeg', label: '角度オフセット(度)', step: '1' },
+          { key: 'spacing', label: '間隔(最小)', step: '0.1', min: '0' },
+        ];
+        const inputs = {};
+        fields.forEach((field) => {
+          const label = document.createElement('label');
+          label.textContent = field.label;
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.step = field.step;
+          if (field.min != null) {
+            input.min = field.min;
+          }
+          input.value = String(Number.isFinite(Number(params?.[field.key])) ? Number(params[field.key]) : 0);
+          label.appendChild(input);
+          grid.appendChild(label);
+          inputs[field.key] = input;
+        });
+        const adjustActions = document.createElement('div');
+        adjustActions.className = 'structure-generation-list-item-adjust-actions';
+        const applyButton = document.createElement('button');
+        applyButton.type = 'button';
+        applyButton.textContent = '調整して再生成';
+        applyButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          rerunAdjustedStructureGenerationRun(run, {
+            lateralOffset: inputs.lateralOffset?.value,
+            verticalOffset: inputs.verticalOffset?.value,
+            yawOffsetDeg: inputs.yawOffsetDeg?.value,
+            spacing: inputs.spacing?.value,
+          });
+        });
+        const resetButton = document.createElement('button');
+        resetButton.type = 'button';
+        resetButton.textContent = '現在値を読込';
+        resetButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const latestParams = (run?.params && typeof run.params === 'object') ? run.params : {};
+          fields.forEach((field) => {
+            if (!inputs[field.key]) { return; }
+            inputs[field.key].value = String(Number.isFinite(Number(latestParams?.[field.key])) ? Number(latestParams[field.key]) : 0);
+          });
+        });
+        adjustActions.append(applyButton, resetButton);
+        const note = document.createElement('div');
+        note.className = 'structure-generation-list-item-adjust-note';
+        note.textContent = `group: ${String(params?.groupId || '').trim() || '-'}`;
+        adjust.append(grid, adjustActions, note);
+        item.appendChild(adjust);
+      }
       structureGenerationList.appendChild(item);
     });
     refreshStructurePinnedPinColors();
@@ -5187,6 +5473,7 @@ let differenceSpaceTransformMode = 'none';
         rotationApplyBtn.disabled = false;
       }
     }
+    updateDecorationZeroBaseButton();
     if (movePointCoordinateModeRow) {
       movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint || isCopyMode) ? 'block' : 'none';
     }
@@ -5962,6 +6249,14 @@ let differenceSpaceTransformMode = 'none';
     return out;
   }
 
+  function debugRotateStructureSelection(label, payload = {}) {
+    try {
+      console.log(`[rotate_debug] ${label}`, payload);
+    } catch (_err) {
+      // no-op
+    }
+  }
+
   function toggleMovePointStructureSelection(target) {
     const selectedPoints = steelFrameMode?.getSelectedPointMeshes?.() || [];
     const rotationWholeGroupToggle = editObject === 'STEEL_FRAME'
@@ -6617,19 +6912,19 @@ function computeStructureGroupPoseFromMembers(members) {
     return computeStructureGroupPoseFromMembers(members);
   }
 
-function syncCopiedGroupRotationPanel(groupId) {
+function syncStructureGroupRotationPanel(groupId) {
   const savedRotation = getSavedRotationForStructureGroup(groupId);
   if (savedRotation) {
     setRotationPanelAnglesDisplay(savedRotation);
     return true;
-    }
-    const pose = getStructureGroupPoseById(groupId);
-    if (!pose?.quaternion?.isQuaternion) { return false; }
+  }
+  const pose = getStructureGroupPoseById(groupId);
+  if (!pose?.quaternion?.isQuaternion) { return false; }
   setRotationPanelAnglesDisplay(getGroupRotationAnglesFromQuat(pose.quaternion));
   return true;
 }
 
-function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
+function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
   const groupId = getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId;
   if (!groupId) { return false; }
   const nextAngles = parseSavedGroupRotationAngles({ rotation: panelAngles || rotatePanelState.angles });
@@ -7356,6 +7651,29 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     return getSelectedRotateStructureGroupIds().length > 1;
   }
 
+  function applyStructureGroupMetadataToMeshAndPoints(mesh, groupId, groupScale = null) {
+    if (!mesh?.parent) { return; }
+    const nextGroupId = String(groupId || '').trim() || null;
+    const nextGroupScale = Number.isFinite(Number(groupScale)) && Number(groupScale) > 0
+      ? Number(groupScale)
+      : null;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      structureGroupId: nextGroupId,
+      structureGroupScale: nextGroupScale,
+    };
+    if (mesh?.name !== 'SteelFrameSegment') { return; }
+    const refs = getCopyStructurePointMeshes(mesh);
+    refs.forEach((pointMesh) => {
+      if (!pointMesh?.parent || !pointMesh?.userData?.steelFramePoint) { return; }
+      pointMesh.userData = {
+        ...(pointMesh.userData || {}),
+        structureGroupId: nextGroupId,
+        structureGroupScale: nextGroupScale,
+      };
+    });
+  }
+
   function renameStructureGroupId(sourceGroupId, targetGroupId) {
     const fromId = String(sourceGroupId || '').trim();
     const toId = String(targetGroupId || '').trim();
@@ -7389,10 +7707,11 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     }
 
     targets.forEach((obj) => {
-      obj.userData = {
-        ...(obj.userData || {}),
-        structureGroupId: toId,
-      };
+      applyStructureGroupMetadataToMeshAndPoints(
+        obj,
+        toId,
+        Number(obj?.userData?.structureGroupScale) || DEFAULT_STRUCTURE_GROUP_SCALE,
+      );
     });
 
     if (selectedAppendGroupId === fromId) {
@@ -7554,11 +7873,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     structureGroupSeq += 1;
     const groupScale = DEFAULT_STRUCTURE_GROUP_SCALE;
     selected.forEach((mesh) => {
-      mesh.userData = {
-        ...(mesh.userData || {}),
-        structureGroupId: groupId,
-        structureGroupScale: groupScale,
-      };
+      applyStructureGroupMetadataToMeshAndPoints(mesh, groupId, groupScale);
     });
     setGroupModeStatus(`グループ化しました: ${groupId}\n対象: ${selected.length}\nscale: ${groupScale}`);
     updateGroupModePanelUI();
@@ -7589,11 +7904,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       return DEFAULT_STRUCTURE_GROUP_SCALE;
     })();
     selected.forEach((mesh) => {
-      mesh.userData = {
-        ...(mesh.userData || {}),
-        structureGroupId: id,
-        structureGroupScale: inheritedScale,
-      };
+      applyStructureGroupMetadataToMeshAndPoints(mesh, id, inheritedScale);
     });
     selectedAppendGroupId = id;
     setGroupModeStatus(`既存グループへ追加: ${id}\n対象: ${selected.length}\nscale: ${inheritedScale}`);
@@ -8456,7 +8767,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     getNormalStructureGroupPointEditMode: () => normalStructureGroupPointEditMode,
     getCopiedStructureGroupPointEditMode: () => copiedStructureGroupPointEditMode,
     detachCopiedStructureGroup,
-    syncCopiedGroupRotationPanel,
+    syncStructureGroupRotationPanel,
     refreshPointEditPanelUI,
   });
   const getMovePointPanelTargets = pointActions.getMovePointPanelTargets;
@@ -9194,11 +9505,17 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
         finalizeRotateSetYPreview(nextAngles);
       } else {
         const center = getRotateSelectionCenter(meshes);
-        const currentQuat = buildGroupQuatFromRotationAngles(currentAngles);
-        const nextQuat = buildGroupQuatFromRotationAngles(nextAngles);
+        const selectedGroupId = getActiveSingleNormalRotateGroupId();
+        const baseQuat = getStructureGroupRotationBaseQuat(selectedGroupId);
+        const currentQuat = baseQuat
+          ? baseQuat.clone().multiply(buildGroupQuatFromRotationAngles(currentAngles)).normalize()
+          : buildGroupQuatFromRotationAngles(currentAngles);
+        const nextQuat = baseQuat
+          ? baseQuat.clone().multiply(buildGroupQuatFromRotationAngles(nextAngles)).normalize()
+          : buildGroupQuatFromRotationAngles(nextAngles);
         const deltaQuat = nextQuat.clone().multiply(currentQuat.clone().invert()).normalize();
         applyRotateQuaternionDeltaToMeshes(meshes, center, deltaQuat);
-        syncSavedRotationForActiveCopiedGroup(rotatePanelState.angles);
+        syncSavedRotationForActiveStructureGroup(rotatePanelState.angles);
       }
     }
 
@@ -9232,6 +9549,15 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
 
   if (rotationApplyBtn) {
     rotationApplyBtn.addEventListener('click', applyRotationFromPanel);
+  }
+  if (rotationDecorationZeroBaseBtn) {
+    rotationDecorationZeroBaseBtn.addEventListener('click', () => {
+      if (getActiveSingleNormalRotateGroupId()) {
+        resetStructureGroupRotationBaseFromActiveSelection();
+        return;
+      }
+      resetDecorationRotationBaseFromCurrentTarget();
+    });
   }
   if (movePointCoordinateWorldBtn) {
     movePointCoordinateWorldBtn.addEventListener('click', () => {
@@ -9311,9 +9637,14 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
 
   let guidePlacementTemplate = null;
   let guidePlacementActive = false;
+  let guidePlacementAnchorButton = null;
+  let decorationGuideContextActive = false;
+  let decorationTemplatePlacementRef = null;
   let guideRailHover = null;
-  let decorationGuideHoverHit = null;
-  let decorationGuideHoverLogKey = '';
+  let createAddPointHoverGrid = null;
+  let createAddPointHoverPoint = null;
+  let createAddPointHoverQuat = null;
+  let createAddPointBaseY = 0;
   let createAddPointGuideHoverLogKey = '';
   let guideHoverPin = null;
   const GUIDE_TUBE_RADIUS = 0.225;
@@ -9470,16 +9801,8 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     return template === 'led_board' || template === 'rect_spot_light';
   }
 
-  function getDecorationCreatePointerPoint() {
-    if (decorationGuideHoverHit?.point?.isVector3) {
-      return decorationGuideHoverHit.point.clone();
-    }
-    const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
-    return point?.isVector3 ? point.clone() : null;
-  }
-
-  function syncDecorationCreateGuideGrid() {
-    const active = guidePlacementActive
+  function isDecorationCreateGuideModeActive() {
+    return guidePlacementActive
       && isDecorationGuidePlacementTemplate()
       && editObject === 'STEEL_FRAME'
       && objectEditMode === 'CREATE_NEW'
@@ -9487,7 +9810,26 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       && !guideAddModeActive
       && !move_direction_y
       && !viewModeActive;
-    if (!active) {
+  }
+
+  function clearDecorationGuidePlacementState() {
+    decorationTemplatePlacementRef = null;
+    GuideGrid.visible = false;
+    GuideGrid.quaternion.identity();
+  }
+
+  function getDecorationCreateCursorPoint() {
+    const point = coord_DisplayTo3D({ y: addPointGridY || 0 });
+    return point?.isVector3 ? point.clone() : null;
+  }
+
+  function shouldHideAddPointGuideGridInDecorationMode() {
+    if (!decorationGuideContextActive) { return false; }
+    return guideRectangleModeActive;
+  }
+
+  function syncDecorationCreateGuideGrid() {
+    if (!isDecorationCreateGuideModeActive()) {
       setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
       if (!(editObject === 'STEEL_FRAME' && addPointGridActive)) {
         setAddPointGuideGridVisibleFromUI(false);
@@ -9495,13 +9837,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       return null;
     }
 
-    if (decorationGuideHoverHit?.point?.isVector3) {
-      setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
-      setAddPointGuideGridVisibleFromUI(false);
-      return decorationGuideHoverHit.point.clone();
-    }
-
-    const point = getDecorationCreatePointerPoint() || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
+    const point = getDecorationCreateCursorPoint() || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
     const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
     if (snappedPoint?.isVector3) {
       AddPointGuideGrid.position.copy(snappedPoint);
@@ -9529,7 +9865,8 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
       return null;
     }
-    const point = coord_DisplayTo3D({ y: addPointGridY || 0 }) || new THREE.Vector3(0, Number(addPointGridY) || 0, 0);
+    const baseY = Number.isFinite(createAddPointBaseY) ? createAddPointBaseY : (Number(addPointGridY) || 0);
+    const point = coord_DisplayTo3D({ y: baseY }) || new THREE.Vector3(0, baseY, 0);
     const snappedPoint = snapRailCreateGuideGridPosition(point) || point;
     if (snappedPoint?.isVector3) {
       AddPointGuideGrid.position.copy(snappedPoint);
@@ -9544,6 +9881,52 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
     setAddPointGuideGridVisibleFromUI(true);
     return snappedPoint?.clone?.() || null;
+  }
+
+  function syncCreateAddPointGuideGridFromHoverGrid(point, refGrid = null) {
+    clearCreateAddPointHoverGridState();
+    return syncCreateAddPointBaseGuideGrid();
+  }
+
+  function isPureCreateAddPointModeActive() {
+    return addPointGridActive
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'CREATE_NEW'
+      && !guidePlacementActive
+      && !move_direction_y
+      && !viewModeActive;
+  }
+
+  function syncCreateAddPointHoverGridTransform() {
+    return;
+  }
+
+  function restoreCreateAddPointBaseGridTransform() {
+    if (!isPureCreateAddPointModeActive()) { return null; }
+    const baseY = Number.isFinite(createAddPointBaseY) ? createAddPointBaseY : (Number(addPointGridY) || 0);
+    const baseX = Number(addPointGridHandle?.position?.x);
+    const baseZ = Number(addPointGridHandle?.position?.z);
+    const nextX = Number.isFinite(baseX) ? baseX : (Number(AddPointGuideGrid?.position?.x) || 0);
+    const nextZ = Number.isFinite(baseZ) ? baseZ : (Number(AddPointGuideGrid?.position?.z) || 0);
+    AddPointGuideGrid.position.set(nextX, baseY, nextZ);
+    AddPointGuideGrid.quaternion.identity();
+    AddPointGuideGrid.updateMatrixWorld(true);
+    addPointGridHandle.position.set(nextX, baseY, nextZ);
+    addPointGridHandle.quaternion.copy(addPointGridBaseQuat);
+    addPointGridHandle.updateMatrixWorld(true);
+    addPointGridY = baseY;
+    setAddPointGuideGridColor(RAIL_CREATE_GRID_COLOR);
+    setAddPointGuideGridVisibleFromUI(true);
+    return AddPointGuideGrid.position.clone();
+  }
+
+  function clearCreateAddPointHoverGridState({ restoreBaseGrid = false } = {}) {
+    createAddPointHoverGrid = null;
+    createAddPointHoverPoint = null;
+    createAddPointHoverQuat = null;
+    if (restoreBaseGrid && isPureCreateAddPointModeActive()) {
+      restoreCreateAddPointBaseGridTransform();
+    }
   }
 
   function updateCreateAddPointBaseGuideFromPointer() {
@@ -9573,18 +9956,6 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     return basePoint;
   }
 
-  function updateDecorationGuideHoverStartLog(info = null) {
-    const nextKey = String(info?.key || '');
-    if (!nextKey) {
-      decorationGuideHoverLogKey = '';
-      return;
-    }
-    const shouldLog = nextKey === 'base' && decorationGuideHoverLogKey !== 'base';
-    decorationGuideHoverLogKey = nextKey;
-    if (!shouldLog) { return; }
-    console.log('[decoration][add_point][hover][start]', info?.payload || {});
-  }
-
   function updateCreateAddPointGuideHoverStartLog(info = null) {
     const nextKey = String(info?.key || '');
     if (!nextKey) {
@@ -9598,117 +9969,28 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
   }
 
   function resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide = false } = {}) {
-    updateDecorationGuideHoverStartLog(null);
-    decorationGuideHoverHit = null;
-    guideRailHover = null;
-    setGuideHoverPin(null);
-    guideAddGrids.forEach((grid) => {
-      const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
-      setGuideAddGridColor(grid, color);
-    });
-    GuideGrid.visible = false;
-    GuideGrid.quaternion.identity();
+    clearDecorationGuidePlacementState();
     setGuideGridColor(GUIDE_ADD_GRID_COLOR);
     setAddPointGuideGridColor(GUIDE_ADD_GRID_COLOR);
-    if (!keepBaseGuide) {
+    if (keepBaseGuide) {
+      syncDecorationCreateGuideGrid();
+    } else {
       setAddPointGuideGridVisibleFromUI(false);
     }
   }
 
   function updateDecorationGuidePlacementHoverFromPointer() {
-    const active = guidePlacementActive
-      && isDecorationGuidePlacementTemplate()
-      && editObject === 'STEEL_FRAME'
-      && objectEditMode === 'CREATE_NEW'
-      && addPointGridActive
-      && !guideAddModeActive
-      && !move_direction_y
-      && !viewModeActive;
-    if (!active) {
+    if (!isDecorationCreateGuideModeActive()) {
       resetDecorationGuidePlacementHoverVisuals({
         keepBaseGuide: addPointGridActive && editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW',
       });
       return null;
     }
     if (pointerBlockedByUI) {
-      updateDecorationGuideHoverStartLog(null);
       return null;
     }
-
-    guideAddGrids.forEach((grid) => {
-      const color = Number(grid?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
-      setGuideAddGridColor(grid, color);
-    });
-
-    const intersects = getIntersectObjects();
-    const guideHit = intersects.find((hit) => hit?.object?.userData?.isGuideRail);
-    if (guideHit?.object?.userData?.guideCurve && guideHit.point) {
-      const nearest = getNearestPointOnCurve(guideHit.object.userData.guideCurve, guideHit.point);
-      if (nearest) {
-        decorationGuideHoverHit = {
-          kind: 'guide_helper',
-          source: 'rail',
-          curve: guideHit.object.userData.guideCurve,
-          point: nearest.clone(),
-        };
-        updateDecorationGuideHoverStartLog(null);
-        guideRailHover = { curve: guideHit.object.userData.guideCurve, point: nearest };
-        GuideGrid.visible = true;
-        GuideGrid.position.copy(nearest);
-        GuideGrid.quaternion.identity();
-        setGuideGridColor(GUIDE_ADD_GRID_COLOR);
-        setGuideHoverPin(nearest);
-        syncDecorationCreateGuideGrid();
-        return decorationGuideHoverHit;
-      }
-    }
-
-    decorationGuideHoverHit = null;
-    updateDecorationGuideHoverStartLog(null);
-    guideRailHover = null;
-    const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
-    if (hit?.point && hitGrid) {
-      decorationGuideHoverHit = {
-        kind: 'guide_helper',
-        source: 'grid',
-        grid: hitGrid,
-        point: hit.point.clone(),
-      };
-      updateDecorationGuideHoverStartLog(null);
-      setGuideAddGridColor(hitGrid, GUIDE_ADD_GRID_SELECTED_COLOR);
-      GuideGrid.visible = true;
-      GuideGrid.position.copy(hit.point);
-      if (hitGrid.quaternion?.isQuaternion) {
-        GuideGrid.quaternion.copy(hitGrid.quaternion);
-      } else {
-        GuideGrid.quaternion.identity();
-      }
-      setGuideGridColor(GUIDE_ADD_GRID_COLOR);
-      setGuideHoverPin(hit.point);
-      syncDecorationCreateGuideGrid();
-      return decorationGuideHoverHit;
-    }
-
-    decorationGuideHoverHit = null;
-    setGuideHoverPin(null);
-    GuideGrid.visible = false;
-    GuideGrid.quaternion.identity();
-    const basePoint = syncDecorationCreateGuideGrid();
-    updateDecorationGuideHoverStartLog({
-      key: 'base',
-      payload: {
-        template: guidePlacementTemplate,
-        source: 'base',
-        point: basePoint
-          ? {
-            x: basePoint.x,
-            y: basePoint.y,
-            z: basePoint.z,
-          }
-          : null,
-      },
-    });
-    return { kind: 'base', point: basePoint };
+    clearDecorationGuidePlacementState();
+    return syncDecorationCreateGuideGrid();
   }
 
   function renderLedBoardTexture(board) {
@@ -9884,9 +10166,11 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     return true;
   }
 
-  function activateGuidePlacement(template) {
+  function activateGuidePlacement(template, anchorButton = null) {
     guidePlacementTemplate = template;
     guidePlacementActive = true;
+    guidePlacementAnchorButton = anchorButton || null;
+    decorationGuideContextActive = isDecorationGuidePlacementTemplate(template);
     OperationMode = 1;
     objectEditMode = 'CREATE_NEW';
     editObject = 'STEEL_FRAME';
@@ -9898,10 +10182,9 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
     targetObjects = getSteelFrameAddPointTargets();
     setMeshListOpacity(targetObjects, 1);
     guideRailPickMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
-    setGuideGridVisibleFromUI(true);
+    setGuideGridVisibleFromUI(!isDecorationGuidePlacementTemplate(template));
     setAddPointGuideGridVisibleFromUI(true);
     if (isDecorationGuidePlacementTemplate(template)) {
-      updateDecorationGuideHoverStartLog(null);
       updateCreateAddPointGuideHoverStartLog(null);
       updateDecorationGuidePlacementHoverFromPointer();
     }
@@ -9913,7 +10196,7 @@ function syncSavedRotationForActiveCopiedGroup(panelAngles = null) {
       event.preventDefault();
       event.stopPropagation();
       const template = btn.dataset.guideTemplate || 'curve_straight';
-      activateGuidePlacement(template);
+      activateGuidePlacement(template, btn);
     };
     btn.addEventListener('click', onActivate);
     btn.addEventListener('touchstart', onActivate, { passive: false });
@@ -10056,7 +10339,7 @@ const car_Spacing = 0.15
 const SHOW_MAP_GLB = !IS_RUNTIME_LOCAL_VIEW;
 const SHOW_TRAINS = true;
 const RUN_COMMUTER_ON_EXISTING_TRACKS = !IS_RUNTIME_LOCAL_VIEW;
-const SHOW_ELEVATORS = true;
+const SHOW_ELEVATORS = false;
 const ONLY_RAIL_AND_GROUND = true;
 
 console.log('WorldCreat')
@@ -10074,8 +10357,9 @@ if (!IS_RUNTIME_LOCAL_VIEW) {
 }
 let geo = LoadModels[0]
 
+const COMMUTER_TRAIN_MODEL_ROLES = ['head', 'middle', 'tail'];
 const EXTRA_COMMUTER_TRAIN_MODEL_PATHS = {
-  yamanote: './train_models/yamanote.glb',
+  yamanote: './train_models/yamanote',
   saikyou: './train_models/saikyou.glb',
   syounan: './train_models/syounan.glb',
   rinkai: './train_models/rinkai.glb',
@@ -10199,49 +10483,164 @@ function refreshAllLoadedTrainModelEnvMaps() {
   if (LoadModels?.[0]) { refreshTrainRootEnvMap(LoadModels[0]); }
   if (LoadModels?.[1]) { refreshTrainRootEnvMap(LoadModels[1]); }
   if (LoadModels?.[2]) { refreshTrainRootEnvMap(LoadModels[2]); }
-  Object.values(extraCommuterTrainModels).forEach((root) => {
-    refreshTrainRootEnvMap(root);
+  Object.values(extraCommuterTrainModels).forEach((entry) => {
+    const visited = new Set();
+    COMMUTER_TRAIN_MODEL_ROLES.forEach((role) => {
+      const root = entry?.[role] || null;
+      if (!root || visited.has(root)) { return; }
+      visited.add(root);
+      refreshTrainRootEnvMap(root);
+    });
+  });
+}
+
+function finalizeCommuterTrainModelSource(entry) {
+  const head = String(entry?.head || '').trim();
+  const middle = String(entry?.middle || '').trim();
+  const tail = String(entry?.tail || '').trim();
+  return {
+    head: head || middle || tail || null,
+    middle: middle || head || tail || null,
+    tail: tail || head || middle || null,
+  };
+}
+
+function normalizeCommuterTrainModelSource(source) {
+  if (Array.isArray(source)) {
+    return finalizeCommuterTrainModelSource({
+      head: source[0],
+      middle: source[1],
+      tail: source[2] || source[0],
+    });
+  }
+
+  if (typeof source === 'string') {
+    const value = String(source).trim();
+    if (!value) { return null; }
+    if (/\.(glb|gltf)$/i.test(value)) {
+      return finalizeCommuterTrainModelSource({
+        head: value,
+        middle: value,
+        tail: value,
+      });
+    }
+    const basePath = value.replace(/\/+$/, '');
+    return finalizeCommuterTrainModelSource({
+      head: `${basePath}/head.glb`,
+      middle: `${basePath}/middle.glb`,
+      tail: `${basePath}/head.glb`,
+    });
+  }
+
+  if (source && typeof source === 'object') {
+    const basePath = String(source.path || source.folder || source.dir || '').trim().replace(/\/+$/, '');
+    if (basePath) {
+      return finalizeCommuterTrainModelSource({
+        head: source.head || `${basePath}/head.glb`,
+        middle: source.middle || `${basePath}/middle.glb`,
+        tail: source.tail || source.head || `${basePath}/head.glb`,
+      });
+    }
+    return finalizeCommuterTrainModelSource({
+      head: source.head || source.front,
+      middle: source.middle || source.body || source.center || source.head || source.front,
+      tail: source.tail || source.rear || source.head || source.front,
+    });
+  }
+
+  return null;
+}
+
+function finalizeCommuterTrainModelEntry(entry) {
+  const head = entry?.head || null;
+  const middle = entry?.middle || null;
+  const tail = entry?.tail || null;
+  return {
+    head: head || middle || tail || null,
+    middle: middle || head || tail || null,
+    tail: tail || head || middle || null,
+  };
+}
+
+function prepareLoadedCommuterTrainRoot(root) {
+  if (!root) { return null; }
+  root.position.set(0.5, 0, 0);
+  root.scale.setScalar(0.5);
+  normalizeTrainRootMaterials(root);
+  root.traverse((node) => {
+    if (!node?.isMesh) { return; }
+    node.castShadow = true;
+    node.receiveShadow = true;
+  });
+  return root;
+}
+
+function loadCommuterTrainModelRoot(loader, url, meta = {}) {
+  return new Promise((resolve) => {
+    loader.load(
+      url,
+      (gltf) => {
+        const root = gltf.scene || gltf.scenes?.[0] || null;
+        if (!root) {
+          console.warn('[train_models] load failed: scene missing', { ...meta, url });
+          resolve(null);
+          return;
+        }
+        resolve(prepareLoadedCommuterTrainRoot(root));
+      },
+      undefined,
+      (err) => {
+        console.warn('[train_models] load failed', { ...meta, url, err });
+        resolve(null);
+      }
+    );
   });
 }
 
 async function loadExtraCommuterTrainModels() {
   const loader = new GLTFLoader();
   const entries = Object.entries(EXTRA_COMMUTER_TRAIN_MODEL_PATHS);
-  await Promise.all(entries.map(([name, url]) => new Promise((resolve) => {
-    loader.load(
-      url,
-      (gltf) => {
-        const root = gltf.scene || gltf.scenes?.[0] || null;
-        if (!root) {
-          console.warn('[train_models] load failed: scene missing', { name, url });
-          resolve();
-          return;
-        }
-        root.position.set(0.5, 0, 0);
-        root.scale.setScalar(0.5);
-        normalizeTrainRootMaterials(root);
-        root.traverse((node) => {
-          if (!node?.isMesh) { return; }
-          node.castShadow = true;
-          node.receiveShadow = true;
-        });
-        extraCommuterTrainModels[name] = root;
-        resolve();
-      },
-      undefined,
-      (err) => {
-        console.warn('[train_models] load failed', { url, err });
-        resolve();
+  await Promise.all(entries.map(async ([name, source]) => {
+    const resolvedSource = normalizeCommuterTrainModelSource(source);
+    if (!resolvedSource) {
+      console.warn('[train_models] invalid source', { name, source });
+      return;
+    }
+    const urlCache = new Map();
+    const loadedEntry = { head: null, middle: null, tail: null };
+    for (let i = 0; i < COMMUTER_TRAIN_MODEL_ROLES.length; i += 1) {
+      const role = COMMUTER_TRAIN_MODEL_ROLES[i];
+      const url = resolvedSource[role];
+      if (!url) { continue; }
+      if (!urlCache.has(url)) {
+        urlCache.set(url, loadCommuterTrainModelRoot(loader, url, { name, role }));
       }
-    );
-  })));
+      loadedEntry[role] = await urlCache.get(url);
+    }
+    const finalizedEntry = finalizeCommuterTrainModelEntry(loadedEntry);
+    if (!finalizedEntry.head && !finalizedEntry.middle && !finalizedEntry.tail) {
+      console.warn('[train_models] all roles failed to load', { name, source: resolvedSource });
+      return;
+    }
+    extraCommuterTrainModels[name] = finalizedEntry;
+  }));
 }
 
 if (!IS_RUNTIME_LOCAL_VIEW) {
   await loadExtraCommuterTrainModels();
 }
 
-async function registerRuntimeTrainModelFromArrayBuffer(arrayBuffer, fileName = 'runtime-train.glb') {
+function sanitizeRuntimeTrainModelName(fileName = 'runtime-train') {
+  return String(fileName || 'runtime-train')
+    .replace(/\.(glb|gltf)$/i, '')
+    .replace(/^tr[_-]?/i, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    || `runtime_train_${Object.keys(extraCommuterTrainModels).length + 1}`;
+}
+
+async function parseRuntimeTrainRootFromArrayBuffer(arrayBuffer) {
   const loader = new GLTFLoader();
   const gltf = await new Promise((resolve, reject) => {
     loader.parse(
@@ -10255,32 +10654,81 @@ async function registerRuntimeTrainModelFromArrayBuffer(arrayBuffer, fileName = 
   if (!root) {
     throw new Error('車両 glb にシーンがありません。');
   }
-  root.position.set(0.5, 0, 0);
-  root.scale.setScalar(0.5);
-  normalizeTrainRootMaterials(root);
-  root.traverse((node) => {
-    if (!node?.isMesh) { return; }
-    node.castShadow = true;
-    node.receiveShadow = true;
-  });
-  const baseName = String(fileName || 'runtime-train')
-    .replace(/\.(glb|gltf)$/i, '')
-    .replace(/^tr[_-]?/i, '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '_')
-    || `runtime_train_${Object.keys(extraCommuterTrainModels).length + 1}`;
-  extraCommuterTrainModels[baseName] = root;
+  return prepareLoadedCommuterTrainRoot(root);
+}
+
+function registerRuntimeTrainModelEntry(entry, fileName = 'runtime-train.glb') {
+  const finalizedEntry = finalizeCommuterTrainModelEntry(entry);
+  if (!finalizedEntry.head && !finalizedEntry.middle && !finalizedEntry.tail) {
+    throw new Error('車両モデルの登録対象がありません。');
+  }
+  const baseName = sanitizeRuntimeTrainModelName(fileName);
+  extraCommuterTrainModels[baseName] = finalizedEntry;
   updateTrainTypeOptions();
   syncTrainPanelFromConfig();
+  return baseName;
+}
+
+async function registerRuntimeTrainModelFromArrayBuffer(arrayBuffer, fileName = 'runtime-train.glb') {
+  const root = await parseRuntimeTrainRootFromArrayBuffer(arrayBuffer);
+  const baseName = registerRuntimeTrainModelEntry({
+    head: root,
+    middle: root,
+    tail: root,
+  }, fileName);
   console.info('[train_models][runtime] registered', { name: baseName, fileName });
   return baseName;
 }
 
-function cloneCommuterTrainModelByName(name) {
-  const src = extraCommuterTrainModels[String(name || '').trim()];
+async function registerRuntimeTrainModelSetFromFiles(fileEntries = [], fileName = 'runtime-train') {
+  const loadedEntry = { head: null, middle: null, tail: null };
+  for (let i = 0; i < fileEntries.length; i += 1) {
+    const fileEntry = fileEntries[i];
+    const role = String(fileEntry?.role || '').trim().toLowerCase();
+    if (!COMMUTER_TRAIN_MODEL_ROLES.includes(role)) { continue; }
+    if (!fileEntry?.buffer) { continue; }
+    try {
+      loadedEntry[role] = await parseRuntimeTrainRootFromArrayBuffer(fileEntry.buffer);
+    } catch (err) {
+      console.warn('[train_models][runtime] role parse failed', {
+        fileName,
+        role,
+        name: fileEntry?.name,
+        err,
+      });
+    }
+  }
+  const baseName = registerRuntimeTrainModelEntry(loadedEntry, fileName);
+  console.info('[train_models][runtime] registered set', {
+    name: baseName,
+    fileName,
+    roles: COMMUTER_TRAIN_MODEL_ROLES.filter((role) => Boolean(loadedEntry[role])),
+  });
+  return baseName;
+}
+
+function getCommuterTrainCarRole(carIndex = 0, totalCars = 0) {
+  if (carIndex === 0) { return 'head'; }
+  if (totalCars > 1 && carIndex === totalCars - 1) { return 'tail'; }
+  return 'middle';
+}
+
+function resolveCommuterTrainModelRoot(entry, role = 'middle') {
+  const normalizedRole = COMMUTER_TRAIN_MODEL_ROLES.includes(role) ? role : 'middle';
+  return entry?.[normalizedRole] || entry?.middle || entry?.head || entry?.tail || null;
+}
+
+function hasCommuterTrainModel(name) {
+  const entry = extraCommuterTrainModels[String(name || '').trim()];
+  return Boolean(resolveCommuterTrainModelRoot(entry, 'middle'));
+}
+
+function cloneCommuterTrainModelByName(name, role = 'middle') {
+  const src = resolveCommuterTrainModelRoot(extraCommuterTrainModels[String(name || '').trim()], role);
   if (!src || typeof src.clone !== 'function') { return null; }
-  return src.clone(true);
+  const clone = src.clone(true);
+  normalizeTrainRootMaterials(clone);
+  return clone;
 }
 
 function pickRandomNonYamanoteTrainModelName() {
@@ -10298,25 +10746,52 @@ function pickRandomTrainModelName() {
   return candidates[idx];
 }
 
-function createCommuterTrainWithModel(modelName, cars = 10, color = 0xaaaaaa) {
-  const prevGeo = geo;
-  const customGeo = cloneCommuterTrainModelByName(modelName);
-  if (customGeo) {
-    normalizeTrainRootMaterials(customGeo);
-    geo = customGeo;
+function createCommuterTrainWithModel(modelName, cars = 10, color = 0xaaaaaa, transparency = 1) {
+  if (!SHOW_TRAINS) {
+    const emptyTrainGroup = new THREE.Group();
+    emptyTrainGroup.userData.cars = [];
+    emptyTrainGroup.visible = false;
+    return emptyTrainGroup;
   }
-  const train = TrainSettings(
-    train_width,
-    color,
-    cars,
-    1,
-  );
-  geo = prevGeo;
-  train.userData = {
-    ...(train.userData || {}),
-    commuterModelName: customGeo ? modelName : 'default',
+
+  const totalCars = Math.max(1, Math.floor(Number(cars)) || 1);
+  const trainGroup = new THREE.Group();
+  const trainCars = [];
+  const spacing = 6.95;
+
+  for (let i = 0; i < totalCars; i += 1) {
+    const role = getCommuterTrainCarRole(i, totalCars);
+    let car = cloneCommuterTrainModelByName(modelName, role);
+    if (!car) {
+      if (!warnedMissingCommuterModel) {
+        console.warn('[createCommuterTrainWithModel] 通勤車モデルが未ロードのため、簡易ボックス車両で代替表示します。');
+        warnedMissingCommuterModel = true;
+      }
+      car = createFallbackTrainCar(train_width, color, transparency);
+    }
+    refreshTrainRootEnvMap(car);
+    car.position.z = -i * spacing;
+    car.userData = {
+      ...(car.userData || {}),
+      commuterCarRole: role,
+    };
+    attachCommuterPantographs(car, i);
+    disableShadowRecursive(car);
+    trainCars.push(car);
+    trainGroup.add(car);
+  }
+
+  trainGroup.userData = {
+    ...(trainGroup.userData || {}),
+    cars: trainCars,
+    commuterModelName: hasCommuterTrainModel(modelName) ? modelName : 'default',
   };
-  return train;
+  trainGroup.visible = false;
+
+  scene.add(trainGroup);
+  Trains.push(trainGroup);
+
+  return trainGroup;
 }
 
 function attachCommuterPantographs(car, carIndex = 0) {
@@ -10333,21 +10808,25 @@ function attachCommuterPantographs(car, carIndex = 0) {
 function rerollCommuterTrainGroupModel(trainGroup, modelName, color = 0xaaaaaa, transparency = 1) {
   const cars = Array.isArray(trainGroup?.userData?.cars) ? trainGroup.userData.cars : null;
   if (!cars || cars.length < 1) { return false; }
-  const modelRoot = cloneCommuterTrainModelByName(modelName);
-  if (!modelRoot && SHOW_TRAINS) { return false; }
+  if (!hasCommuterTrainModel(modelName) && SHOW_TRAINS) { return false; }
 
   for (let i = 0; i < cars.length; i += 1) {
     const oldCar = cars[i];
     if (!oldCar) { continue; }
-    const nextCar = modelRoot
-      ? modelRoot.clone(true)
-      : createFallbackTrainCar(train_width, color, transparency);
+    const role = getCommuterTrainCarRole(i, cars.length);
+    const nextCar = cloneCommuterTrainModelByName(modelName, role)
+      || createFallbackTrainCar(train_width, color, transparency);
+    refreshTrainRootEnvMap(nextCar);
     disableShadowRecursive(nextCar);
     attachCommuterPantographs(nextCar, i);
     nextCar.position.copy(oldCar.position);
     nextCar.quaternion.copy(oldCar.quaternion);
     nextCar.scale.copy(oldCar.scale);
     nextCar.visible = oldCar.visible;
+    nextCar.userData = {
+      ...(nextCar.userData || {}),
+      commuterCarRole: role,
+    };
     trainGroup.add(nextCar);
     if (oldCar.parent === trainGroup) {
       trainGroup.remove(oldCar);
@@ -10357,7 +10836,7 @@ function rerollCommuterTrainGroupModel(trainGroup, modelName, color = 0xaaaaaa, 
 
   trainGroup.userData = {
     ...(trainGroup.userData || {}),
-    commuterModelName: modelRoot ? modelName : 'default',
+    commuterModelName: hasCommuterTrainModel(modelName) ? modelName : 'default',
   };
   return true;
 }
@@ -10482,6 +10961,9 @@ const scenePanelClose = document.getElementById('scene-panel-close');
 const sceneToggleTrainsButton = document.getElementById('scene-toggle-trains-btn');
 const sceneToggleCityButton = document.getElementById('scene-toggle-city-btn');
 const sceneToggleLineOverlapPreviewButton = document.getElementById('scene-toggle-line-overlap-preview-btn');
+const sceneToggleTrainMotionButton = document.getElementById('scene-toggle-train-motion-btn');
+let manualTrainAnimationPaused = false;
+let mainRenderLoopRequestId = 0;
 
 function saveSceneVisibilitySettings() {
   try {
@@ -10508,6 +10990,27 @@ function updateScenePanelUi() {
   updateScenePanelToggleButton(sceneToggleTrainsButton, sceneVisibilitySettings.showTrains !== false);
   updateScenePanelToggleButton(sceneToggleCityButton, sceneVisibilitySettings.showCityModel !== false);
   updateScenePanelToggleButton(sceneToggleLineOverlapPreviewButton, sceneVisibilitySettings.showDifferenceLineOverlapPreview !== false);
+  updateScenePanelToggleButton(sceneToggleTrainMotionButton, !manualTrainAnimationPaused);
+}
+
+function syncTrainAnimationSuspendedState() {
+  suspendRunTrainAnimations = manualTrainAnimationPaused || createModeWorldFocused;
+  updateScenePanelUi();
+}
+
+function requestMainRenderLoop() {
+  if (mainRenderLoopRequestId) { return; }
+  mainRenderLoopRequestId = requestAnimationFrame(() => {
+    mainRenderLoopRequestId = 0;
+    animate();
+  });
+}
+
+function setManualTrainAnimationPaused(paused) {
+  const nextPaused = Boolean(paused);
+  if (manualTrainAnimationPaused === nextPaused) { return; }
+  manualTrainAnimationPaused = nextPaused;
+  syncTrainAnimationSuspendedState();
 }
 
 function updatePerformancePanelUi() {
@@ -10592,6 +11095,10 @@ sceneToggleLineOverlapPreviewButton?.addEventListener('click', () => {
   sceneVisibilitySettings.showDifferenceLineOverlapPreview = !sceneVisibilitySettings.showDifferenceLineOverlapPreview;
   applySceneVisibilitySettings({ save: true });
   setMapLoadStatusText(`line重なりプレビュー: ${sceneVisibilitySettings.showDifferenceLineOverlapPreview ? 'ON' : 'OFF'}`);
+});
+sceneToggleTrainMotionButton?.addEventListener('click', () => {
+  setManualTrainAnimationPaused(!manualTrainAnimationPaused);
+  setMapLoadStatusText(`列車進行: ${manualTrainAnimationPaused ? 'OFF (停止)' : 'ON'}`, { autoHide: false });
 });
 performanceToggleButton?.addEventListener('click', () => {
   setPerformancePanelVisible(performancePanel?.style.display === 'none');
@@ -10907,43 +11414,43 @@ let ElevatorDoorGroup_Db1 = null;
 let ElevatorDoorGroup_Db2 = null;
 let ElevatorBodyGroup_B = null;
 
-if (SHOW_ELEVATORS) {
-  const elevatorA1 = TSys.createElevator(-2.7, 6.62, 36, 1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
-  scene.add(elevatorA1);
-  const elevatorA2 = TSys.createElevator(-2.7, 9.9, 37.2, 1, -1, glass_material, metal_material, bodyFront, bodyBack);
-  scene.add(elevatorA2);
-
-  ElevatorDoorGroup_A1 = elevatorA1.children[1].children[0]
-  ElevatorDoorGroup_A2 = elevatorA1.children[1].children[1]
-  ElevatorDoorGroup_C1 = elevatorA1.children[2].children[0]
-  ElevatorDoorGroup_C2 = elevatorA1.children[2].children[1]
-  ElevatorDoorGroup_B1 = elevatorA2.children[1].children[0]
-  ElevatorDoorGroup_B2 = elevatorA2.children[1].children[1]
-  ElevatorDoorGroup_D1 = elevatorA2.children[2].children[0]
-  ElevatorDoorGroup_D2 = elevatorA2.children[2].children[1]
-  ElevatorDoorGroup_D1.position.y = -3.28
-  ElevatorDoorGroup_D2.position.y = -3.28
-  ElevatorBodyGroup = elevatorA1.children[3]
-
-  const elevatorB1 = TSys.createElevator(2.7, 6.62, 36, -1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
-  scene.add(elevatorB1);
-  const elevatorB2 = TSys.createElevator(2.7, 9.9, 37.2, -1, -1 ,glass_material, metal_material, bodyFront, bodyBack,);
-  scene.add(elevatorB2);
-
-  ElevatorDoorGroup_Ab1 = elevatorB1.children[1].children[0]
-  ElevatorDoorGroup_Ab2 = elevatorB1.children[1].children[1]
-  ElevatorDoorGroup_Cb1 = elevatorB1.children[2].children[0]
-  ElevatorDoorGroup_Cb2 = elevatorB1.children[2].children[1]
-  ElevatorDoorGroup_Bb1 = elevatorB2.children[1].children[0]
-  ElevatorDoorGroup_Bb2 = elevatorB2.children[1].children[1]
-  ElevatorDoorGroup_Db1 = elevatorB2.children[2].children[0]
-  ElevatorDoorGroup_Db2 = elevatorB2.children[2].children[1]
-  ElevatorBodyGroup_B = elevatorB1.children[3]
-
-  ElevatorDoorGroup_Cb1.position.y = +3.28
-  ElevatorDoorGroup_Cb2.position.y = +3.28
-  ElevatorBodyGroup_B.position.y = +3.28
-}
+// if (SHOW_ELEVATORS) {
+//   const elevatorA1 = TSys.createElevator(-2.7, 6.62, 36, 1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
+//   scene.add(elevatorA1);
+//   const elevatorA2 = TSys.createElevator(-2.7, 9.9, 37.2, 1, -1, glass_material, metal_material, bodyFront, bodyBack);
+//   scene.add(elevatorA2);
+//
+//   ElevatorDoorGroup_A1 = elevatorA1.children[1].children[0]
+//   ElevatorDoorGroup_A2 = elevatorA1.children[1].children[1]
+//   ElevatorDoorGroup_C1 = elevatorA1.children[2].children[0]
+//   ElevatorDoorGroup_C2 = elevatorA1.children[2].children[1]
+//   ElevatorDoorGroup_B1 = elevatorA2.children[1].children[0]
+//   ElevatorDoorGroup_B2 = elevatorA2.children[1].children[1]
+//   ElevatorDoorGroup_D1 = elevatorA2.children[2].children[0]
+//   ElevatorDoorGroup_D2 = elevatorA2.children[2].children[1]
+//   ElevatorDoorGroup_D1.position.y = -3.28
+//   ElevatorDoorGroup_D2.position.y = -3.28
+//   ElevatorBodyGroup = elevatorA1.children[3]
+//
+//   const elevatorB1 = TSys.createElevator(2.7, 6.62, 36, -1, 1, glass_material, metal_material, bodyFront, bodyBack, true);
+//   scene.add(elevatorB1);
+//   const elevatorB2 = TSys.createElevator(2.7, 9.9, 37.2, -1, -1 ,glass_material, metal_material, bodyFront, bodyBack,);
+//   scene.add(elevatorB2);
+//
+//   ElevatorDoorGroup_Ab1 = elevatorB1.children[1].children[0]
+//   ElevatorDoorGroup_Ab2 = elevatorB1.children[1].children[1]
+//   ElevatorDoorGroup_Cb1 = elevatorB1.children[2].children[0]
+//   ElevatorDoorGroup_Cb2 = elevatorB1.children[2].children[1]
+//   ElevatorDoorGroup_Bb1 = elevatorB2.children[1].children[0]
+//   ElevatorDoorGroup_Bb2 = elevatorB2.children[1].children[1]
+//   ElevatorDoorGroup_Db1 = elevatorB2.children[2].children[0]
+//   ElevatorDoorGroup_Db2 = elevatorB2.children[2].children[1]
+//   ElevatorBodyGroup_B = elevatorB1.children[3]
+//
+//   ElevatorDoorGroup_Cb1.position.y = +3.28
+//   ElevatorDoorGroup_Cb2.position.y = +3.28
+//   ElevatorBodyGroup_B.position.y = +3.28
+// }
 
 // グループ全体を移動
 // 一定時間待つ関数
@@ -11779,6 +12286,9 @@ syncTrainPanelFromConfig();
 updateGroupModePanelUI();
 
 let railTubeMesh = null;
+let railTubeTrackRuntimeMap = new Map();
+let railVisualRoot = null;
+let railVisualTrackRuntimeMap = new Map();
 let railTubeDirty = false;
 let railModeActive = false;
 const railTubeDefaultColor = 0x2f2f2f;
@@ -11796,6 +12306,22 @@ const railTubeColors = [
   0x34495e,
   0xe67e22,
 ];
+const railTubeSize = 0.35;
+const railTubeLocalRefreshRadius = 2;
+const railTubeSegmentStepLength = 0.18;
+const railTubeRefreshLogEnabled = true;
+const railVisualSleepersInterval = 0.25;
+const railVisualSleeperYOffset = 0.1;
+const railVisualSleeperWidth = 0.1;
+const railVisualSleeperHeight = 0.02;
+const railVisualSleeperDepth = 0.9;
+const railVisualLocatorWidth = 0.05;
+const railVisualLocatorHeight = 0.01;
+const railVisualLocatorDepth = 0.1;
+const railVisualLocatorXOffset = 0.245;
+const railVisualLocatorZOffset = 0.21;
+const railVisualLocatorYOffset = 0.14;
+const railVisualRailOffset = 0.24;
 const railSelectionRange = 3;
 const railSelectionLineColor = 0x00ff00;
 const railSelectionLineName = 'RailSelected';
@@ -11910,11 +12436,40 @@ function ensureCreateGuideYButton() {
 function positionCreateGuideYButton() {
   const btn = ensureCreateGuideYButton();
   if (!btn) { return; }
+  const visibleUiButtons = Array.from(document.querySelectorAll('button')).filter((el) => {
+    if (el === btn) { return false; }
+    const rect = el?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) { return false; }
+    const label = String(el.textContent || '').trim().toLowerCase();
+    return label === 'template' || label === 'guide';
+  });
+  const preferredUiButton = visibleUiButtons.find((el) => String(el.textContent || '').trim().toLowerCase() === 'template')
+    || visibleUiButtons[0]
+    || null;
+  if (preferredUiButton?.getBoundingClientRect) {
+    const anchorRect = preferredUiButton.getBoundingClientRect();
+    if (anchorRect.width > 0 && anchorRect.height > 0) {
+      btn.style.left = `${Math.round(anchorRect.right + 12)}px`;
+      btn.style.top = `${Math.round(anchorRect.top)}px`;
+      return;
+    }
+  }
+  const isDecorationCreateMode = isDecorationGuidePlacementTemplate(guidePlacementTemplate);
+  if (isDecorationCreateMode && guidePlacementAnchorButton?.isConnected && guidePlacementAnchorButton?.getBoundingClientRect) {
+    const anchorRect = guidePlacementAnchorButton.getBoundingClientRect();
+    if (anchorRect.width > 0 && anchorRect.height > 0) {
+      btn.style.left = `${Math.round(anchorRect.right + 12)}px`;
+      btn.style.top = `${Math.round(anchorRect.top)}px`;
+      return;
+    }
+  }
   const anchorIds = canUseRailGuideYMode()
     ? ['new', 'rail', 'edit', 'UiGroup']
     : canUseDifferenceAddGuideYMode()
       ? ['add/2', 'add_space', 'space', 'Difference', 'creat', 'edit', 'UiGroup']
-    : ['move_point', 'add_point', 'template', 'creat', 'edit', 'UiGroup'];
+      : isDecorationCreateMode
+        ? ['new', 'template', 'add_point', 'creat', 'edit', 'UiGroup']
+        : ['move_point', 'add_point', 'template', 'creat', 'edit', 'UiGroup'];
   let rect = null;
   for (const id of anchorIds) {
     const el = document.getElementById(id);
@@ -12124,43 +12679,34 @@ function updateCreateGuideYButtonState() {
 ensureCreateGuideYButton();
 
 function buildSquareTubeMesh(curves, {
-  size = 0.35,
-  steps = 600,
+  size = railTubeSize,
   colors = railTubeColors,
 } = {}) {
-  const half = size * 0.5;
-  const shape = new THREE.Shape([
-    new THREE.Vector2(-half, -half),
-    new THREE.Vector2(half, -half),
-    new THREE.Vector2(half, half),
-    new THREE.Vector2(-half, half),
-    new THREE.Vector2(-half, -half),
-  ]);
-
-  const geometries = curves.map((curve) => new THREE.ExtrudeGeometry(shape, {
-    steps,
-    bevelEnabled: false,
-    extrudePath: curve,
-  }));
-
-  const mergedGeometry = mergeGeometries(geometries, true);
-  const materials = curves.map((_, index) => new THREE.MeshStandardMaterial({
-    color: colors[index] ?? railTubeDefaultColor,
-  }));
-  const mesh = new THREE.Mesh(mergedGeometry, materials);
-  mesh.name = 'RailTubeMesh';
-  return mesh;
+  const root = new THREE.Group();
+  root.name = 'RailTubeMesh';
+  railTubeTrackRuntimeMap = new Map();
+  curves.forEach((curve, trackIndex) => {
+    const track = railTrackDefs[trackIndex];
+    if (!track?.name || !curve) { return; }
+    const trackGroup = buildRailTubeTrackGroup(track, trackIndex, {
+      root,
+      size,
+      color: colors[trackIndex],
+    });
+    if (!trackGroup) { return; }
+  });
+  return root;
 }
 
 function setRailTubeRenderVisible(visible) {
   if (!railTubeMesh) { return; }
-  const materials = Array.isArray(railTubeMesh.material)
-    ? railTubeMesh.material
-    : [railTubeMesh.material];
-  materials.forEach((material) => {
-    if (!material) { return; }
-    material.transparent = true;
-    material.opacity = visible ? 1 : 0;
+  railTubeMesh.traverse((obj) => {
+    const materials = Array.isArray(obj?.material) ? obj.material : [obj?.material];
+    materials.forEach((material) => {
+      if (!material) { return; }
+      material.transparent = true;
+      material.opacity = visible ? 1 : 0;
+    });
   });
 }
 
@@ -12169,29 +12715,599 @@ function disposeRailTube() {
   if (railTubeMesh.parent) {
     railTubeMesh.parent.remove(railTubeMesh);
   }
-  if (railTubeMesh.geometry && typeof railTubeMesh.geometry.dispose === 'function') {
-    railTubeMesh.geometry.dispose();
-  }
-  const materials = Array.isArray(railTubeMesh.material)
-    ? railTubeMesh.material
-    : [railTubeMesh.material];
-  materials.forEach((material) => material?.dispose?.());
+  railTubeMesh.traverse((obj) => {
+    obj.geometry?.dispose?.();
+    const materials = Array.isArray(obj?.material) ? obj.material : [obj?.material];
+    materials.forEach((material) => material?.dispose?.());
+  });
   railTubeMesh = null;
+  railTubeTrackRuntimeMap = new Map();
+}
+
+function setRailVisualRenderVisible(visible) {
+  if (!railVisualRoot) { return; }
+  railVisualRoot.visible = Boolean(visible);
+}
+
+function disposeRailVisualRoot() {
+  if (!railVisualRoot) { return; }
+  if (railVisualRoot.parent) {
+    railVisualRoot.parent.remove(railVisualRoot);
+  }
+  railVisualRoot.traverse((obj) => {
+    obj.geometry?.dispose?.();
+    const materials = Array.isArray(obj?.material) ? obj.material : [obj?.material];
+    materials.forEach((material) => material?.dispose?.());
+  });
+  railVisualRoot = null;
+  railVisualTrackRuntimeMap = new Map();
 }
 
 function toggleRailTube(visible) {
   if (visible) {
     if (!railTubeMesh || railTubeDirty) {
+      if (railTubeRefreshLogEnabled) {
+        console.log('[rail][tube] full rebuild start', {
+          visible,
+          dirty: railTubeDirty,
+          hasMesh: Boolean(railTubeMesh),
+          trackCount: Array.isArray(railTrackDefs) ? railTrackDefs.length : 0,
+        });
+      }
       disposeRailTube();
       railTubeMesh = buildSquareTubeMesh(railTrackDefs.map((track) => track.curve));
       scene.add(railTubeMesh);
+      rebuildAllRailVisualTracks();
       railTubeDirty = false;
+      if (railTubeRefreshLogEnabled) {
+        console.log('[rail][tube] full rebuild done', {
+          visible,
+          dirty: railTubeDirty,
+          hasMesh: Boolean(railTubeMesh),
+        });
+      }
     }
     railTubeMesh.visible = true;
     setRailTubeRenderVisible(true);
+    setRailVisualRenderVisible(true);
   } else if (railTubeMesh) {
     setRailTubeRenderVisible(false);
+    setRailVisualRenderVisible(false);
   }
+}
+
+function createRailTubeShape(size = railTubeSize) {
+  const half = size * 0.5;
+  return new THREE.Shape([
+    new THREE.Vector2(-half, -half),
+    new THREE.Vector2(half, -half),
+    new THREE.Vector2(half, half),
+    new THREE.Vector2(-half, half),
+    new THREE.Vector2(-half, -half),
+  ]);
+}
+
+function ensureRailVisualRoot() {
+  if (railVisualRoot?.parent) { return railVisualRoot; }
+  if (!railVisualRoot) {
+    railVisualRoot = new THREE.Group();
+    railVisualRoot.name = 'RailRuntimeVisualRoot';
+  }
+  if (!railVisualRoot.parent) {
+    scene.add(railVisualRoot);
+  }
+  return railVisualRoot;
+}
+
+function buildRailStripMesh(pointsData) {
+  const points = Array.isArray(pointsData?.[0]) ? pointsData[0] : [];
+  const angles = Array.isArray(pointsData?.[1]) ? pointsData[1] : [];
+  if (points.length < 2 || angles.length < 1) { return null; }
+  const baseVectors = [
+    [0.07, 0.175],
+    [-0.07, 0.175],
+    [0.02, 0.075],
+    [-0.02, 0.075],
+    [0.02, -0.125],
+    [-0.02, -0.125],
+    [0.14, -0.15],
+    [-0.14, -0.15],
+  ];
+  const scaledVectorsPlane = TSys.scaleVectors(baseVectors, 0.25);
+  const verticesArray = [];
+  const vertexArray = [];
+  let beforePos = points[0];
+  for (let i = 0; i < points.length; i += 1) {
+    const pos = points[i];
+    if (!pos) { continue; }
+    const angleX = TSys.getVerticalAngle(beforePos, pos);
+    const angleVertical = Math.cos(angleX);
+    const anglePlane = Math.sin(angleX);
+    scaledVectorsPlane.forEach((theta) => {
+      const yNew = pos.y + (theta[1] * angleVertical) + 0.17;
+      let zNew = theta[1] * anglePlane;
+      let xNew = theta[0];
+      const rotationY = Math.atan2(zNew, xNew) + (angles[i] ?? 0);
+      const length = Math.sqrt((xNew ** 2) + (zNew ** 2));
+      xNew = pos.x + (Math.sin(rotationY) * length);
+      zNew = pos.z + (Math.cos(rotationY) * length);
+      verticesArray.push(xNew, yNew, zNew);
+    });
+    if (i > 0) {
+      vertexArray.push((i - 1) * 8, (i - 1) * 8 + 1, i * 8);
+      vertexArray.push((i - 1) * 8 + 1, i * 8 + 1, i * 8);
+      vertexArray.push((i - 1) * 8 + 1, (i - 1) * 8 + 3, i * 8 + 1);
+      vertexArray.push((i - 1) * 8 + 3, i * 8 + 3, i * 8 + 1);
+      vertexArray.push((i - 1) * 8 + 3, (i - 1) * 8 + 5, i * 8 + 3);
+      vertexArray.push((i - 1) * 8 + 5, i * 8 + 5, i * 8 + 3);
+      vertexArray.push((i - 1) * 8 + 5, (i - 1) * 8 + 7, i * 8 + 5);
+      vertexArray.push((i - 1) * 8 + 7, i * 8 + 7, i * 8 + 5);
+      vertexArray.push((i - 1) * 8 + 4, (i - 1) * 8 + 2, i * 8 + 2);
+      vertexArray.push(i * 8 + 2, i * 8 + 4, (i - 1) * 8 + 4);
+      vertexArray.push(i * 8 + 4, (i - 1) * 8 + 6, (i - 1) * 8 + 4);
+      vertexArray.push(i * 8 + 4, i * 8 + 6, (i - 1) * 8 + 6);
+      vertexArray.push(i * 8, (i - 1) * 8 + 2, (i - 1) * 8);
+      vertexArray.push(i * 8, i * 8 + 2, (i - 1) * 8 + 2);
+    }
+    beforePos = pos;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verticesArray), 3));
+  geometry.setIndex(vertexArray);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x503513,
+    metalness: 1,
+    roughness: 0.2,
+    envMapIntensity: 1,
+    side: THREE.FrontSide,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Rail';
+  return mesh;
+}
+
+function buildRailVisualSegment(track, segmentIndex) {
+  const segmentPoints = buildRailTubeSegmentPoints(track, segmentIndex);
+  if (!Array.isArray(segmentPoints) || segmentPoints.length < 2) { return null; }
+  const group = new THREE.Group();
+  group.name = 'Rail';
+  group.userData = {
+    ...(group.userData || {}),
+    railVisualSegment: true,
+    trackName: track?.name || '',
+    segmentIndex,
+  };
+
+  const pointsRight = TSys.RailMargin(segmentPoints.map((point) => point.clone()), railVisualRailOffset, true);
+  const pointsLeft = TSys.RailMargin(segmentPoints.map((point) => point.clone()), -railVisualRailOffset, true);
+  const railRightMesh = buildRailStripMesh(pointsRight);
+  const railLeftMesh = buildRailStripMesh(pointsLeft);
+  if (railRightMesh) { group.add(railRightMesh); }
+  if (railLeftMesh) { group.add(railLeftMesh); }
+
+  const segmentCurve = new THREE.CatmullRomCurve3(segmentPoints.map((point) => point.clone()), false, 'centripetal');
+  const centerSample = TSys.RailMargin(TSys.getPointsEveryM(segmentCurve, railVisualSleepersInterval), 0, true);
+  const sleeperPoints = Array.isArray(centerSample?.[0]) ? centerSample[0] : [];
+  const sleeperAngles = Array.isArray(centerSample?.[1]) ? centerSample[1] : [];
+  if (sleeperPoints.length > 0) {
+    const sleeperGeometry = new THREE.BoxGeometry(
+      railVisualSleeperWidth,
+      railVisualSleeperHeight,
+      railVisualSleeperDepth,
+    );
+    const sleeperMaterial = new THREE.MeshStandardMaterial({
+      color: 0x666666,
+      roughness: 0.9,
+      metalness: 0.0,
+      side: THREE.FrontSide,
+    });
+    const sleeperMesh = new THREE.InstancedMesh(
+      sleeperGeometry,
+      sleeperMaterial,
+      sleeperPoints.length,
+    );
+    sleeperMesh.name = 'Rail';
+
+    const locatorGeometry = new THREE.BoxGeometry(
+      railVisualLocatorWidth,
+      railVisualLocatorHeight,
+      railVisualLocatorDepth,
+    );
+    const locatorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x664513,
+      metalness: 1,
+      roughness: 0.8,
+      side: THREE.FrontSide,
+    });
+    const locatorMesh = new THREE.InstancedMesh(
+      locatorGeometry,
+      locatorMaterial,
+      sleeperPoints.length * 2,
+    );
+    locatorMesh.name = 'Rail';
+
+    const dummy = new THREE.Object3D();
+    sleeperPoints.forEach((pos, idx) => {
+      const angle = sleeperAngles[idx] ?? 0;
+      dummy.position.set(pos.x, pos.y + railVisualSleeperYOffset, pos.z);
+      dummy.rotation.set(0, angle, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      sleeperMesh.setMatrixAt(idx, dummy.matrix);
+
+      const xSin = Math.sin(angle);
+      const zCos = Math.cos(angle);
+
+      dummy.position.set(
+        pos.x + (xSin * railVisualLocatorXOffset),
+        pos.y + railVisualLocatorYOffset,
+        pos.z + (zCos * railVisualLocatorZOffset),
+      );
+      dummy.rotation.set(0, angle, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      locatorMesh.setMatrixAt(idx * 2, dummy.matrix);
+
+      dummy.position.set(
+        pos.x - (xSin * railVisualLocatorXOffset),
+        pos.y + railVisualLocatorYOffset,
+        pos.z - (zCos * railVisualLocatorZOffset),
+      );
+      dummy.rotation.set(0, angle, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      locatorMesh.setMatrixAt((idx * 2) + 1, dummy.matrix);
+    });
+    sleeperMesh.instanceMatrix.needsUpdate = true;
+    locatorMesh.instanceMatrix.needsUpdate = true;
+    group.add(sleeperMesh);
+    group.add(locatorMesh);
+  }
+  return group;
+}
+
+function clearRailVisualTrackRuntime(trackName) {
+  const key = String(trackName || '');
+  if (!key) { return; }
+  const state = railVisualTrackRuntimeMap.get(key) || null;
+  if (!state) { return; }
+  state.segmentGroups.forEach((segmentGroup) => {
+    if (!segmentGroup) { return; }
+    segmentGroup.traverse((obj) => {
+      obj.geometry?.dispose?.();
+      const materials = Array.isArray(obj?.material) ? obj.material : [obj?.material];
+      materials.forEach((material) => material?.dispose?.());
+    });
+    if (segmentGroup.parent) {
+      segmentGroup.parent.remove(segmentGroup);
+    }
+  });
+  if (state.group?.parent) {
+    state.group.parent.remove(state.group);
+  }
+  railVisualTrackRuntimeMap.delete(key);
+}
+
+function ensureRailVisualTrackRuntime(track, trackIndex) {
+  const key = String(track?.name || '');
+  if (!key) { return null; }
+  const root = ensureRailVisualRoot();
+  let state = railVisualTrackRuntimeMap.get(key) || null;
+  if (state?.group?.parent !== root) {
+    const group = new THREE.Group();
+    group.name = `RailRuntimeTrack_${key}`;
+    group.userData = {
+      ...(group.userData || {}),
+      railRuntimeTrack: true,
+      trackName: key,
+      trackIndex,
+    };
+    root.add(group);
+    state = { group, segmentGroups: [], trackIndex };
+    railVisualTrackRuntimeMap.set(key, state);
+  } else {
+    state.trackIndex = trackIndex;
+  }
+  return state;
+}
+
+function rebuildRailVisualTrackSegment(track, trackIndex, segmentIndex) {
+  if (!track?.name) { return; }
+  const state = ensureRailVisualTrackRuntime(track, trackIndex);
+  if (!state?.group) { return; }
+  const current = state.segmentGroups[segmentIndex] || null;
+  if (current) {
+    current.traverse((obj) => {
+      obj.geometry?.dispose?.();
+      const materials = Array.isArray(obj?.material) ? obj.material : [obj?.material];
+      materials.forEach((material) => material?.dispose?.());
+    });
+    if (current.parent) {
+      current.parent.remove(current);
+    }
+    state.segmentGroups[segmentIndex] = null;
+  }
+  const nextGroup = buildRailVisualSegment(track, segmentIndex);
+  if (!nextGroup) { return; }
+  state.group.add(nextGroup);
+  state.segmentGroups[segmentIndex] = nextGroup;
+}
+
+function rebuildRailVisualTrack(track) {
+  const trackIndex = railTrackDefs.findIndex((entry) => entry === track);
+  if (trackIndex < 0) { return; }
+  clearRailVisualTrackRuntime(track?.name);
+  const state = ensureRailVisualTrackRuntime(track, trackIndex);
+  if (!state?.group) { return; }
+  const segmentCount = Math.max(0, (Array.isArray(track?.points) ? track.points.length : 0) - 1);
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+    rebuildRailVisualTrackSegment(track, trackIndex, segmentIndex);
+  }
+}
+
+function rebuildAllRailVisualTracks() {
+  disposeRailVisualRoot();
+  ensureRailVisualRoot();
+  railTrackDefs.forEach((track) => rebuildRailVisualTrack(track));
+}
+
+function getRailTubeTrackColor(trackIndex) {
+  return railTubeColors[trackIndex] ?? railTubeDefaultColor;
+}
+
+function buildRailTubeMaterial(trackIndex, color = getRailTubeTrackColor(trackIndex)) {
+  return new THREE.MeshStandardMaterial({ color });
+}
+
+function disposeRailTubeSegmentMesh(mesh) {
+  if (!mesh) { return; }
+  if (mesh.parent) {
+    mesh.parent.remove(mesh);
+  }
+  mesh.geometry?.dispose?.();
+  const materials = Array.isArray(mesh?.material) ? mesh.material : [mesh?.material];
+  materials.forEach((material) => material?.dispose?.());
+}
+
+function buildRailTubeSegmentPoints(track, segmentIndex) {
+  const points = Array.isArray(track?.points) ? track.points : [];
+  if (segmentIndex < 0 || segmentIndex >= points.length - 1) { return null; }
+  const lastIndex = points.length - 1;
+  const p0 = points[Math.max(0, segmentIndex - 1)]?.clone?.();
+  const p1 = points[segmentIndex]?.clone?.();
+  const p2 = points[segmentIndex + 1]?.clone?.();
+  const p3 = points[Math.min(lastIndex, segmentIndex + 2)]?.clone?.();
+  if (!p0 || !p1 || !p2 || !p3) { return null; }
+  const curveType = String(track?.curve?.curveType || 'centripetal');
+  const tension = Number.isFinite(Number(track?.curve?.tension))
+    ? Number(track.curve.tension)
+    : 0.5;
+  const localCurve = new THREE.CatmullRomCurve3([p0, p1, p2, p3], false, curveType, tension);
+  const distance = Math.max(p1.distanceTo(p2), 0.001);
+  const subdivisions = Math.max(8, Math.ceil(distance / railTubeSegmentStepLength));
+  const samples = [];
+  for (let i = 0; i <= subdivisions; i += 1) {
+    const alpha = i / subdivisions;
+    const t = (1 / 3) + alpha * (1 / 3);
+    samples.push(localCurve.getPoint(t));
+  }
+  if (samples.length > 1) {
+    samples[0].copy(p1);
+    samples[samples.length - 1].copy(p2);
+  }
+  return samples;
+}
+
+function buildRailTubeSegmentMesh(track, trackIndex, segmentIndex, {
+  size = railTubeSize,
+  color = getRailTubeTrackColor(trackIndex),
+} = {}) {
+  const segmentPoints = buildRailTubeSegmentPoints(track, segmentIndex);
+  if (!Array.isArray(segmentPoints) || segmentPoints.length < 2) { return null; }
+  const extrudePath = new THREE.CatmullRomCurve3(segmentPoints, false, 'centripetal');
+  const length = segmentPoints.reduce((sum, point, idx) => (
+    idx < 1 ? 0 : sum + point.distanceTo(segmentPoints[idx - 1])
+  ), 0);
+  const steps = Math.max(6, Math.ceil(length / railTubeSegmentStepLength));
+  const geometry = new THREE.ExtrudeGeometry(createRailTubeShape(size), {
+    steps,
+    bevelEnabled: false,
+    extrudePath,
+  });
+  const material = buildRailTubeMaterial(trackIndex, color);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'RailTubeSegment';
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    railTubeSegment: true,
+    trackName: track?.name || '',
+    segmentIndex,
+  };
+  return mesh;
+}
+
+function ensureRailTubeTrackRuntime(track, trackIndex, {
+  root = railTubeMesh,
+  size = railTubeSize,
+  color = getRailTubeTrackColor(trackIndex),
+} = {}) {
+  const key = String(track?.name || '');
+  if (!key) { return null; }
+  let state = railTubeTrackRuntimeMap.get(key) || null;
+  if (state?.group?.parent !== root) {
+    const group = new THREE.Group();
+    group.name = `RailTubeTrack_${key}`;
+    group.userData = {
+      ...(group.userData || {}),
+      railTubeTrack: true,
+      trackName: key,
+      trackIndex,
+    };
+    state = {
+      group,
+      materialColor: color,
+      size,
+      segmentMeshes: [],
+      trackIndex,
+    };
+    railTubeTrackRuntimeMap.set(key, state);
+    root?.add(group);
+  } else {
+    state.trackIndex = trackIndex;
+    state.materialColor = color;
+    state.size = size;
+  }
+  return state;
+}
+
+function rebuildRailTubeTrackSegment(track, trackIndex, segmentIndex, options = {}) {
+  if (!(options?.root || railTubeMesh) || !track?.name) { return; }
+  const state = ensureRailTubeTrackRuntime(track, trackIndex, options);
+  if (!state?.group) { return; }
+  const current = state.segmentMeshes[segmentIndex] || null;
+  if (current) {
+    disposeRailTubeSegmentMesh(current);
+    state.segmentMeshes[segmentIndex] = null;
+  }
+  const nextMesh = buildRailTubeSegmentMesh(track, trackIndex, segmentIndex, {
+    size: state.size,
+    color: state.materialColor,
+  });
+  if (!nextMesh) { return; }
+  state.group.add(nextMesh);
+  state.segmentMeshes[segmentIndex] = nextMesh;
+}
+
+function clearRailTubeTrackRuntime(trackName) {
+  const key = String(trackName || '');
+  if (!key) { return; }
+  const state = railTubeTrackRuntimeMap.get(key) || null;
+  if (!state) { return; }
+  state.segmentMeshes.forEach((mesh) => disposeRailTubeSegmentMesh(mesh));
+  state.segmentMeshes = [];
+  if (state.group?.parent) {
+    state.group.parent.remove(state.group);
+  }
+  railTubeTrackRuntimeMap.delete(key);
+}
+
+function buildRailTubeTrackGroup(track, trackIndex, {
+  root = railTubeMesh,
+  size = railTubeSize,
+  color = getRailTubeTrackColor(trackIndex),
+} = {}) {
+  clearRailTubeTrackRuntime(track?.name);
+  const state = ensureRailTubeTrackRuntime(track, trackIndex, { root, size, color });
+  if (!state?.group) { return null; }
+  const segmentCount = Math.max(0, (Array.isArray(track?.points) ? track.points.length : 0) - 1);
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+    rebuildRailTubeTrackSegment(track, trackIndex, segmentIndex, { root, size, color });
+  }
+  return state.group;
+}
+
+function refreshRailTubeTrackAroundPoint(trackName, pointIndex, radius = railTubeLocalRefreshRadius) {
+  if (!railTubeMesh || railTubeDirty) {
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][tube] local refresh skipped', {
+        reason: !railTubeMesh ? 'missing_mesh' : 'dirty_full_rebuild_pending',
+        trackName,
+        pointIndex,
+        radius,
+      });
+    }
+    return false;
+  }
+  const track = getRailTrackByName(trackName);
+  if (!track) {
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][tube] local refresh skipped', {
+        reason: 'track_not_found',
+        trackName,
+        pointIndex,
+        radius,
+      });
+    }
+    return false;
+  }
+  const trackIndex = railTrackDefs.findIndex((entry) => entry === track);
+  if (trackIndex < 0) {
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][tube] local refresh skipped', {
+        reason: 'track_index_not_found',
+        trackName,
+        pointIndex,
+        radius,
+      });
+    }
+    return false;
+  }
+  const segmentCount = Math.max(0, (Array.isArray(track.points) ? track.points.length : 0) - 1);
+  if (segmentCount < 1) {
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][tube] local refresh skipped', {
+        reason: 'not_enough_segments',
+        trackName,
+        pointIndex,
+        radius,
+        segmentCount,
+      });
+    }
+    return false;
+  }
+  const start = Math.max(0, Number(pointIndex) - radius);
+  const end = Math.min(segmentCount - 1, Number(pointIndex) + radius);
+  for (let segmentIndex = start; segmentIndex <= end; segmentIndex += 1) {
+    rebuildRailTubeTrackSegment(track, trackIndex, segmentIndex);
+  }
+  if (railTubeRefreshLogEnabled) {
+    console.log('[rail][tube] local refresh done', {
+      trackName,
+      pointIndex,
+      radius,
+      startSegment: start,
+      endSegment: end,
+      segmentCount,
+    });
+  }
+  return true;
+}
+
+function refreshRailVisualTrackAroundPoint(trackName, pointIndex, radius = railTubeLocalRefreshRadius) {
+  if (!railVisualRoot) {
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][visual] local refresh skipped', {
+        reason: 'missing_root',
+        trackName,
+        pointIndex,
+        radius,
+      });
+    }
+    return false;
+  }
+  const track = getRailTrackByName(trackName);
+  if (!track) { return false; }
+  const trackIndex = railTrackDefs.findIndex((entry) => entry === track);
+  if (trackIndex < 0) { return false; }
+  const segmentCount = Math.max(0, (Array.isArray(track.points) ? track.points.length : 0) - 1);
+  if (segmentCount < 1) { return false; }
+  const start = Math.max(0, Number(pointIndex) - radius);
+  const end = Math.min(segmentCount - 1, Number(pointIndex) + radius);
+  for (let segmentIndex = start; segmentIndex <= end; segmentIndex += 1) {
+    rebuildRailVisualTrackSegment(track, trackIndex, segmentIndex);
+  }
+  if (railTubeRefreshLogEnabled) {
+    console.log('[rail][visual] local refresh done', {
+      trackName,
+      pointIndex,
+      radius,
+      startSegment: start,
+      endSegment: end,
+      segmentCount,
+    });
+  }
+  return true;
 }
 
 function getRailTrackByName(trackName) {
@@ -12414,7 +13530,39 @@ function updateRailPointFromMesh(mesh) {
     }
   }
   selectedRailPoint = { trackName, pointIndex };
-  railTubeDirty = true;
+  const refreshed = refreshRailTubeTrackAroundPoint(trackName, pointIndex);
+  const visualRefreshed = refreshRailVisualTrackAroundPoint(trackName, pointIndex);
+  if (railTubeRefreshLogEnabled) {
+    console.log('[rail][tube] point move update', {
+      trackName,
+      pointIndex,
+      refreshedLocally: refreshed,
+      railVisualRefreshedLocally: visualRefreshed,
+      position: {
+        x: mesh.position.x,
+        y: mesh.position.y,
+        z: mesh.position.z,
+      },
+    });
+  }
+  if (!refreshed) {
+    railTubeDirty = true;
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][tube] local refresh failed -> mark dirty', {
+        trackName,
+        pointIndex,
+      });
+    }
+  }
+  if (!visualRefreshed) {
+    rebuildRailVisualTrack(track);
+    if (railTubeRefreshLogEnabled) {
+      console.log('[rail][visual] local refresh failed -> rebuild track', {
+        trackName,
+        pointIndex,
+      });
+    }
+  }
   structureSamplesDirty = true;
   drawRailSelectionLine(trackName, pointIndex);
 }
@@ -12468,7 +13616,8 @@ function getRailCreatePointerPoint() {
   return point?.isVector3 ? point.clone() : null;
 }
 
-const RAIL_CREATE_GRID_COLOR = 0x3bc9ff;
+const CREATE_NEW_GRID_COLOR = 0x2fa7a7;
+const RAIL_CREATE_GRID_COLOR = CREATE_NEW_GRID_COLOR;
 let railCreateGuideBaseY = 0;
 let differenceAddGuideBaseY = 0;
 
@@ -12735,6 +13884,14 @@ function getNearestPointOnRailTrackCurve(track, worldPoint, resolution = 700) {
 }
 
 function resolveRailTrackByTubeHit(hit) {
+  let obj = hit?.object || null;
+  while (obj) {
+    const directName = String(obj?.userData?.trackName || '').trim();
+    if (directName) {
+      return getRailTrackByName(directName);
+    }
+    obj = obj.parent || null;
+  }
   const materialIndexRaw = hit?.face?.materialIndex;
   const materialIndex = Number.isInteger(materialIndexRaw)
     ? materialIndexRaw
@@ -13489,6 +14646,22 @@ function setPinColor(pin, color) {
   pin.material.color?.set?.(color);
 }
 
+function setStructurePinForeground(pin, foreground = false) {
+  if (!pin || !pin.material) { return; }
+  const materials = Array.isArray(pin.material) ? pin.material : [pin.material];
+  materials.forEach((material) => {
+    if (!material) { return; }
+    if ('depthTest' in material) {
+      material.depthTest = !foreground;
+    }
+    if ('depthWrite' in material) {
+      material.depthWrite = !foreground;
+    }
+    material.needsUpdate = true;
+  });
+  pin.renderOrder = foreground ? 9402 : 0;
+}
+
 function isConstructionPinSelected(pin) {
   return Boolean(pin?.userData?.constructionSelected);
 }
@@ -13537,6 +14710,45 @@ function buildStructurePinPayloadFromMesh(pin) {
     z: Number(pin.position.z) || 0,
     trackName: String(pin?.userData?.trackName || '').trim(),
   };
+}
+
+function snapStructurePinsToRailTrack(pinMeshes = structurePinnedPins) {
+  const pins = Array.isArray(pinMeshes)
+    ? pinMeshes.filter((pin) => pin?.position && pin?.userData)
+    : [];
+  if (pins.length < 1) {
+    if (railConstructionStatus) {
+      railConstructionStatus.textContent = '軌道へ合わせるピンがありません。';
+    }
+    return false;
+  }
+
+  let snappedCount = 0;
+  let skippedCount = 0;
+  pins.forEach((pin) => {
+    const startSnapshot = buildStructurePinPayloadFromMesh(pin);
+    const preferredTrackName = String(pin?.userData?.trackName || '').trim();
+    const preferredTrack = preferredTrackName ? getRailTrackByName(preferredTrackName) : null;
+    const nearest = preferredTrack
+      ? getNearestPointOnRailTrackCurve(preferredTrack, pin.position, 900)
+      : getNearestRailTrackHitFromPoint(pin.position, 900);
+    if (!nearest?.point) {
+      skippedCount += 1;
+      return;
+    }
+    pin.position.copy(nearest.point);
+    pin.userData.trackName = String(nearest.trackName || preferredTrackName || '').trim() || null;
+    syncStructureGenerationRunsForMovedPin(pin, startSnapshot);
+    snappedCount += 1;
+  });
+
+  refreshStructurePinnedPinColors();
+  if (railConstructionStatus) {
+    railConstructionStatus.textContent = skippedCount > 0
+      ? `全ピンを軌道へ補正: ${snappedCount}件、未補正: ${skippedCount}件`
+      : `全ピンを軌道へ補正: ${snappedCount}件`;
+  }
+  return snappedCount > 0;
 }
 
 function syncStructureGenerationRunsForMovedPin(pin, startSnapshot = null) {
@@ -13990,9 +15202,12 @@ function buildStructurePayloadForGroup(groupId) {
     .filter((grid) => grid?.parent)
     .map((grid) => serializeGuideGridState(grid))
     .filter(Boolean);
+  const baseGuideGridState = serializeBaseGuideGridState();
   const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStatesAll);
-  const steelFrameAll = serializeSteelFrameState(gridToKey);
-  const decorationsAll = serializeDecorationsState(gridToKey);
+  const { gridToId } = buildGuideGridPersistentIdMapsForPayload(guideGridStatesAll);
+  const guideGridCatalogAll = buildGuideGridCatalogFromStates(baseGuideGridState, guideGridStatesAll);
+  const steelFrameAll = serializeSteelFrameState(gridToKey, { gridToId });
+  const decorationsAll = serializeDecorationsState(gridToKey, { gridToId });
 
   const pointByKey = new Map(
     (Array.isArray(steelFrameAll?.points) ? steelFrameAll.points : [])
@@ -14057,6 +15272,7 @@ function buildStructurePayloadForGroup(groupId) {
         mode: 'group_copy_reference',
         memberCount: groupMembers.length,
       },
+      guideGridCatalog: [],
       guideAddGrids: [],
       steelFrame: {
         points: [],
@@ -14136,11 +15352,11 @@ function buildStructurePayloadForGroup(groupId) {
 
   const requiredGuideKeys = new Set();
   groupedPoints.forEach((point) => {
-    const key = String(point?.planeRefKey || '').trim();
+    const key = String(point?.planeRefKey || point?.planeRefGridId || '').trim();
     if (key && key !== 'base') { requiredGuideKeys.add(key); }
   });
   groupedDecorations.forEach((state) => {
-    const key = String(state?.planeRefKey || '').trim();
+    const key = String(state?.planeRefKey || state?.planeRefGridId || '').trim();
     if (key && key !== 'base') { requiredGuideKeys.add(key); }
   });
   const guideStateByKey = new Map(
@@ -14165,11 +15381,28 @@ function buildStructurePayloadForGroup(groupId) {
       return Boolean(key && requiredGuideKeys.has(key));
     })
     .map((state) => ({ ...state }));
+  const groupedGuideGridCatalog = guideGridCatalogAll
+    .filter((state) => {
+      const gridId = normalizeGuideGridPersistentId(state?.gridId);
+      if (gridId === 'base') { return true; }
+      const key = String(state?.saveKey || '').trim();
+      return Boolean(key && requiredGuideKeys.has(key));
+    })
+    .map((state) => ({ ...state }));
   const groupPose = computeStructureGroupPoseFromMembers(groupMembers);
   const groupRotation = getSavedRotationForStructureGroup(id)
     || (groupPose?.quaternion?.isQuaternion
       ? getGroupRotationAnglesFromQuat(groupPose.quaternion)
       : null);
+  const dedupedGuidePayload = dedupeGuideGridCatalogPayload({
+    guideGridCatalog: groupedGuideGridCatalog,
+    steelFrame: {
+      points: compactSteelFrame.points,
+      segments: compactSteelFrame.segments,
+      copiedInstances: compactSteelFrame.copiedInstances,
+    },
+    decorations: groupedDecorations,
+  });
 
   return {
     meta: {
@@ -14180,13 +15413,10 @@ function buildStructurePayloadForGroup(groupId) {
       memberCount: groupMembers.length,
       rotation: groupRotation,
     },
-    guideAddGrids: groupedGuideGridStates,
-    steelFrame: {
-      points: compactSteelFrame.points,
-      segments: compactSteelFrame.segments,
-      copiedInstances: compactSteelFrame.copiedInstances,
-    },
-    decorations: groupedDecorations,
+    guideGridCatalog: dedupedGuidePayload.guideGridCatalog,
+    guideAddGrids: dedupedGuidePayload.guideAddGrids,
+    steelFrame: dedupedGuidePayload.steelFrame,
+    decorations: dedupedGuidePayload.decorations,
     pins,
     generationRuns: dedupedRuns,
   };
@@ -14418,6 +15648,270 @@ function buildGuideGridSaveKeyMapsForPayload(guideGridStates) {
   return { gridToKey, keyToGrid };
 }
 
+let guideGridPersistentIdSeq = 1;
+
+function normalizeGuideGridPersistentId(rawId) {
+  return String(rawId || '').trim();
+}
+
+function reserveGuideGridPersistentId(preferredId = '') {
+  const preferred = normalizeGuideGridPersistentId(preferredId);
+  if (preferred) {
+    const matched = preferred.match(/^grid_(\d+)$/);
+    if (matched) {
+      const nextSeq = Number(matched[1]) + 1;
+      if (Number.isFinite(nextSeq) && nextSeq > guideGridPersistentIdSeq) {
+        guideGridPersistentIdSeq = nextSeq;
+      }
+    }
+    return preferred;
+  }
+  const nextId = `grid_${guideGridPersistentIdSeq}`;
+  guideGridPersistentIdSeq += 1;
+  return nextId;
+}
+
+function ensureGuideGridPersistentId(grid, preferredId = '') {
+  if (!grid) { return ''; }
+  const currentId = normalizeGuideGridPersistentId(grid?.userData?.guideGridPersistentId);
+  const nextId = currentId || reserveGuideGridPersistentId(preferredId);
+  grid.userData = {
+    ...(grid.userData || {}),
+    guideGridPersistentId: nextId,
+  };
+  return nextId;
+}
+
+function buildGuideGridPersistentIdMapsForPayload(guideGridStates) {
+  const gridToId = new Map();
+  const idToGrid = new Map();
+  gridToId.set(AddPointGuideGrid, 'base');
+  idToGrid.set('base', AddPointGuideGrid);
+  AddPointGuideGrid.userData = {
+    ...(AddPointGuideGrid.userData || {}),
+    guideGridPersistentId: 'base',
+  };
+  const liveGuideGrids = guideAddGrids.filter((grid) => grid?.parent);
+  liveGuideGrids.forEach((grid, idx) => {
+    const existingId = normalizeGuideGridPersistentId(guideGridStates[idx]?.gridId);
+    const gridId = ensureGuideGridPersistentId(grid, existingId);
+    gridToId.set(grid, gridId);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
+    }
+    if (guideGridStates[idx] && typeof guideGridStates[idx] === 'object') {
+      guideGridStates[idx].gridId = gridId;
+    }
+  });
+  guideGridStates.forEach((state) => {
+    if (!state || typeof state !== 'object') { return; }
+    if (!state.gridId && state.name === 'AddPointGuideGrid') {
+      state.gridId = 'base';
+    }
+    const sourceId = Number(state.mirroredFromSourceGridId) || null;
+    if (sourceId) {
+      const sourceGrid = (sourceId === AddPointGuideGrid.id)
+        ? AddPointGuideGrid
+        : (liveGuideGrids.find((g) => g?.id === sourceId) || null);
+      const sourceGridId = sourceGrid ? (gridToId.get(sourceGrid) || (sourceGrid === AddPointGuideGrid ? 'base' : null)) : null;
+      if (sourceGridId) {
+        state.mirroredFromSourceGridPersistentId = sourceGridId;
+      }
+    }
+    const influenceId = Number(state.mirroredFromInfluencePlaneId) || null;
+    if (influenceId) {
+      const influenceGrid = (influenceId === AddPointGuideGrid.id)
+        ? AddPointGuideGrid
+        : (liveGuideGrids.find((g) => g?.id === influenceId) || null);
+      const influenceGridId = influenceGrid ? (gridToId.get(influenceGrid) || (influenceGrid === AddPointGuideGrid ? 'base' : null)) : null;
+      if (influenceGridId) {
+        state.mirroredFromInfluencePlanePersistentId = influenceGridId;
+      }
+    }
+  });
+  return { gridToId, idToGrid };
+}
+
+function buildGuideGridCatalogFromStates(baseGuideGrid, guideGridStates = []) {
+  const catalog = [];
+  if (baseGuideGrid && typeof baseGuideGrid === 'object') {
+    catalog.push({
+      ...baseGuideGrid,
+      gridId: normalizeGuideGridPersistentId(baseGuideGrid.gridId) || 'base',
+    });
+  }
+  guideGridStates.forEach((state) => {
+    if (!state || typeof state !== 'object') { return; }
+    catalog.push({
+      ...state,
+      gridId: normalizeGuideGridPersistentId(state.gridId),
+    });
+  });
+  return catalog.filter((state) => normalizeGuideGridPersistentId(state?.gridId));
+}
+
+function normalizeGuideGridCatalogPayload(payload) {
+  const rawCatalog = Array.isArray(payload?.guideGridCatalog) ? payload.guideGridCatalog : [];
+  if (rawCatalog.length > 0) {
+    let baseGuideGrid = null;
+    const guideGridStates = [];
+    rawCatalog.forEach((state) => {
+      if (!state || typeof state !== 'object') { return; }
+      const gridId = normalizeGuideGridPersistentId(state?.gridId);
+      const nextState = {
+        ...state,
+        gridId: gridId || null,
+      };
+      if (gridId === 'base') {
+        baseGuideGrid = nextState;
+      } else {
+        guideGridStates.push(nextState);
+      }
+    });
+    return {
+      baseGuideGrid,
+      guideGridStates,
+    };
+  }
+  return {
+    baseGuideGrid: (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
+      ? payload.baseGuideGrid
+      : null,
+    guideGridStates: Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [],
+  };
+}
+
+function dedupeGuideGridCatalogPayload({
+  guideGridCatalog = [],
+  steelFrame = null,
+  decorations = [],
+} = {}) {
+  const catalogStates = Array.isArray(guideGridCatalog)
+    ? guideGridCatalog
+      .filter((state) => state && typeof state === 'object')
+      .map((state) => ({ ...state }))
+    : [];
+  if (catalogStates.length < 2) {
+    return {
+      guideGridCatalog: catalogStates,
+      guideAddGrids: catalogStates
+        .filter((state) => normalizeGuideGridPersistentId(state?.gridId) !== 'base')
+        .map((state) => ({ ...state })),
+      steelFrame,
+      decorations: Array.isArray(decorations) ? decorations : [],
+      mergedCount: 0,
+    };
+  }
+
+  const signatureToCanonical = new Map();
+  const gridIdRemap = new Map();
+  const saveKeyRemap = new Map();
+  const dedupedCatalog = [];
+  let mergedCount = 0;
+
+  catalogStates.forEach((state) => {
+    const gridId = normalizeGuideGridPersistentId(state?.gridId);
+    const saveKey = typeof state?.saveKey === 'string' ? state.saveKey : '';
+    const signature = buildGuideGridStateSignature(state);
+    const canonical = signature ? (signatureToCanonical.get(signature) || null) : null;
+    if (!canonical) {
+      const nextState = { ...state };
+      dedupedCatalog.push(nextState);
+      if (signature) {
+        signatureToCanonical.set(signature, nextState);
+      }
+      if (gridId) {
+        gridIdRemap.set(gridId, gridId);
+      }
+      if (saveKey) {
+        saveKeyRemap.set(saveKey, saveKey);
+      }
+      return;
+    }
+    mergedCount += 1;
+    const canonicalGridId = normalizeGuideGridPersistentId(canonical?.gridId);
+    const canonicalSaveKey = typeof canonical?.saveKey === 'string' ? canonical.saveKey : '';
+    if (gridId && canonicalGridId) {
+      gridIdRemap.set(gridId, canonicalGridId);
+    }
+    if (saveKey && canonicalSaveKey) {
+      saveKeyRemap.set(saveKey, canonicalSaveKey);
+    }
+  });
+
+  const remapGridId = (rawId) => {
+    const normalized = normalizeGuideGridPersistentId(rawId);
+    return normalized ? (gridIdRemap.get(normalized) || normalized) : null;
+  };
+  const remapSaveKey = (rawKey) => {
+    const normalized = String(rawKey || '').trim();
+    return normalized ? (saveKeyRemap.get(normalized) || normalized) : null;
+  };
+
+  dedupedCatalog.forEach((state) => {
+    if (!state || typeof state !== 'object') { return; }
+    state.gridId = remapGridId(state.gridId) || normalizeGuideGridPersistentId(state.gridId) || null;
+    if (typeof state?.saveKey === 'string') {
+      state.saveKey = remapSaveKey(state.saveKey) || state.saveKey;
+    }
+    if (typeof state?.mirroredFromSourceGridPersistentId === 'string') {
+      state.mirroredFromSourceGridPersistentId = remapGridId(state.mirroredFromSourceGridPersistentId);
+    }
+    if (typeof state?.mirroredFromInfluencePlanePersistentId === 'string') {
+      state.mirroredFromInfluencePlanePersistentId = remapGridId(state.mirroredFromInfluencePlanePersistentId);
+    }
+    if (typeof state?.mirroredFromSourceGridKey === 'string') {
+      state.mirroredFromSourceGridKey = remapSaveKey(state.mirroredFromSourceGridKey) || state.mirroredFromSourceGridKey;
+    }
+    if (typeof state?.mirroredFromInfluencePlaneKey === 'string') {
+      state.mirroredFromInfluencePlaneKey = remapSaveKey(state.mirroredFromInfluencePlaneKey) || state.mirroredFromInfluencePlaneKey;
+    }
+  });
+
+  const nextSteelFrame = steelFrame && typeof steelFrame === 'object'
+    ? {
+      ...steelFrame,
+      points: Array.isArray(steelFrame.points)
+        ? steelFrame.points.map((point) => {
+          const nextPoint = { ...point };
+          if (typeof nextPoint?.planeRefGridId === 'string') {
+            nextPoint.planeRefGridId = remapGridId(nextPoint.planeRefGridId);
+          }
+          if (typeof nextPoint?.planeRefKey === 'string') {
+            nextPoint.planeRefKey = remapSaveKey(nextPoint.planeRefKey) || nextPoint.planeRefKey;
+          }
+          return nextPoint;
+        })
+        : [],
+      segments: Array.isArray(steelFrame.segments) ? steelFrame.segments.map((segment) => ({ ...segment })) : [],
+      copiedInstances: Array.isArray(steelFrame.copiedInstances) ? steelFrame.copiedInstances.map((entry) => ({ ...entry })) : [],
+    }
+    : steelFrame;
+
+  const nextDecorations = Array.isArray(decorations)
+    ? decorations.map((state) => {
+      const nextState = { ...state };
+      if (typeof nextState?.planeRefGridId === 'string') {
+        nextState.planeRefGridId = remapGridId(nextState.planeRefGridId);
+      }
+      if (typeof nextState?.planeRefKey === 'string') {
+        nextState.planeRefKey = remapSaveKey(nextState.planeRefKey) || nextState.planeRefKey;
+      }
+      return nextState;
+    })
+    : [];
+
+  return {
+    guideGridCatalog: dedupedCatalog,
+    guideAddGrids: dedupedCatalog
+      .filter((state) => normalizeGuideGridPersistentId(state?.gridId) !== 'base')
+      .map((state) => ({ ...state })),
+    steelFrame: nextSteelFrame,
+    decorations: nextDecorations,
+    mergedCount,
+  };
+}
+
 function normalizeSteelFrameSegmentProfile(rawProfile) {
   const p = String(rawProfile || 'round').toLowerCase();
   if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube' || p === 'panel_wall') {
@@ -14461,6 +15955,9 @@ function normalizeSerializedSegmentStyle(profile, rawStyle) {
 }
 
 function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
+  const gridToId = options?.gridToId instanceof Map
+    ? options.gridToId
+    : new Map();
   const excludedGroupIds = options?.excludedGroupIds instanceof Set
     ? options.excludedGroupIds
     : new Set();
@@ -14478,6 +15975,7 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
     pointKeyByMesh.set(mesh, key);
     const pref = mesh?.userData?.planeRef || null;
     const planeRefKey = pref && gridToKey.has(pref) ? gridToKey.get(pref) : null;
+    const planeRefGridId = pref && gridToId.has(pref) ? gridToId.get(pref) : null;
     return {
       key,
       lineIndex: Number.isInteger(mesh?.userData?.steelFrameLine) ? mesh.userData.steelFrameLine : 0,
@@ -14485,6 +15983,9 @@ function serializeSteelFrameState(gridToKey = new Map(), options = {}) {
       scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
       steelFrameCopied: shouldMaterializeCopy ? false : Boolean(mesh?.userData?.steelFrameCopied),
       steelFrameCopyGroupId: shouldMaterializeCopy ? null : (mesh?.userData?.steelFrameCopyGroupId ?? null),
+      structureGroupId: mesh?.userData?.structureGroupId ?? null,
+      structureGroupScale: Number(mesh?.userData?.structureGroupScale) || null,
+      planeRefGridId,
       planeRefKey,
     };
   });
@@ -14582,7 +16083,7 @@ function clearSteelFrameForImport() {
   clearDeleteSelection?.();
 }
 
-function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
+function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGrid = new Map()) {
   if (!payloadSteelFrame || typeof payloadSteelFrame !== 'object') { return; }
   const pointStates = Array.isArray(payloadSteelFrame.points) ? payloadSteelFrame.points : [];
   const segmentStates = Array.isArray(payloadSteelFrame.segments) ? payloadSteelFrame.segments : [];
@@ -14612,13 +16113,18 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
     if (Array.isArray(p?.scale) && p.scale.length >= 3) {
       mesh.scale.set(Number(p.scale[0]) || 1, Number(p.scale[1]) || 1, Number(p.scale[2]) || 1);
     }
-    const planeRef = typeof p?.planeRefKey === 'string' ? (keyToGrid.get(p.planeRefKey) || null) : null;
+    const planeRefGridId = normalizeGuideGridPersistentId(p?.planeRefGridId);
+    const planeRef = planeRefGridId
+      ? (idToGrid.get(planeRefGridId) || null)
+      : (typeof p?.planeRefKey === 'string' ? (keyToGrid.get(p.planeRefKey) || null) : null);
     mesh.userData = {
       ...(mesh.userData || {}),
       steelFramePoint: true,
       steelFrameLine: Number.isInteger(p?.lineIndex) ? p.lineIndex : 0,
       steelFrameCopied: Boolean(p?.steelFrameCopied),
       steelFrameCopyGroupId: p?.steelFrameCopyGroupId ?? null,
+      structureGroupId: p?.structureGroupId ?? null,
+      structureGroupScale: Number(p?.structureGroupScale) || null,
       planeRef: planeRef || null,
     };
     steelFrameMode?.addExistingPoint?.(mesh, mesh.userData.steelFrameLine);
@@ -14677,6 +16183,16 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map()) {
         steelFrameSegmentPointRefs: pointRefs,
       };
       steelFrameMode?.rebuildSegmentsForMeshes?.([seg]);
+    }
+    if (String(s?.structureGroupId || '').trim()) {
+      pointRefs.forEach((pointMesh) => {
+        if (!pointMesh?.parent || !pointMesh?.userData?.steelFramePoint) { return; }
+        pointMesh.userData = {
+          ...(pointMesh.userData || {}),
+          structureGroupId: s.structureGroupId,
+          structureGroupScale: Number(s?.structureGroupScale) || null,
+        };
+      });
     }
     enforceTubeSegmentBlack(seg);
     registerCopyObject(seg);
@@ -14806,16 +16322,18 @@ function normalizeDecorationType(rawType) {
   return null;
 }
 
-function serializeDecorationState(mesh, gridToKey = new Map()) {
+function serializeDecorationState(mesh, gridToKey = new Map(), gridToId = new Map()) {
   const type = normalizeDecorationType(mesh?.userData?.decorationType);
   if (!type || !mesh?.position || !mesh?.quaternion || !mesh?.scale) { return null; }
   const pref = mesh?.userData?.planeRef || null;
   const planeRefKey = pref && gridToKey.has(pref) ? gridToKey.get(pref) : null;
+  const planeRefGridId = pref && gridToId.has(pref) ? gridToId.get(pref) : null;
   const out = {
     type,
     position: [mesh.position.x, mesh.position.y, mesh.position.z],
     quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
     scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+    planeRefGridId,
     planeRefKey,
     baseColor: Number(mesh?.userData?.baseColor) || null,
     structureGroupId: mesh?.userData?.structureGroupId ?? null,
@@ -14830,6 +16348,9 @@ function serializeDecorationState(mesh, gridToKey = new Map()) {
 }
 
 function serializeDecorationsState(gridToKey = new Map(), options = {}) {
+  const gridToId = options?.gridToId instanceof Map
+    ? options.gridToId
+    : new Map();
   const excludedGroupIds = options?.excludedGroupIds instanceof Set
     ? options.excludedGroupIds
     : new Set();
@@ -14846,7 +16367,7 @@ function serializeDecorationsState(gridToKey = new Map(), options = {}) {
       const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
       return !(copySourceId || railPlacementGroupId);
     })
-    .map((mesh) => serializeDecorationState(mesh, gridToKey))
+    .map((mesh) => serializeDecorationState(mesh, gridToKey, gridToId))
     .filter(Boolean);
 }
 
@@ -14869,7 +16390,7 @@ function clearDecorationsForImport() {
   }
 }
 
-function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
+function restoreDecorationsState(payloadDecorations, keyToGrid = new Map(), idToGrid = new Map()) {
   const states = Array.isArray(payloadDecorations) ? payloadDecorations : [];
   states.forEach((state) => {
     const type = normalizeDecorationType(state?.type);
@@ -14884,7 +16405,10 @@ function restoreDecorationsState(payloadDecorations, keyToGrid = new Map()) {
     mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
     const scl = Array.isArray(state?.scale) ? state.scale : [1, 1, 1];
     mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
-    const planeRef = typeof state?.planeRefKey === 'string' ? (keyToGrid.get(state.planeRefKey) || null) : null;
+    const planeRefGridId = normalizeGuideGridPersistentId(state?.planeRefGridId);
+    const planeRef = planeRefGridId
+      ? (idToGrid.get(planeRefGridId) || null)
+      : (typeof state?.planeRefKey === 'string' ? (keyToGrid.get(state.planeRefKey) || null) : null);
     mesh.userData = {
       ...(mesh.userData || {}),
       planeRef: planeRef || null,
@@ -14956,16 +16480,19 @@ function buildCreateModePayload(options = {}) {
     .map((grid) => serializeGuideGridState(grid))
     .filter(Boolean);
   const { gridToKey } = buildGuideGridSaveKeyMapsForPayload(guideGridStates);
+  const { gridToId } = buildGuideGridPersistentIdMapsForPayload(guideGridStates);
   // createMode は「非グループ対象」を保存する運用にする。
   const groupedStructureIds = excludedGroupIdsOption || new Set(collectStructureGroupIds());
   const copiedStructureGroups = [];
   const steelFrame = serializeSteelFrameState(gridToKey, {
+    gridToId,
     excludedGroupIds: groupedStructureIds,
     excludeCopiedGroupObjects,
     excludeCopiedObjects: !materializeCopiedObjects,
     materializeCopiedObjects,
   });
   const decorations = serializeDecorationsState(gridToKey, {
+    gridToId,
     excludedGroupIds: groupedStructureIds,
     excludeCopiedGroupObjects,
   });
@@ -14996,10 +16523,10 @@ function buildCreateModePayload(options = {}) {
         }
       };
       (Array.isArray(steelFrame?.points) ? steelFrame.points : []).forEach((point) => {
-        enqueueGuideDependency(point?.planeRefKey);
+        enqueueGuideDependency(point?.planeRefKey || point?.planeRefGridId);
       });
       decorations.forEach((state) => {
-        enqueueGuideDependency(state?.planeRefKey);
+        enqueueGuideDependency(state?.planeRefKey || state?.planeRefGridId);
       });
       for (let i = 0; i < queue.length; i += 1) {
         const state = guideStateByKey.get(queue[i]);
@@ -15015,6 +16542,12 @@ function buildCreateModePayload(options = {}) {
       });
     }
   }
+  const guideGridCatalog = buildGuideGridCatalogFromStates(baseGuideGrid, guideGridStates);
+  const dedupedGuidePayload = dedupeGuideGridCatalogPayload({
+    guideGridCatalog,
+    steelFrame,
+    decorations,
+  });
 
   return {
     meta: {
@@ -15037,10 +16570,11 @@ function buildCreateModePayload(options = {}) {
       differenceLineBandHeight,
     },
     uiState,
+    guideGridCatalog: dedupedGuidePayload.guideGridCatalog,
     baseGuideGrid,
-    guideAddGrids: guideGridStates,
-    steelFrame,
-    decorations,
+    guideAddGrids: dedupedGuidePayload.guideAddGrids,
+    steelFrame: dedupedGuidePayload.steelFrame,
+    decorations: dedupedGuidePayload.decorations,
     copiedStructureGroups,
     trainRunConfigs: trainRunConfigs.map((config) => normalizeTrainRunConfig(config)),
     differenceSpaces: includeDifferenceSpaces ? spaces : [],
@@ -15394,9 +16928,11 @@ async function downloadWorldData() {
       .filter((id) => id.length > 0),
   ])).sort();
   const liveGuideGridCount = guideAddGrids.filter((grid) => grid?.parent).length;
-  const savedGuideGridCount = Array.isArray(filteredSingleStructurePayload?.guideAddGrids)
-    ? filteredSingleStructurePayload.guideAddGrids.length
-    : 0;
+  const savedGuideGridCount = Array.isArray(filteredSingleStructurePayload?.guideGridCatalog)
+    ? Math.max(0, filteredSingleStructurePayload.guideGridCatalog.length - 1)
+    : (Array.isArray(filteredSingleStructurePayload?.guideAddGrids)
+      ? filteredSingleStructurePayload.guideAddGrids.length
+      : 0);
 
   const zip = new JSZipCtor();
   zip.file('group.msgpack', packState(groupPayload));
@@ -16114,10 +17650,9 @@ function applyCreateModePayload(payload) {
   stopAllConfiguredTrains();
   structureGroupSourceIndex.clear();
   structureGroupSourceById.clear();
-  const baseGuideGrid = (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
-    ? payload.baseGuideGrid
-    : null;
-  const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  const normalizedGuidePayload = normalizeGuideGridCatalogPayload(payload);
+  const baseGuideGrid = normalizedGuidePayload.baseGuideGrid;
+  const guideGridStates = normalizedGuidePayload.guideGridStates;
   const steelFrameState = (payload?.steelFrame && typeof payload.steelFrame === 'object')
     ? payload.steelFrame
     : null;
@@ -16142,11 +17677,18 @@ function applyCreateModePayload(payload) {
   clearSteelFrameForImport();
   const keyToGrid = new Map();
   keyToGrid.set('base', AddPointGuideGrid);
+  const idToGrid = new Map();
+  ensureGuideGridPersistentId(AddPointGuideGrid, normalizeGuideGridPersistentId(baseGuideGrid?.gridId) || 'base');
+  idToGrid.set('base', AddPointGuideGrid);
   nonMirrorGuideStates.forEach((state, idx) => {
     const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
     const grid = loadedGuideGrids[idx] || null;
     if (key && grid) {
       keyToGrid.set(key, grid);
+    }
+    const gridId = normalizeGuideGridPersistentId(state?.gridId);
+    if (gridId && grid) {
+      idToGrid.set(gridId, grid);
     }
   });
   guideAddGrids.forEach((grid) => {
@@ -16154,10 +17696,14 @@ function applyCreateModePayload(payload) {
     if (key && !keyToGrid.has(key)) {
       keyToGrid.set(key, grid);
     }
+    const gridId = ensureGuideGridPersistentId(grid);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
+    }
   });
-  restoreSteelFrameState(steelFrameState, keyToGrid);
+  restoreSteelFrameState(steelFrameState, keyToGrid, idToGrid);
   clearDecorationsForImport();
-  restoreDecorationsState(decorationStates, keyToGrid);
+  restoreDecorationsState(decorationStates, keyToGrid, idToGrid);
   restoreCopiedStructureGroupsFromSave(payload?.copiedStructureGroups);
   syncStructureGroupSequenceFromExisting();
   rebuildMirrorFromStatesRuntime({
@@ -16369,7 +17915,7 @@ async function loadRuntimeMapFromPublicUpload() {
     .flatMap(([kind, file]) => {
       if (kind === 'tr' && Array.isArray(file)) {
         return file
-          .filter((entry) => entry && typeof entry === 'object' && entry.buffer)
+          .filter((entry) => entry && typeof entry === 'object' && (entry.buffer || Array.isArray(entry.files)))
           .map((entry) => [kind, entry]);
       }
       return (file && typeof file === 'object' && file.buffer) ? [[kind, file]] : [];
@@ -16405,7 +17951,8 @@ async function loadRuntimeMapFromPublicUpload() {
 
     const mode = String(payload?.meta?.mode || '').trim();
     const hasMapFeatures =
-      Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0
+      Array.isArray(payload?.guideGridCatalog) && payload.guideGridCatalog.length > 0
+      || Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0
       || Array.isArray(payload?.differenceSpaces) && payload.differenceSpaces.length > 0
       || Array.isArray(payload?.differenceRailOperations) && payload.differenceRailOperations.length > 0
       || (payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object')
@@ -16453,7 +18000,20 @@ async function loadRuntimeMapFromPublicUpload() {
     const runtimeName = String(runtimeFile?.name || 'public-upload');
     loadedNames.push(runtimeName);
     if (kind === 'tr') {
-      if (/\.glb$/i.test(runtimeName)) {
+      if (Array.isArray(runtimeFile?.files) && runtimeFile.files.length > 0) {
+        try {
+          await registerRuntimeTrainModelSetFromFiles(
+            runtimeFile.files,
+            runtimeFile?.trainModelName || runtimeName
+          );
+        } catch (err) {
+          console.warn('[public_upload][train] register set failed', {
+            name: runtimeName,
+            trainModelName: runtimeFile?.trainModelName,
+            err,
+          });
+        }
+      } else if (/\.glb$/i.test(runtimeName)) {
         try {
           await registerRuntimeTrainModelFromArrayBuffer(runtimeFile.buffer, runtimeName);
         } catch (err) {
@@ -16574,7 +18134,9 @@ async function loadRuntimeMapFromPublicUpload() {
           console.info('[public_upload][ct] applying payload start', {
             name: row?.name,
             mode: payload?.meta?.mode || payload?.mode || '',
-            guideAddGrids: Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids.length : 0,
+            guideAddGrids: Array.isArray(payload?.guideGridCatalog)
+              ? Math.max(0, payload.guideGridCatalog.length - 1)
+              : (Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids.length : 0),
             differenceSpaces: Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces.length : 0,
             differenceRailOperations: Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations.length : 0,
             steelFramePoints: Array.isArray(steelFrame?.points) ? steelFrame.points.length : 0,
@@ -16766,6 +18328,19 @@ function buildExistingGuideGridKeyMap() {
   return keyToGrid;
 }
 
+function buildExistingGuideGridIdMap() {
+  const idToGrid = new Map();
+  ensureGuideGridPersistentId(AddPointGuideGrid, 'base');
+  idToGrid.set('base', AddPointGuideGrid);
+  guideAddGrids.forEach((grid) => {
+    const gridId = ensureGuideGridPersistentId(grid);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
+    }
+  });
+  return idToGrid;
+}
+
 function createStructureGroupIdRemapper() {
   const existingIds = new Set(collectStructureGroupIds());
   const idMap = new Map();
@@ -16855,7 +18430,8 @@ function appendCreateModePayload(payload, options = {}) {
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
-  const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  const normalizedGuidePayload = normalizeGuideGridCatalogPayload(payload);
+  const guideGridStates = normalizedGuidePayload.guideGridStates;
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   const steelFrameStateRaw = (payload?.steelFrame && typeof payload.steelFrame === 'object')
     ? payload.steelFrame
@@ -16915,11 +18491,16 @@ function appendCreateModePayload(payload, options = {}) {
   });
   const keyToGrid = new Map();
   keyToGrid.set('base', AddPointGuideGrid);
+  const idToGrid = buildExistingGuideGridIdMap();
   nonMirrorGuideStates.forEach((state, idx) => {
     const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
     const grid = loadedGuideGrids[idx] || null;
     if (key && grid) {
       keyToGrid.set(key, grid);
+    }
+    const gridId = normalizeGuideGridPersistentId(state?.gridId);
+    if (gridId && grid) {
+      idToGrid.set(gridId, grid);
     }
   });
   guideAddGrids.forEach((grid) => {
@@ -16927,10 +18508,14 @@ function appendCreateModePayload(payload, options = {}) {
     if (key && !keyToGrid.has(key)) {
       keyToGrid.set(key, grid);
     }
+    const gridId = ensureGuideGridPersistentId(grid);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
+    }
   });
 
-  restoreSteelFrameState(steelFrameState, keyToGrid);
-  restoreDecorationsState(decorationStates, keyToGrid);
+  restoreSteelFrameState(steelFrameState, keyToGrid, idToGrid);
+  restoreDecorationsState(decorationStates, keyToGrid, idToGrid);
   restoreCopiedStructureGroupsFromSave(copiedStructureGroups);
   registerStructureGroupSourceMappings(remapped.remappedEntries, sourceTag);
   syncStructureGroupSequenceFromExisting();
@@ -17075,7 +18660,8 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   const payloadMode = String(payload?.meta?.mode || '').trim();
   syncStructureGroupSequenceFromExisting();
-  const guideGridStates = Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids : [];
+  const normalizedGuidePayload = normalizeGuideGridCatalogPayload(payload);
+  const guideGridStates = normalizedGuidePayload.guideGridStates;
   const mirrorGuideStates = [];
   const nonMirrorGuideStates = [];
   guideGridStates.forEach((state) => {
@@ -17092,17 +18678,26 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     loadedGuideGrids.push(grid || null);
   });
   const keyToGrid = buildExistingGuideGridKeyMap();
+  const idToGrid = buildExistingGuideGridIdMap();
   nonMirrorGuideStates.forEach((state, idx) => {
     const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
     const grid = loadedGuideGrids[idx] || null;
     if (key && grid) {
       keyToGrid.set(key, grid);
     }
+    const gridId = normalizeGuideGridPersistentId(state?.gridId);
+    if (gridId && grid) {
+      idToGrid.set(gridId, grid);
+    }
   });
   guideAddGrids.forEach((grid) => {
     const key = typeof grid?.userData?.saveKey === 'string' ? grid.userData.saveKey : null;
     if (key && !keyToGrid.has(key)) {
       keyToGrid.set(key, grid);
+    }
+    const gridId = ensureGuideGridPersistentId(grid);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
     }
   });
   rebuildMirrorFromStatesRuntime({
@@ -17172,10 +18767,10 @@ function appendCreateModeGroupsPayload(payload, options = {}) {
     throw new Error('追加対象のグループ付き構造物が見つかりませんでした。');
   }
   if (appendSegmentCount > 0) {
-    restoreSteelFrameState(steelFrameState, keyToGrid);
+    restoreSteelFrameState(steelFrameState, keyToGrid, idToGrid);
   }
   if (appendDecorationCount > 0) {
-    restoreDecorationsState(decorationStates, keyToGrid);
+    restoreDecorationsState(decorationStates, keyToGrid, idToGrid);
   }
   if (standaloneGroupState?.rotation && mapped.remappedEntries?.length === 1) {
     const targetGroupId = String(mapped.remappedEntries[0]?.remappedGroupId || '').trim();
@@ -17678,6 +19273,11 @@ if (railConstructionGenerateButton) {
     }
   });
 }
+if (railConstructionSnapPinsButton) {
+  railConstructionSnapPinsButton.addEventListener('click', () => {
+    snapStructurePinsToRailTrack();
+  });
+}
 setConstructionCategory(null);
 setRailConstructionCategory(null);
 setRailConstructionGroupOptions();
@@ -17701,7 +19301,7 @@ console.info('[main] fixed world placements disabled', {
 });
 railTrackDefs.forEach((track) => {
   if (!track?.curve) { return; }
-  TSys.createRail(track.curve);
+  rebuildRailVisualTrack(track);
 });
 // const board_length_1 = tunnel_1.getLength(line_4)/quantity;
 // const board_length_2 = tunnel_2.getLength(line_4)/quantity;
@@ -18147,9 +19747,31 @@ function drawingObject(changedPoints = null){
 }
 
 
-const GuideLine = createLine({x:0,y:2,z:0}, {x:0,y:-2,z:0}, 0xff0000)
-GuideLine.name = 'GuideLine'
-GuideLine.position.set(0,0,0);
+const GuideLine = new THREE.Group();
+GuideLine.name = 'GuideLine';
+const GUIDE_LINE_AXIS_LEN = 2;
+const GuideLineAxisX = createLine(
+  { x: -GUIDE_LINE_AXIS_LEN, y: 0, z: 0 },
+  { x: GUIDE_LINE_AXIS_LEN, y: 0, z: 0 },
+  0xff0000
+);
+const GuideLineAxisY = createLine(
+  { x: 0, y: -GUIDE_LINE_AXIS_LEN, z: 0 },
+  { x: 0, y: GUIDE_LINE_AXIS_LEN, z: 0 },
+  0xff0000
+);
+const GuideLineAxisZ = createLine(
+  { x: 0, y: 0, z: -GUIDE_LINE_AXIS_LEN },
+  { x: 0, y: 0, z: GUIDE_LINE_AXIS_LEN },
+  0xff0000
+);
+GuideLineAxisX.name = 'GuideLineAxisX';
+GuideLineAxisY.name = 'GuideLineAxisY';
+GuideLineAxisZ.name = 'GuideLineAxisZ';
+GuideLine.add(GuideLineAxisX);
+GuideLine.add(GuideLineAxisY);
+GuideLine.add(GuideLineAxisZ);
+GuideLine.position.set(0, 0, 0);
 scene.add(GuideLine)
 
 const WORLD_ORIGIN_AXIS_LEN = 12;
@@ -18181,47 +19803,185 @@ scene.add(WorldOriginAxisGroup);
 
 function updateGuideLineDirectionFromMesh(mesh) {
   if (!GuideLine) { return; }
-  const baseAxis = new THREE.Vector3(0, 1, 0);
-  const dir = mesh?.userData?.pointRotateDirection;
-  if (dir?.x != null && dir?.y != null && dir?.z != null) {
-    const d = new THREE.Vector3(dir.x, dir.y, dir.z);
-    if (d.lengthSq() > 1e-8) {
-      GuideLine.quaternion.setFromUnitVectors(baseAxis, d.normalize());
-      return;
-    }
+  if (movePointCoordinateMode !== 'grid') {
+    GuideLine.quaternion.identity();
+    return;
+  }
+  const planeQuat = mesh?.userData?.planeRef?.quaternion;
+  if (planeQuat?.isQuaternion) {
+    GuideLine.quaternion.copy(planeQuat).normalize();
+    return;
   }
   GuideLine.quaternion.identity();
 }
 
+function updateGuideLineAxisVisibility({ showX = false, showY = false, showZ = false } = {}) {
+  if (GuideLineAxisX) { GuideLineAxisX.visible = Boolean(showX); }
+  if (GuideLineAxisY) { GuideLineAxisY.visible = Boolean(showY); }
+  if (GuideLineAxisZ) { GuideLineAxisZ.visible = Boolean(showZ); }
+}
+
+function shouldSuppressGuideLine() {
+  return objectEditMode === 'CONSTRUCT';
+}
+
+function showMoveAxisGuide(mesh) {
+  if (shouldSuppressGuideLine()) {
+    GuideLine.visible = false;
+    return;
+  }
+  if (!mesh?.position) { return; }
+  GuideLine.position.copy(mesh.position);
+  GuideLine.scale.set(1, 1, 1);
+  updateGuideLineDirectionFromMesh(mesh);
+  if (move_direction_y) {
+    updateGuideLineAxisVisibility({ showY: true });
+  } else {
+    updateGuideLineAxisVisibility({ showX: true, showZ: true });
+  }
+  GuideLine.visible = true;
+}
+
 function showPointRotationGuideLine(mesh) {
+  if (shouldSuppressGuideLine()) {
+    GuideLine.visible = false;
+    return;
+  }
   if (!mesh || !mesh.position) { return; }
   GuideLine.position.copy(mesh.position);
   GuideLine.scale.set(1, 1, 1);
   updateGuideLineDirectionFromMesh(mesh);
+  updateGuideLineAxisVisibility({ showY: true });
   GuideLine.visible = true;
 }
 
 const ADD_POINT_GRID_SIZE = 20;
 const ADD_POINT_GRID_DIVISIONS = 40;
 const GUIDE_GRID_CELL_SIZE = ADD_POINT_GRID_SIZE / ADD_POINT_GRID_DIVISIONS;
+const GUIDE_GRID_EDGE_FADE_START = 0.72;
+const GUIDE_GRID_EDGE_FADE_END = 1.0;
+const ADD_POINT_GRID_GROUND_HIDDEN_COLOR = 0x8a8a8a;
+const ADD_POINT_GRID_GROUND_HIDDEN_FADE = 0.015;
+const ADD_POINT_GRID_GROUND_OCCLUSION_UP_DOT_MIN = 0.995;
+const ADD_POINT_GRID_GROUND_HIDDEN_OVERLAY_OPACITY = 0.9;
 
-const GuideGrid = new THREE.GridHelper(5, 10, 0x8888aa, 0x88aa88);
+function createGuideGridLineMaterial({
+  color = CREATE_NEW_GRID_COLOR,
+  opacity = 1,
+  depthTest = true,
+  depthWrite = false,
+  depthFunc = THREE.LessEqualDepth,
+  groundVisibilityMode = 'normal',
+} = {}) {
+  const visibilityModeValue = groundVisibilityMode === 'ground_hidden_only'
+    ? 2
+    : (groundVisibilityMode === 'ground_visible_only' ? 1 : 0);
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest,
+    depthWrite,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uHalfSize: { value: new THREE.Vector2(ADD_POINT_GRID_SIZE * 0.5, ADD_POINT_GRID_SIZE * 0.5) },
+      uFadeStart: { value: GUIDE_GRID_EDGE_FADE_START },
+      uFadeEnd: { value: GUIDE_GRID_EDGE_FADE_END },
+      uGroundY: { value: 0 },
+      uGroundFade: { value: ADD_POINT_GRID_GROUND_HIDDEN_FADE },
+      uGroundOcclusionMix: { value: 1 },
+      uGroundVisibilityMode: { value: visibilityModeValue },
+    },
+    vertexShader: `
+      varying vec2 vLocalXZ;
+      varying float vWorldY;
+      void main() {
+        vLocalXZ = position.xz;
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldY = worldPos.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform vec2 uHalfSize;
+      uniform float uFadeStart;
+      uniform float uFadeEnd;
+      uniform float uGroundY;
+      uniform float uGroundFade;
+      uniform float uGroundOcclusionMix;
+      uniform float uGroundVisibilityMode;
+      varying vec2 vLocalXZ;
+      varying float vWorldY;
+      void main() {
+        vec2 safeHalf = max(uHalfSize, vec2(0.0001));
+        vec2 normalized = vLocalXZ / safeHalf;
+        float radius = length(normalized);
+        float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, radius);
+        float hiddenByGround = (1.0 - smoothstep(uGroundY - uGroundFade, uGroundY + uGroundFade, vWorldY)) * uGroundOcclusionMix;
+        if (uGroundVisibilityMode > 1.5) {
+          fade *= hiddenByGround;
+        } else if (uGroundVisibilityMode > 0.5) {
+          fade *= (1.0 - hiddenByGround);
+        }
+        if (fade <= 0.001) {
+          discard;
+        }
+        gl_FragColor = vec4(uColor, uOpacity * fade);
+      }
+    `,
+  });
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = -1;
+  material.polygonOffsetUnits = -1;
+  material.depthFunc = depthFunc;
+  return material;
+}
+
+function getGuideGridMaterials(grid) {
+  if (!grid?.material) { return []; }
+  return Array.isArray(grid.material) ? grid.material.filter(Boolean) : [grid.material];
+}
+
+function updateGuideGridLineMaterialSize(grid, width = ADD_POINT_GRID_SIZE, height = ADD_POINT_GRID_SIZE) {
+  const halfW = Math.max(0.1, Number(width) || ADD_POINT_GRID_SIZE) * 0.5;
+  const halfH = Math.max(0.1, Number(height) || ADD_POINT_GRID_SIZE) * 0.5;
+  getGuideGridMaterials(grid).forEach((mat) => {
+    if (!mat?.uniforms?.uHalfSize?.value) { return; }
+    mat.uniforms.uHalfSize.value.set(halfW, halfH);
+  });
+}
+
+function replaceGuideGridWithCircularLineMaterial(grid, options = {}) {
+  if (!grid) { return; }
+  const previousMaterials = getGuideGridMaterials(grid);
+  const previousOpacity = Number(options.opacity);
+  const color = Number(options.color ?? grid?.userData?.guideGridColor ?? CREATE_NEW_GRID_COLOR);
+  const opacity = Number.isFinite(previousOpacity)
+    ? previousOpacity
+    : Number(previousMaterials[0]?.uniforms?.uOpacity?.value ?? previousMaterials[0]?.opacity ?? 1);
+  const depthTest = options.depthTest ?? previousMaterials[0]?.depthTest ?? false;
+  const depthWrite = options.depthWrite ?? previousMaterials[0]?.depthWrite ?? false;
+  const depthFunc = options.depthFunc ?? previousMaterials[0]?.depthFunc ?? THREE.LessEqualDepth;
+  const groundVisibilityMode = options.groundVisibilityMode
+    ?? (previousMaterials[0]?.uniforms?.uGroundVisibilityMode?.value > 1.5
+      ? 'ground_hidden_only'
+      : (previousMaterials[0]?.uniforms?.uGroundVisibilityMode?.value > 0.5 ? 'ground_visible_only' : 'normal'));
+  previousMaterials.forEach((mat) => {
+    if (mat?.isShaderMaterial) { mat.dispose?.(); }
+  });
+  grid.material = createGuideGridLineMaterial({ color, opacity, depthTest, depthWrite, depthFunc, groundVisibilityMode });
+  updateGuideGridLineMaterialSize(
+    grid,
+    grid?.userData?.guideRectSize?.width || ADD_POINT_GRID_SIZE,
+    grid?.userData?.guideRectSize?.height || ADD_POINT_GRID_SIZE,
+  );
+}
+
+const GuideGrid = new THREE.GridHelper(5, 10, CREATE_NEW_GRID_COLOR, CREATE_NEW_GRID_COLOR);
 GuideGrid.name = "GuideGrid";
 GuideGrid.position.set(0,0,0);
-if (GuideGrid.material) {
-  if (Array.isArray(GuideGrid.material)) {
-    GuideGrid.material.forEach((mat) => {
-      if (!mat) { return; }
-      mat.transparent = true;
-      mat.opacity = 0;
-      mat.depthWrite = false;
-    });
-  } else {
-    GuideGrid.material.transparent = true;
-    GuideGrid.material.opacity = 0;
-    GuideGrid.material.depthWrite = false;
-  }
-}
+configureGuideGridMaterial(GuideGrid, { opacity: 0, depthTest: true, depthWrite: false, transparent: true, renderOrder: 0 });
 scene.add(GuideGrid);
 const GUIDE_GRID_AXIS_LEN = 2.2;
 const GuideGridAxisGroup = new THREE.Group();
@@ -18237,9 +19997,25 @@ GuideGridAxisGroup.add(GuideGridAxisY);
 GuideGridAxisGroup.add(GuideGridAxisZ);
 GuideGrid.add(GuideGridAxisGroup);
 
-const AddPointGuideGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, 0x88aa88, 0x88aa88);
+const AddPointGuideGrid = new THREE.GridHelper(ADD_POINT_GRID_SIZE, ADD_POINT_GRID_DIVISIONS, CREATE_NEW_GRID_COLOR, CREATE_NEW_GRID_COLOR);
 AddPointGuideGrid.name = 'AddPointGuideGrid';
 AddPointGuideGrid.position.set(0,0,0);
+replaceGuideGridWithCircularLineMaterial(AddPointGuideGrid, { color: CREATE_NEW_GRID_COLOR, opacity: 0.96, depthTest: true, depthWrite: false, groundVisibilityMode: 'ground_visible_only' });
+configureGuideGridMaterial(AddPointGuideGrid, { opacity: 0.96, depthTest: true, depthWrite: false, transparent: true, renderOrder: 0 });
+const AddPointGuideGridGroundHiddenOverlay = new THREE.LineSegments(
+  AddPointGuideGrid.geometry,
+  createGuideGridLineMaterial({
+    color: ADD_POINT_GRID_GROUND_HIDDEN_COLOR,
+    opacity: ADD_POINT_GRID_GROUND_HIDDEN_OVERLAY_OPACITY,
+    depthTest: false,
+    depthWrite: false,
+    groundVisibilityMode: 'ground_hidden_only',
+  })
+);
+AddPointGuideGridGroundHiddenOverlay.name = 'AddPointGuideGridGroundHiddenOverlay';
+AddPointGuideGridGroundHiddenOverlay.renderOrder = 9405;
+updateGuideGridLineMaterialSize(AddPointGuideGridGroundHiddenOverlay, ADD_POINT_GRID_SIZE, ADD_POINT_GRID_SIZE);
+AddPointGuideGrid.add(AddPointGuideGridGroundHiddenOverlay);
 scene.add(AddPointGuideGrid);
 
 const GuideGrid_Center_x = createLine({x:2,y:0.1,z:0}, {x:-2,y:0.1,z:0}, 0xff0000)
@@ -18297,11 +20073,38 @@ const addPointGridBaseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler
 
 function setGuideAddGridColor(grid, color) {
   if (!grid || !grid.material) { return; }
-  if (Array.isArray(grid.material)) {
-    grid.material.forEach((mat) => mat?.color?.set?.(color));
-  } else if (grid.material.color) {
-    grid.material.color.set(color);
-  }
+  getGuideGridMaterials(grid).forEach((mat) => {
+    if (mat?.uniforms?.uColor?.value) {
+      mat.uniforms.uColor.value.set(color);
+      return;
+    }
+    mat?.color?.set?.(color);
+  });
+}
+
+function configureGuideGridMaterial(grid, { opacity = 1, depthTest = false, depthWrite = false, transparent = true, renderOrder = 9000 } = {}) {
+  if (!grid?.material) { return; }
+  const materials = getGuideGridMaterials(grid);
+  materials.forEach((mat) => {
+    if (!mat) { return; }
+    if ('vertexColors' in mat) {
+      mat.vertexColors = false;
+    }
+    if (mat?.uniforms?.uOpacity) {
+      mat.uniforms.uOpacity.value = opacity;
+    }
+    mat.transparent = transparent;
+    mat.opacity = opacity;
+    mat.depthTest = depthTest;
+    mat.depthWrite = depthWrite;
+    if ('polygonOffset' in mat) {
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -1;
+      mat.polygonOffsetUnits = -1;
+    }
+    mat.needsUpdate = true;
+  });
+  grid.renderOrder = renderOrder;
 }
 
 const GUIDE_GRID_PICK_OFFSET = 0.02;
@@ -18376,6 +20179,7 @@ function getLastEditableGuideGrid() {
 
 function serializeGuideGridState(grid) {
   if (!grid?.position || !grid?.quaternion) { return null; }
+  const gridId = ensureGuideGridPersistentId(grid);
   const angles = grid?.userData?.changeAnglePanelAngles;
   const rectSize = grid?.userData?.guideRectSize || null;
   const frameRaw = grid?.userData?.guideMirrorCoordFrame || null;
@@ -18416,6 +20220,7 @@ function serializeGuideGridState(grid) {
   }
   return {
     name: String(grid.name || 'AddPointGuideGridClone'),
+    gridId,
     saveKey: typeof grid?.userData?.saveKey === 'string' ? grid.userData.saveKey : null,
     position: [grid.position.x, grid.position.y, grid.position.z],
     quaternion: [grid.quaternion.x, grid.quaternion.y, grid.quaternion.z, grid.quaternion.w],
@@ -18428,10 +20233,12 @@ function serializeGuideGridState(grid) {
     mirroredFromSourceGridKey: typeof grid?.userData?.mirroredFromSourceGridKey === 'string'
       ? grid.userData.mirroredFromSourceGridKey
       : null,
+    mirroredFromSourceGridPersistentId: normalizeGuideGridPersistentId(grid?.userData?.mirroredFromSourceGridPersistentId) || null,
     mirroredFromInfluencePlaneId: Number(grid?.userData?.mirroredFromInfluencePlaneId) || null,
     mirroredFromInfluencePlaneKey: typeof grid?.userData?.mirroredFromInfluencePlaneKey === 'string'
       ? grid.userData.mirroredFromInfluencePlaneKey
       : null,
+    mirroredFromInfluencePlanePersistentId: normalizeGuideGridPersistentId(grid?.userData?.mirroredFromInfluencePlanePersistentId) || null,
     guideMillerInfluencePlane: Boolean(grid?.userData?.guideMillerInfluencePlane),
     guideMirrorCoordFrame: frame,
     guideRectSize: rectSize
@@ -18451,7 +20258,12 @@ function serializeGuideGridState(grid) {
 }
 
 function serializeBaseGuideGridState() {
-  return serializeGuideGridState(AddPointGuideGrid);
+  ensureGuideGridPersistentId(AddPointGuideGrid, 'base');
+  const state = serializeGuideGridState(AddPointGuideGrid);
+  if (state && typeof state === 'object') {
+    state.gridId = 'base';
+  }
+  return state;
 }
 
 function applyBaseGuideGridState(state) {
@@ -18462,6 +20274,10 @@ function applyBaseGuideGridState(state) {
   const q = new THREE.Quaternion(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1).normalize();
   AddPointGuideGrid.position.copy(p);
   AddPointGuideGrid.quaternion.copy(q);
+  AddPointGuideGrid.userData = {
+    ...(AddPointGuideGrid.userData || {}),
+    guideGridPersistentId: normalizeGuideGridPersistentId(state?.gridId) || 'base',
+  };
   AddPointGuideGrid.updateMatrixWorld(true);
   addPointGridHandle.position.copy(p);
   addPointGridHandle.quaternion.copy(q).multiply(addPointGridBaseQuat);
@@ -18621,6 +20437,17 @@ function buildGuideGridLiveStateSignature(grid) {
 }
 
 function findExistingGuideGridFromState(state) {
+  const targetGridId = normalizeGuideGridPersistentId(state?.gridId);
+  if (targetGridId) {
+    for (let i = 0; i < guideAddGrids.length; i += 1) {
+      const grid = guideAddGrids[i];
+      if (!grid?.parent) { continue; }
+      const liveGridId = normalizeGuideGridPersistentId(grid?.userData?.guideGridPersistentId);
+      if (liveGridId && liveGridId === targetGridId) {
+        return grid;
+      }
+    }
+  }
   const targetSignature = buildGuideGridStateSignature(state);
   if (!targetSignature) { return null; }
   for (let i = 0; i < guideAddGrids.length; i += 1) {
@@ -18687,6 +20514,7 @@ function addGuideGridFromState(state) {
     height: Number(rect?.height) || ADD_POINT_GRID_SIZE,
     userData: {
       ...stateUserData,
+      guideGridPersistentId: normalizeGuideGridPersistentId(state?.gridId) || null,
       saveKey: typeof state?.saveKey === 'string' ? state.saveKey : null,
       guideMirrorLocked: Boolean(state?.guideMirrorLocked),
       mirroredFromEdge: typeof state?.mirroredFromEdge === 'string' ? state.mirroredFromEdge : null,
@@ -18694,10 +20522,12 @@ function addGuideGridFromState(state) {
       mirroredFromSourceGridKey: typeof state?.mirroredFromSourceGridKey === 'string'
         ? state.mirroredFromSourceGridKey
         : null,
+      mirroredFromSourceGridPersistentId: normalizeGuideGridPersistentId(state?.mirroredFromSourceGridPersistentId) || null,
       mirroredFromInfluencePlaneId: Number(state?.mirroredFromInfluencePlaneId) || null,
       mirroredFromInfluencePlaneKey: typeof state?.mirroredFromInfluencePlaneKey === 'string'
         ? state.mirroredFromInfluencePlaneKey
         : null,
+      mirroredFromInfluencePlanePersistentId: normalizeGuideGridPersistentId(state?.mirroredFromInfluencePlanePersistentId) || null,
       guideMillerInfluencePlane: Boolean(state?.guideMillerInfluencePlane),
       guideMirrorCoordFrame: frame,
     },
@@ -18834,7 +20664,7 @@ const guideAddGridPicks = []
 let changeAngleGridTarget = null
 let addPointGridY = 0
 let addPointGridInitialized = false
-const GUIDE_ADD_GRID_COLOR = 0x88aa88;
+const GUIDE_ADD_GRID_COLOR = CREATE_NEW_GRID_COLOR;
 const GUIDE_ADD_GRID_SELECTED_COLOR = 0x00ff00;
 const searchGridVisuals = [];
 let searchSelectedGrid = null;
@@ -19426,6 +21256,11 @@ function setCreateModeWorldFocus(enable) {
       railTubeMesh.visible = true;
       setRailTubeRenderVisible(true);
     }
+    if (railVisualRoot) {
+      keep.add(railVisualRoot);
+      railVisualRoot.visible = true;
+      setRailVisualRenderVisible(true);
+    }
     scene.traverse((obj) => {
       if (!obj) { return; }
       if (obj.name === 'Rail' || obj.name === railSelectionLineName || obj.name === 'RailTubeMesh') {
@@ -19473,8 +21308,8 @@ function setCreateModeWorldFocus(enable) {
       trainGroup.visible = false;
     });
 
-    suspendRunTrainAnimations = true;
     createModeWorldFocused = true;
+    syncTrainAnimationSuspendedState();
     return;
   }
 
@@ -19490,8 +21325,8 @@ function setCreateModeWorldFocus(enable) {
   if (sinjyukuCity) {
     sinjyukuCity.visible = true;
   }
-  suspendRunTrainAnimations = false;
   createModeWorldFocused = false;
+  syncTrainAnimationSuspendedState();
 }
 
 function shouldSceneTrainsBeVisible() {
@@ -19579,9 +21414,80 @@ function getGroundMeshes() {
   return meshes;
 }
 
+function getFallbackGroundMesh() {
+  return scene?.getObjectByName?.('GroundPlane') || null;
+}
+
+function getAllGroundMeshes() {
+  const meshes = [...getGroundMeshes()];
+  const fallbackGround = getFallbackGroundMesh();
+  if (fallbackGround?.isMesh) {
+    meshes.push(fallbackGround);
+  }
+  return meshes;
+}
+
+function applyRecommendedGroundMaterialSettings(material) {
+  if (!material) { return; }
+  const opacity = typeof material.opacity === 'number' ? material.opacity : 1;
+  material.depthTest = true;
+  material.depthWrite = true;
+  material.transparent = opacity < 0.999;
+  material.needsUpdate = true;
+}
+
+function applyRecommendedGroundMeshSettings(mesh) {
+  if (!mesh?.isMesh) { return; }
+  mesh.renderOrder = 0;
+  mesh.frustumCulled = false;
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  materials.filter(Boolean).forEach(applyRecommendedGroundMaterialSettings);
+}
+
+function syncGroundFallbackVisibility() {
+  const fallbackGround = getFallbackGroundMesh();
+  if (!fallbackGround) { return; }
+  fallbackGround.visible = getGroundMeshes().length < 1;
+}
+
+function applyRecommendedGroundSettings() {
+  getAllGroundMeshes().forEach(applyRecommendedGroundMeshSettings);
+  syncGroundFallbackVisibility();
+}
+
+function getGroundReferenceY() {
+  const cityGround = getGroundMeshes()[0] || null;
+  if (cityGround) {
+    cityGround.updateMatrixWorld?.(true);
+    return new THREE.Vector3().setFromMatrixPosition(cityGround.matrixWorld).y;
+  }
+  const fallbackGround = getFallbackGroundMesh();
+  if (fallbackGround) {
+    fallbackGround.updateMatrixWorld?.(true);
+    return new THREE.Vector3().setFromMatrixPosition(fallbackGround.matrixWorld).y;
+  }
+  return 0;
+}
+
+function syncAddPointGuideGridGroundUniform() {
+  const planeNormal = new THREE.Vector3(0, 1, 0).applyQuaternion(AddPointGuideGrid.quaternion).normalize();
+  const groundOcclusionMix = Math.abs(planeNormal.dot(new THREE.Vector3(0, 1, 0))) >= ADD_POINT_GRID_GROUND_OCCLUSION_UP_DOT_MIN ? 1 : 0;
+  const groundY = getGroundReferenceY();
+  [AddPointGuideGrid, AddPointGuideGridGroundHiddenOverlay].forEach((grid) => {
+    getGuideGridMaterials(grid).forEach((mat) => {
+      if (!mat?.uniforms?.uGroundY) { return; }
+      mat.uniforms.uGroundY.value = groundY;
+      if (mat.uniforms.uGroundOcclusionMix) {
+        mat.uniforms.uGroundOcclusionMix.value = groundOcclusionMix;
+      }
+    });
+  });
+}
+
 function applySceneVisibilitySettings({ save = true } = {}) {
   syncTrainGroupVisibility();
   syncSinjyukuCityVisibility();
+  applyRecommendedGroundSettings();
   syncSceneDifferenceLineOverlapPreview();
   updateScenePanelUi();
   if (save) {
@@ -19604,21 +21510,21 @@ function setMaterialOpacity(material, opacity) {
   material.opacity = opacity;
   material.transparent = opacity < 1;
   if ('depthWrite' in material) {
-    material.depthWrite = opacity >= 1;
+    material.depthWrite = material?.userData?.groundBaseDepthWrite !== false;
   }
   material.needsUpdate = true;
 }
 
 function updateGroundOpacityButtonState() {
   if (!toggleGroundOpacityButton) { return; }
-  const meshes = getGroundMeshes();
+  const meshes = getAllGroundMeshes();
   const materials = meshes.flatMap((mesh) => Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
   const isTransparent = materials.some((material) => typeof material?.opacity === 'number' && material.opacity < 0.99);
   toggleGroundOpacityButton.textContent = isTransparent ? 'ground戻す' : 'ground透過';
 }
 
 function toggleGroundOpacity() {
-  const meshes = getGroundMeshes();
+  const meshes = getAllGroundMeshes();
   if (meshes.length < 1) {
     setMapLoadStatusText('ground が見つかりません。');
     return false;
@@ -19633,11 +21539,13 @@ function toggleGroundOpacity() {
       if ('depthWrite' in material) {
         material.depthWrite = material?.userData?.groundBaseDepthWrite !== false;
       }
+      material.depthTest = true;
       material.needsUpdate = true;
       return;
     }
     setMaterialOpacity(material, 0.3);
   });
+  applyRecommendedGroundSettings();
   updateGroundOpacityButtonState();
   setMapLoadStatusText(
     shouldRestore
@@ -19878,7 +21786,7 @@ function createConfiguredTrainGroup(trainType) {
     if (!LoadModels?.[1] && !LoadModels?.[2]) { return null; }
     return Sin_TrainSettings(8);
   }
-  if (!cloneCommuterTrainModelByName(trainType)) { return null; }
+  if (!hasCommuterTrainModel(trainType)) { return null; }
   return createCommuterTrainWithModel(trainType, 10, 0xaaaaaa);
 }
 
@@ -22324,6 +24232,7 @@ function createGuideGridWithPick({
         transparent: true,
         opacity,
         side: THREE.DoubleSide,
+        depthTest: true,
         depthWrite: false,
       })
     )
@@ -22331,6 +24240,9 @@ function createGuideGridWithPick({
   grid.name = name;
   grid.position.copy(position);
   grid.quaternion.copy(quaternion);
+  if (display !== 'plane') {
+    configureGuideGridMaterial(grid, { opacity: 0.96, depthTest: true, depthWrite: false, transparent: true, renderOrder: 0 });
+  }
   grid.userData = {
     ...(grid.userData || {}),
     guideGridColor: color,
@@ -25109,7 +27021,9 @@ function payloadHasOnlyDifferenceSpaces(payload) {
   const spaces = Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces : [];
   const railOperations = Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations : [];
   if (spaces.length < 1 && railOperations.length < 1) { return false; }
-  const hasGuideData = Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0;
+  const hasGuideData =
+    Array.isArray(payload?.guideGridCatalog) && payload.guideGridCatalog.length > 0
+    || Array.isArray(payload?.guideAddGrids) && payload.guideAddGrids.length > 0;
   const hasSteelFramePoints = Array.isArray(payload?.steelFrame?.points) && payload.steelFrame.points.length > 0;
   const hasSteelFrameSegments = Array.isArray(payload?.steelFrame?.segments) && payload.steelFrame.segments.length > 0;
   const hasDecorations = Array.isArray(payload?.decorations) && payload.decorations.length > 0;
@@ -26309,19 +28223,94 @@ function setGuideGridColor(color) {
 
 function setAddPointGuideGridColor(color) {
   if (!AddPointGuideGrid || !AddPointGuideGrid.material) { return; }
-  if (Array.isArray(AddPointGuideGrid.material)) {
-    AddPointGuideGrid.material.forEach((mat) => mat?.color?.set?.(color));
-  } else if (AddPointGuideGrid.material.color) {
-    AddPointGuideGrid.material.color.set(color);
-  }
+  setGuideAddGridColor(AddPointGuideGrid, color);
 }
 
 function setGuideGridVisibleFromUI(visible) {
   GuideGrid.visible = Boolean(visible);
 }
 
+let addPointGuideGridVisibleRequested = false;
+let addPointSupportCrossHoverState = null;
+
+function setAddPointSupportCrossVisible(visible, point = null, quaternion = null) {
+  const next = Boolean(visible) && point?.isVector3;
+  if (!next) {
+    GuideGrid_Center_x.visible = false;
+    GuideGrid_Center_z.visible = false;
+    addPointSupportCrossHoverState = null;
+    return;
+  }
+  GuideGrid_Center_x.position.copy(point);
+  GuideGrid_Center_z.position.copy(point);
+  if (quaternion?.isQuaternion) {
+    GuideGrid_Center_x.quaternion.copy(quaternion).normalize();
+    GuideGrid_Center_z.quaternion.copy(quaternion).normalize();
+  } else {
+    GuideGrid_Center_x.quaternion.identity();
+    GuideGrid_Center_z.quaternion.identity();
+  }
+  GuideGrid_Center_x.visible = true;
+  GuideGrid_Center_z.visible = true;
+  addPointSupportCrossHoverState = {
+    point: point.clone(),
+    quaternion: quaternion?.isQuaternion ? quaternion.clone().normalize() : null,
+  };
+}
+
+function canUseAddPointSupportCrossHover() {
+  return addPointGridActive
+    && editObject === 'STEEL_FRAME'
+    && objectEditMode === 'CREATE_NEW'
+    && !move_direction_y
+    && !viewModeActive
+    && !pointerBlockedByUI;
+}
+
+function syncAddPointSupportCrossHoverFromPointer() {
+  if (!canUseAddPointSupportCrossHover()) {
+    setAddPointSupportCrossVisible(false);
+    if (decorationGuideContextActive) {
+      decorationTemplatePlacementRef = null;
+    }
+    return null;
+  }
+  const { hit, grid } = pickGuideGridHitFromPointer();
+  if (!hit?.point || !grid) {
+    setAddPointSupportCrossVisible(false);
+    if (decorationGuideContextActive) {
+      decorationTemplatePlacementRef = null;
+    }
+    return null;
+  }
+  const quat = grid?.quaternion?.isQuaternion ? grid.quaternion : null;
+  setAddPointSupportCrossVisible(true, hit.point, quat);
+  if (decorationGuideContextActive) {
+    decorationTemplatePlacementRef = {
+      point: hit.point.clone(),
+      quaternion: quat?.isQuaternion ? quat.clone().normalize() : null,
+      planeRef: grid,
+    };
+  }
+  GuideGrid.visible = false;
+  return { hit, grid };
+}
+
+function shouldHideAddPointGuideGridInChangeAngle() {
+  return movePlaneMode === 'change_angle';
+}
+
+function syncAddPointGuideGridVisibility() {
+  syncAddPointSupportCrossHoverFromPointer();
+  AddPointGuideGrid.visible = addPointGuideGridVisibleRequested
+    && !shouldHideAddPointGuideGridInChangeAngle()
+    && !addPointSupportCrossHoverState?.point
+    && !shouldHideAddPointGuideGridInDecorationMode();
+}
+
 function setAddPointGuideGridVisibleFromUI(visible) {
-  AddPointGuideGrid.visible = Boolean(visible);
+  addPointGuideGridVisibleRequested = Boolean(visible);
+  syncAddPointGuideGridVisibility();
   updateCreateGuideYButtonState();
 }
 
@@ -26478,6 +28467,11 @@ function setGuideGridRectGeometry(grid, width, height) {
     : createRectGuideGridGeometry(width, height, GUIDE_GRID_CELL_SIZE);
   grid.geometry?.dispose?.();
   grid.geometry = nextGeom;
+  if (grid === AddPointGuideGrid && AddPointGuideGridGroundHiddenOverlay) {
+    AddPointGuideGridGroundHiddenOverlay.geometry = nextGeom;
+    updateGuideGridLineMaterialSize(AddPointGuideGridGroundHiddenOverlay, width, height);
+  }
+  updateGuideGridLineMaterialSize(grid, width, height);
   grid.scale.set(1, 1, 1);
   grid.updateMatrixWorld(true);
 }
@@ -26931,6 +28925,9 @@ function createGuideMirrorGridFromEdge(edge) {
     mirroredFromEdge: edge,
     guideMirrorLocked: true,
     mirroredFromSourceGridId: source?.id || null,
+    mirroredFromSourceGridPersistentId: source === AddPointGuideGrid
+      ? 'base'
+      : ensureGuideGridPersistentId(source),
     mirroredFromSourceGridKey: (source === AddPointGuideGrid)
       ? 'base'
       : (typeof source?.userData?.saveKey === 'string' ? source.userData.saveKey : null),
@@ -27043,8 +29040,21 @@ function computeInfluenceMirrorPoseFromContext(sourceGrid, context) {
   };
 }
 
+function resolveGuideGridByPersistentId(rawGridId, pool = guideAddGrids) {
+  const gridId = normalizeGuideGridPersistentId(rawGridId);
+  if (!gridId) { return null; }
+  if (gridId === 'base') { return AddPointGuideGrid; }
+  const rows = Array.isArray(pool) ? pool : guideAddGrids;
+  return rows.find((grid) => grid?.parent && normalizeGuideGridPersistentId(grid?.userData?.guideGridPersistentId) === gridId) || null;
+}
+
 function resolveMirrorSourceGridFromMirrorGrid(mirrorGrid, keyToGrid = null) {
   if (!mirrorGrid?.userData?.guideMirrorLocked) { return null; }
+  const sourcePersistentId = normalizeGuideGridPersistentId(mirrorGrid?.userData?.mirroredFromSourceGridPersistentId);
+  if (sourcePersistentId) {
+    const byPersistentId = resolveGuideGridByPersistentId(sourcePersistentId);
+    if (byPersistentId?.parent || byPersistentId === AddPointGuideGrid) { return byPersistentId; }
+  }
   const sourceKey = typeof mirrorGrid?.userData?.mirroredFromSourceGridKey === 'string'
     ? mirrorGrid.userData.mirroredFromSourceGridKey
     : null;
@@ -27068,6 +29078,11 @@ function resolveMirrorSourceGridFromMirrorGrid(mirrorGrid, keyToGrid = null) {
 }
 
 function resolveMirrorSourceGridFromState(state, keyToGrid = null) {
+  const sourcePersistentId = normalizeGuideGridPersistentId(state?.mirroredFromSourceGridPersistentId);
+  if (sourcePersistentId) {
+    const byPersistentId = resolveGuideGridByPersistentId(sourcePersistentId);
+    if (byPersistentId?.parent || byPersistentId === AddPointGuideGrid) { return byPersistentId; }
+  }
   const sourceKey = typeof state?.mirroredFromSourceGridKey === 'string'
     ? state.mirroredFromSourceGridKey
     : null;
@@ -27092,6 +29107,11 @@ function resolveMirrorSourceGridFromState(state, keyToGrid = null) {
 function resolveInfluencePlaneFromMirrorState(state) {
   if (!state || !Array.isArray(guideMillerInfluencePlanes) || guideMillerInfluencePlanes.length < 1) {
     return null;
+  }
+  const planePersistentId = normalizeGuideGridPersistentId(state?.mirroredFromInfluencePlanePersistentId);
+  if (planePersistentId) {
+    const byPersistentId = resolveGuideGridByPersistentId(planePersistentId, guideMillerInfluencePlanes);
+    if (byPersistentId) { return byPersistentId; }
   }
   const planeKey = typeof state?.mirroredFromInfluencePlaneKey === 'string'
     ? state.mirroredFromInfluencePlaneKey
@@ -27154,8 +29174,12 @@ function createInfluenceMirrorGridFromSelection(planeMesh, sourceGrid, options =
     guideMirrorLocked: true,
     saveKey,
     mirroredFromSourceGridId: sourceGrid?.id || null,
+    mirroredFromSourceGridPersistentId: sourceGrid === AddPointGuideGrid
+      ? 'base'
+      : ensureGuideGridPersistentId(sourceGrid),
     mirroredFromSourceGridKey: sourceKey,
     mirroredFromInfluencePlaneId: planeMesh?.id || null,
+    mirroredFromInfluencePlanePersistentId: ensureGuideGridPersistentId(planeMesh),
     mirroredFromInfluencePlaneKey: planeKey,
     guideMirrorCoordFrame: {
       anchor: [context.anchor.x, context.anchor.y, context.anchor.z],
@@ -27503,7 +29527,7 @@ function trySelectGuideMillerInfluenceGridFromPointer() {
   changeAngleGridTarget = grid;
   guideAddGrids.forEach((g) => {
     if (g?.userData?.guideMillerInfluencePlane) { return; }
-    const baseColor = Number(g?.userData?.guideGridColor) || 0x88aa88;
+    const baseColor = Number(g?.userData?.guideGridColor) || GUIDE_ADD_GRID_COLOR;
     setGuideAddGridColor(g, g === grid ? 0xffb347 : baseColor);
   });
   updateGuideMillerApplyButtonVisibility();
@@ -27533,7 +29557,7 @@ function trySelectGuideMillerGridFromPointer() {
   changeAngleGridTarget = pickedGrid;
   guideCoordinateFrameOverride = pickedGrid?.userData?.guideMirrorCoordFrame || null;
   guideCoordinateEdgeOverride = pickedGrid?.userData?.mirroredFromEdge || null;
-  const colorDefault = 0x88aa88;
+  const colorDefault = GUIDE_ADD_GRID_COLOR;
   const colorSelected = 0xffb347;
   guideAddGrids.forEach((grid) => {
     const baseColor = Number(grid?.userData?.guideGridColor) || colorDefault;
@@ -27703,6 +29727,7 @@ async function search_point() {
       }
     }
     updateRailSelectionStatus();
+    syncAddPointGuideGridVisibility();
     renderer.render(scene, camera);
     await search_point();
     return;
@@ -27711,11 +29736,7 @@ async function search_point() {
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
   const usingDecorationGuidePlacement = guidePlacementActive && isDecorationGuidePlacementTemplate();
-  const shouldToggleBaseGuideOnGuideHover = addPointGridActive
-    && editObject === 'STEEL_FRAME'
-    && objectEditMode === 'CREATE_NEW'
-    && !move_direction_y
-    && !usingDecorationGuidePlacement;
+  const shouldToggleBaseGuideOnGuideHover = false;
   
   await sleep(80);
 
@@ -27723,6 +29744,7 @@ async function search_point() {
     const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
     if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
       guideRailHover = null;
+      clearCreateAddPointHoverGridState();
       setGuideHoverPin(null);
       updateCreateAddPointGuideHoverStartLog(null);
     } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
@@ -27730,13 +29752,14 @@ async function search_point() {
       const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
       guideRailHover = nearest ? { curve, point: nearest } : null;
       if (guideRailHover) {
+        clearCreateAddPointHoverGridState();
         if (shouldToggleBaseGuideOnGuideHover) {
           updateCreateAddPointGuideHoverStartLog(null);
         }
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
         GuideGrid.quaternion.identity();
-        GuideGrid.material.color.set(0x88aa88);
+        GuideGrid.material.color.set(GUIDE_ADD_GRID_COLOR);
         setGuideHoverPin(guideRailHover.point);
         if (shouldToggleBaseGuideOnGuideHover) {
           setAddPointGuideGridVisibleFromUI(false);
@@ -27746,11 +29769,22 @@ async function search_point() {
       guideRailHover = null;
       setGuideHoverPin(null);
       if (shouldToggleBaseGuideOnGuideHover) {
-        const basePoint = syncCreateAddPointBaseGuideGrid();
+        const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
+        if (hit?.point && hitGrid) {
+          createAddPointHoverGrid = hitGrid;
+          createAddPointHoverQuat = hitGrid?.quaternion?.isQuaternion
+            ? hitGrid.quaternion.clone().normalize()
+            : createAddPointHoverQuat;
+        } else if (!hitGrid) {
+          clearCreateAddPointHoverGridState({ restoreBaseGrid: true });
+        }
+        const basePoint = hit?.point && (hitGrid || createAddPointHoverGrid)
+          ? syncCreateAddPointGuideGridFromHoverGrid(hit.point, hitGrid || createAddPointHoverGrid)
+          : syncCreateAddPointBaseGuideGrid();
         updateCreateAddPointGuideHoverStartLog({
-          key: 'base',
+          key: hit?.point && (hitGrid || createAddPointHoverGrid) ? 'grid' : 'base',
           payload: {
-            source: 'base',
+            source: hit?.point && (hitGrid || createAddPointHoverGrid) ? 'grid' : 'base',
             point: basePoint
               ? {
                 x: basePoint.x,
@@ -27792,31 +29826,17 @@ async function search_point() {
       console.log('color set')
       console.log(choice_object)
 
-      if (move_direction_y){
-        GuideLine.position.copy(choice_object.position)
-        GuideLine.quaternion.identity()
-        GuideLine.visible = true
-      } else if (pointRotateModeActive) {
-        showPointRotationGuideLine(choice_object);
+	      if (move_direction_y){
+	        showMoveAxisGuide(choice_object);
+	      } else if (pointRotateModeActive) {
+	        showPointRotationGuideLine(choice_object);
 
-      } else {
-        if (movePlaneMode !== 'change_angle') {
-          GuideGrid.visible = true
-        }
-        if (targetObjects.includes(addPointGridHandle)) {
-          setAddPointGuideGridColor(0x88aa88)
-          if (movePlaneMode !== 'change_angle') {
-            syncGuideGridFromObject(choice_object)
-            GuideGrid.material.color.set(0x88aa88)
-          }
-        } else {
-          if (movePlaneMode !== 'change_angle') {
-            syncGuideGridFromObject(choice_object)
-            GuideGrid.material.color.set(0x88aa88)
-          }
-        }
-        // visibility controlled by UIevent
-      }
+	      } else {
+	        showMoveAxisGuide(choice_object);
+	        if (movePlaneMode !== 'change_angle') {
+	          GuideGrid.visible = false;
+	        }
+	      }
     }
 
   } else {
@@ -27827,6 +29847,7 @@ async function search_point() {
 
     choice_object = false;
     guideRailHover = null;
+    clearCreateAddPointHoverGridState({ restoreBaseGrid: true });
     setGuideHoverPin(null);
     if (shouldToggleBaseGuideOnGuideHover) {
       const basePoint = syncCreateAddPointBaseGuideGrid();
@@ -27854,6 +29875,7 @@ async function search_point() {
 
   // レンダリング
   updateRailSelectionStatus();
+  syncAddPointGuideGridVisibility();
   renderer.render(scene, camera);
   await search_point();
 }
@@ -27872,6 +29894,7 @@ async function onerun_search_point() {
       }
     }
     updateRailSelectionStatus();
+    syncAddPointGuideGridVisibility();
     renderer.render(scene, camera);
     return picked || choice_object || false;
   }
@@ -27879,17 +29902,14 @@ async function onerun_search_point() {
   // 画面上の光線とぶつかったオブジェクトを得る
   const intersects = getIntersectObjects();
   const usingDecorationGuidePlacement = guidePlacementActive && isDecorationGuidePlacementTemplate();
-  const shouldToggleBaseGuideOnGuideHover = addPointGridActive
-    && editObject === 'STEEL_FRAME'
-    && objectEditMode === 'CREATE_NEW'
-    && !move_direction_y
-    && !usingDecorationGuidePlacement;
+  const shouldToggleBaseGuideOnGuideHover = false;
   
 
   if (intersects.length > 0) {
     const guideHit = intersects.find(hit => hit?.object?.userData?.isGuideRail);
     if (!addPointGridActive || objectEditMode === 'MOVE_EXISTING') {
       guideRailHover = null;
+      clearCreateAddPointHoverGridState();
       setGuideHoverPin(null);
       updateCreateAddPointGuideHoverStartLog(null);
     } else if (guideHit?.object?.userData?.isGuideRail && guideHit.point) {
@@ -27897,13 +29917,14 @@ async function onerun_search_point() {
       const nearest = curve ? getNearestPointOnCurve(curve, guideHit.point) : null;
       guideRailHover = nearest ? { curve, point: nearest } : null;
       if (guideRailHover) {
+        clearCreateAddPointHoverGridState();
         if (shouldToggleBaseGuideOnGuideHover) {
           updateCreateAddPointGuideHoverStartLog(null);
         }
         GuideGrid.visible = true;
         GuideGrid.position.copy(guideRailHover.point);
         GuideGrid.quaternion.identity();
-        GuideGrid.material.color.set(0x88aa88);
+        GuideGrid.material.color.set(GUIDE_ADD_GRID_COLOR);
         setGuideHoverPin(guideRailHover.point);
         if (shouldToggleBaseGuideOnGuideHover) {
           setAddPointGuideGridVisibleFromUI(false);
@@ -27913,11 +29934,22 @@ async function onerun_search_point() {
       guideRailHover = null;
       setGuideHoverPin(null);
       if (shouldToggleBaseGuideOnGuideHover) {
-        const basePoint = syncCreateAddPointBaseGuideGrid();
+        const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
+        if (hit?.point && hitGrid) {
+          createAddPointHoverGrid = hitGrid;
+          createAddPointHoverQuat = hitGrid?.quaternion?.isQuaternion
+            ? hitGrid.quaternion.clone().normalize()
+            : createAddPointHoverQuat;
+        } else if (!hitGrid) {
+          clearCreateAddPointHoverGridState({ restoreBaseGrid: true });
+        }
+        const basePoint = hit?.point && (hitGrid || createAddPointHoverGrid)
+          ? syncCreateAddPointGuideGridFromHoverGrid(hit.point, hitGrid || createAddPointHoverGrid)
+          : syncCreateAddPointBaseGuideGrid();
         updateCreateAddPointGuideHoverStartLog({
-          key: 'base',
+          key: hit?.point && (hitGrid || createAddPointHoverGrid) ? 'grid' : 'base',
           payload: {
-            source: 'base',
+            source: hit?.point && (hitGrid || createAddPointHoverGrid) ? 'grid' : 'base',
             point: basePoint
               ? {
                 x: basePoint.x,
@@ -27955,29 +29987,16 @@ async function onerun_search_point() {
       console.log('color set')
       console.log(choice_object)
 
-      if (move_direction_y){
-        GuideLine.position.copy(choice_object.position)
-        GuideLine.quaternion.identity()
-        GuideLine.visible = true
-      } else if (pointRotateModeActive) {
-        showPointRotationGuideLine(choice_object);
-      } else {
-        if (movePlaneMode !== 'change_angle') {
-          GuideGrid.visible = true
-        }
-        if (targetObjects.includes(addPointGridHandle)) {
-          setAddPointGuideGridColor(0x88aa88)
-          if (movePlaneMode !== 'change_angle') {
-            syncGuideGridFromObject(choice_object)
-            GuideGrid.material.color.set(0x88aa88)
-          }
-        } else {
-          if (movePlaneMode !== 'change_angle') {
-            syncGuideGridFromObject(choice_object)
-            GuideGrid.material.color.set(0x88aa88)
-          }
-        }
-      }
+	      if (move_direction_y){
+	        showMoveAxisGuide(choice_object);
+	      } else if (pointRotateModeActive) {
+	        showPointRotationGuideLine(choice_object);
+	      } else {
+	        showMoveAxisGuide(choice_object);
+	        if (movePlaneMode !== 'change_angle') {
+	          GuideGrid.visible = false;
+	        }
+	      }
     }
 
   } else {
@@ -27987,6 +30006,7 @@ async function onerun_search_point() {
 
     choice_object = false;
     guideRailHover = null;
+    clearCreateAddPointHoverGridState({ restoreBaseGrid: true });
     setGuideHoverPin(null);
     if (shouldToggleBaseGuideOnGuideHover) {
       const basePoint = syncCreateAddPointBaseGuideGrid();
@@ -28012,6 +30032,7 @@ async function onerun_search_point() {
   }  
 
   updateRailSelectionStatus();
+  syncAddPointGuideGridVisibility();
   renderer.render(scene, camera);
   return choice_object;
 }
@@ -28983,6 +31004,7 @@ function handleDrag() {
     }
     if (editObject === 'STEEL_FRAME' && objectEditMode === 'CREATE_NEW' && createAddGuideYModeActive) {
       addPointGridY = point.y;
+      createAddPointBaseY = point.y;
       AddPointGuideGrid.position.set(AddPointGuideGrid.position.x, point.y, AddPointGuideGrid.position.z);
       AddPointGuideGrid.quaternion.identity();
       AddPointGuideGrid.updateMatrixWorld(true);
@@ -29000,6 +31022,7 @@ function handleDrag() {
     }
     if (isBaseGuideGridMoveModeActive()) {
       addPointGridY = choice_object.position.y;
+      createAddPointBaseY = choice_object.position.y;
       AddPointGuideGrid.position.set(point.x, point.y, point.z);
       if (guideRectangleModeActive) {
         syncGuideRectangleTransform();
@@ -29017,8 +31040,13 @@ function handleDrag() {
   }
 
   GuideLine.position.set(point.x,point.y,point.z)
-  if (move_direction_y) {
-    GuideLine.quaternion.identity();
+  if (choice_object && (dragging || move_direction_y)) {
+    updateGuideLineDirectionFromMesh(choice_object);
+    if (move_direction_y) {
+      updateGuideLineAxisVisibility({ showY: true });
+    } else {
+      updateGuideLineAxisVisibility({ showX: true, showZ: true });
+    }
   }
   // GuideLine.visible = true
 
@@ -29187,7 +31215,7 @@ async function handleMouseUp(mobile = false) {
         finalizeRotateSetYPreview(rotatePanelState.angles);
       }
       if (!draggedMultiGroup) {
-        syncSavedRotationForActiveCopiedGroup(rotatePanelState.angles);
+        syncSavedRotationForActiveStructureGroup(rotatePanelState.angles);
       } else {
         resetMultiRotatePanelDeltaDisplay();
       }
@@ -30090,25 +32118,34 @@ async function handleMouseDown() {
     }
 
     if (guidePlacementActive && guidePlacementTemplate) {
-      let basePoint = getDecorationCreatePointerPoint() || coord_DisplayTo3D({ y: addPointGridY || 0 });
+      let basePoint = getDecorationCreateCursorPoint() || coord_DisplayTo3D({ y: addPointGridY || 0 });
       let basisQuat = (changeAngleGridTarget?.quaternion || AddPointGuideGrid?.quaternion || null);
       let basisPlaneRef = changeAngleGridTarget || AddPointGuideGrid || null;
-      if (decorationGuideHoverHit?.source === 'rail' && guideRailHover?.point) {
-        basePoint = guideRailHover.point.clone();
-      } else if (decorationGuideHoverHit?.source === 'grid' && decorationGuideHoverHit?.grid) {
-        basePoint = decorationGuideHoverHit.point.clone();
-        basisQuat = decorationGuideHoverHit.grid.quaternion || basisQuat;
-        basisPlaneRef = decorationGuideHoverHit.grid;
-      } else if (isDecorationGuidePlacementTemplate() && AddPointGuideGrid?.position?.isVector3) {
-        basePoint = AddPointGuideGrid.position.clone();
+      if (addPointSupportCrossHoverState?.point?.isVector3) {
+        basePoint = addPointSupportCrossHoverState.point.clone();
+        basisQuat = addPointSupportCrossHoverState.quaternion?.isQuaternion
+          ? addPointSupportCrossHoverState.quaternion.clone()
+          : basisQuat;
+      }
+      if (isDecorationGuidePlacementTemplate() && decorationTemplatePlacementRef?.point?.isVector3) {
+        basePoint = decorationTemplatePlacementRef.point.clone();
+        basisQuat = decorationTemplatePlacementRef.quaternion?.isQuaternion
+          ? decorationTemplatePlacementRef.quaternion.clone()
+          : basisQuat;
+        basisPlaneRef = decorationTemplatePlacementRef.planeRef || basisPlaneRef;
+      }
+      if (isDecorationGuidePlacementTemplate() && AddPointGuideGrid?.position?.isVector3) {
+        basePoint = decorationTemplatePlacementRef?.point?.isVector3
+          ? decorationTemplatePlacementRef.point.clone()
+          : AddPointGuideGrid.position.clone();
       }
       if (guideAddGridPicks.length > 0) {
         const { hit, grid: hitGrid } = pickGuideGridHitFromPointer();
-        if (hit?.point) {
+        if (hit?.point?.isVector3) {
           basePoint = hit.point.clone();
         }
-        if (hitGrid?.quaternion) {
-          basisQuat = hitGrid.quaternion;
+        if (hitGrid?.quaternion?.isQuaternion) {
+          basisQuat = hitGrid.quaternion.clone();
           basisPlaneRef = hitGrid;
         }
       }
@@ -31099,7 +33136,7 @@ function finalizeRotateSetYPreview(finalAngles = null) {
   const deltaQuat = targetQuat.clone().multiply(previewQuat.clone().invert()).normalize();
   applyRotateQuaternionDeltaToMeshes(targets, state.center || getRotateSelectionCenter(targets), deltaQuat);
   rotatePanelState.angles = nextAngles;
-  syncSavedRotationForActiveCopiedGroup(nextAngles);
+  syncSavedRotationForActiveStructureGroup(nextAngles);
   updateRotateGizmo();
   return true;
 }
@@ -31216,6 +33253,7 @@ function ensureDifferencePointRotateArrow() {
 
 function syncPointRotatePanelFromTarget() {
   if (!pointRotateTarget) { return; }
+  updateDecorationZeroBaseButton();
   const state = pointRotateTarget.userData?.pointRotatePanelAngles || { x: 0, y: 0, z: 0 };
   const isMovePointRotate = editObject === 'STEEL_FRAME'
     && objectEditMode === 'MOVE_EXISTING'
@@ -31272,6 +33310,91 @@ function isDecorationRotationContext(target = pointRotateTarget) {
   return editObject === 'STEEL_FRAME'
     && (objectEditMode === 'MOVE_EXISTING' || objectEditMode === ROTATE_MODE)
     && Boolean(target?.userData?.decorationType);
+}
+
+function isNormalRotateStructureGroup(groupId) {
+  const gid = String(groupId || '').trim();
+  if (!gid) { return false; }
+  const objectMembers = getConstructionCopyTargets()
+    .filter((mesh) => mesh?.parent)
+    .filter((mesh) => !mesh?.userData?.steelFramePoint)
+    .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === gid);
+  if (objectMembers.length < 1) { return false; }
+  const hasCopiedObject = objectMembers.some((target) => {
+    const copyGroupId = String(target?.userData?.steelFrameCopyGroupId || '').trim();
+    const copySourceId = String(target?.userData?.structureGroupCopySourceId || '').trim();
+    return Boolean(target?.userData?.steelFrameCopiedObject || copyGroupId || copySourceId);
+  });
+  if (hasCopiedObject) { return false; }
+  const pointMembers = collectUniqueStructureGroupPoints(objectMembers);
+  const hasCopiedPoint = pointMembers.some((point) => {
+    const copyGroupId = String(point?.userData?.steelFrameCopyGroupId || '').trim();
+    const copySourceId = String(point?.userData?.structureGroupCopySourceId || '').trim();
+    return Boolean(point?.userData?.steelFrameCopied || copyGroupId || copySourceId);
+  });
+  return !hasCopiedPoint;
+}
+
+function getActiveSingleNormalRotateGroupId() {
+  if (editObject !== 'STEEL_FRAME' || objectEditMode !== ROTATE_MODE || pointRotateModeActive) {
+    return '';
+  }
+  const groupId = getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId;
+  if (!groupId) { return ''; }
+  return isNormalRotateStructureGroup(groupId) ? groupId : '';
+}
+
+function isDecorationCopiedGroupTarget(target) {
+  if (!target?.userData?.decorationType) { return false; }
+  const copyGroupId = String(target?.userData?.steelFrameCopyGroupId || '').trim();
+  const copySourceId = String(target?.userData?.structureGroupCopySourceId || '').trim();
+  return Boolean(target?.userData?.steelFrameCopiedObject || copyGroupId || copySourceId);
+}
+
+function isNormalSingleDecorationGroupTarget(target = pointRotateTarget) {
+  if (!target?.parent || !target?.userData?.decorationType) { return false; }
+  if (isDecorationCopiedGroupTarget(target)) { return false; }
+  const groupId = String(target?.userData?.structureGroupId || '').trim();
+  if (!groupId) { return false; }
+  const members = getConstructionCopyTargets()
+    .filter((mesh) => mesh?.parent)
+    .filter((mesh) => !mesh?.userData?.steelFramePoint)
+    .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === groupId);
+  return members.length === 1 && members[0] === target;
+}
+
+function updateDecorationZeroBaseButton() {
+  if (!rotationDecorationZeroBaseBtn) { return; }
+  const visible = (
+    isDecorationRotationContext(pointRotateTarget)
+    && isNormalSingleDecorationGroupTarget(pointRotateTarget)
+  ) || Boolean(getActiveSingleNormalRotateGroupId());
+  rotationDecorationZeroBaseBtn.style.display = visible ? 'block' : 'none';
+  rotationDecorationZeroBaseBtn.disabled = !visible;
+}
+
+function getStructureGroupRotationBaseQuat(groupId) {
+  const group = collectStructureGroupRotationMembers(groupId);
+  const target = group?.objectMeshes?.find?.((mesh) => Array.isArray(mesh?.userData?.structureGroupRotationBaseQuat));
+  const raw = target?.userData?.structureGroupRotationBaseQuat;
+  if (!Array.isArray(raw) || raw.length !== 4) { return null; }
+  const arr = raw.map((v) => Number(v));
+  if (!arr.every((v) => Number.isFinite(v))) { return null; }
+  const quat = new THREE.Quaternion().fromArray(arr);
+  if (quat.lengthSq() <= 1e-12) { return null; }
+  return quat.normalize();
+}
+
+function getStructureGroupRelativeRotationAngles(groupId) {
+  const pose = getStructureGroupPoseById(groupId);
+  const baseQuat = getStructureGroupRotationBaseQuat(groupId);
+  if (!pose?.quaternion?.isQuaternion || !baseQuat) { return null; }
+  const rel = baseQuat.clone().invert().multiply(pose.quaternion.clone()).normalize();
+  return {
+    set_Y: 0,
+    set_X: 0,
+    ...getRotationPanelAnglesFromQuaternion(rel),
+  };
 }
 
 function getDecorationRotationBaseQuat(target, { ensure = true } = {}) {
@@ -31374,6 +33497,60 @@ function loadPointRotateBasisFromTarget(target) {
     pointRotateDirection: new THREE.Vector3(0, 0, 1),
   };
   return q;
+}
+
+function resetDecorationRotationBaseFromCurrentTarget() {
+  const target = pointRotateTarget;
+  if (!isNormalSingleDecorationGroupTarget(target) || !target?.quaternion?.isQuaternion) {
+    updateDecorationZeroBaseButton();
+    return false;
+  }
+  const currentQuat = target.quaternion.clone().normalize();
+  decorationRotationBaseQuatMap.set(target, currentQuat.clone());
+  pointRotateBasisQuat.copy(currentQuat);
+  pointRotateDirection.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(currentQuat)).normalize();
+  pointRotateGizmoQuat.copy(currentQuat).normalize();
+  pointRotateCenter.copy(target.position);
+  target.userData = {
+    ...(target.userData || {}),
+    pointRotateInitialBasisQuat: currentQuat.toArray(),
+    pointRotateBasisQuat: currentQuat.toArray(),
+    pointRotateDirection: pointRotateDirection.clone(),
+    pointRotatePanelAngles: { x: 0, y: 0, z: 0 },
+  };
+  setRotationPanelAnglesDisplay({ set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 });
+  syncPointRotatePanelFromTarget();
+  updatePointRotateVisuals();
+  updateDecorationZeroBaseButton();
+  if (rotationSelectionInfo) {
+    rotationSelectionInfo.textContent = '現在の姿勢を decoration の 0度基準として保存しました。';
+  }
+  return true;
+}
+
+function resetStructureGroupRotationBaseFromActiveSelection() {
+  const groupId = getActiveSingleNormalRotateGroupId();
+  const group = collectStructureGroupRotationMembers(groupId);
+  const pose = getStructureGroupPoseById(groupId);
+  if (!groupId || !pose?.quaternion?.isQuaternion || !Array.isArray(group?.objectMeshes) || group.objectMeshes.length < 1) {
+    updateDecorationZeroBaseButton();
+    return false;
+  }
+  const currentQuat = pose.quaternion.clone().normalize();
+  group.objectMeshes.forEach((mesh) => {
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      structureGroupRotationBaseQuat: currentQuat.toArray(),
+    };
+  });
+  setSavedRotationForStructureGroup(groupId, { set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 });
+  setRotationPanelAnglesDisplay({ set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 });
+  updateDecorationZeroBaseButton();
+  updateRotateGizmo();
+  if (rotationSelectionInfo) {
+    rotationSelectionInfo.textContent = '現在の姿勢を通常回転パネルの 0度基準として保存しました。';
+  }
+  return true;
 }
 
 function updatePointRotateVisuals() {
@@ -32978,6 +35155,7 @@ function updateRotationSelectionInfo() {
 
 function updateRotateGizmo() {
   ensureRotateGizmo();
+  updateDecorationZeroBaseButton();
   if (objectEditMode !== ROTATE_MODE) {
     updateRotationSetAxisLockState(false);
     rotateGizmoGroup.visible = false;
@@ -33035,15 +35213,38 @@ function updateRotateGizmo() {
     return;
   }
   const isMultiGroup = isMultiRotateStructureGroupSelection();
+  debugRotateStructureSelection('updateRotateGizmo:selection', {
+    meshIds: meshes.map((mesh) => mesh?.id ?? null),
+    meshGroupIds: meshes.map((mesh) => String(mesh?.userData?.structureGroupId || '').trim() || null),
+    uniqueGroupIds: getSelectedRotateStructureGroupIds(),
+    selectedSingleGroupId: getSelectedSingleRotateStructureGroupId() || null,
+    rotateSelectionGroupId: rotateSelectionGroupId || null,
+    isMultiGroup,
+    choiceObjectId: choice_object?.id ?? null,
+    choiceObjectGroupId: String(choice_object?.userData?.structureGroupId || '').trim() || null,
+    choiceObjectRailPlacementGroupId: String(choice_object?.userData?.railPlacementGroupId || '').trim() || null,
+  });
   const idsKey = meshes.map((m) => m.id).sort((a, b) => a - b).join(',');
   if (rotatePanelState.idsKey !== idsKey) {
     rotatePanelState.idsKey = idsKey;
     const selectedGroupId = isMultiGroup ? '' : (getSelectedSingleRotateStructureGroupId() || rotateSelectionGroupId);
-    const savedRotation = !isMultiGroup && selectedGroupId
-      ? getSavedRotationForStructureGroup(selectedGroupId)
-      : null;
-    if (savedRotation && !isMultiGroup) {
-      setRotationPanelAnglesDisplay(savedRotation);
+    if (!isMultiGroup && selectedGroupId) {
+      const savedRotation = getSavedRotationForStructureGroup(selectedGroupId);
+      if (savedRotation) {
+        setRotationPanelAnglesDisplay(savedRotation);
+      } else {
+        const relativeAngles = getStructureGroupRelativeRotationAngles(selectedGroupId);
+        if (relativeAngles) {
+          setRotationPanelAnglesDisplay(relativeAngles);
+        } else {
+          const pose = getStructureGroupPoseById(selectedGroupId);
+          if (pose?.quaternion?.isQuaternion) {
+            setRotationPanelAnglesDisplay(getGroupRotationAnglesFromQuat(pose.quaternion));
+          } else {
+            setRotationPanelAnglesDisplay({ set_Y: 0, set_X: 0, x: 0, y: 0, z: 0 });
+          }
+        }
+      }
     } else {
       resetMultiRotatePanelDeltaDisplay();
     }
@@ -33316,7 +35517,7 @@ function updateRotateDrag() {
       curves.forEach((curve) => updateGuideCurve(curve));
     }
   } else {
-    syncSavedRotationForActiveCopiedGroup(panelAngles);
+    syncSavedRotationForActiveStructureGroup(panelAngles);
   }
   updateRotationSelectionInfo();
   if (!isBasisDrag && editObject === 'STEEL_FRAME' && !isMultiGroup) {
@@ -33344,6 +35545,15 @@ export function UIevent (uiID, toggle){
     clearStyleSelection();
     clearGroupSelection();
     showRailGeneratedStructures();
+    toggleRailTube(true);
+    setRailTubeRenderVisible(false);
+    if (railTubeMesh) {
+      railTubeMesh.visible = false;
+    }
+    if (railVisualRoot) {
+      railVisualRoot.visible = true;
+      setRailVisualRenderVisible(true);
+    }
     // see は creat > view と同様に「構造物は通常表示・点は非表示」に揃える
     steelFrameMode.setActive(true);
     const copiedObjects = getConstructionCopyTargets()
@@ -33756,7 +35966,6 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'add_point' ){ if ( toggle === 'active' ){
   console.log( 'add_point _active' )
     updateCreateAddPointGuideHoverStartLog(null);
-    updateDecorationGuideHoverStartLog(null);
     setCreateAddGuideYModeActive(false);
     editObject = 'STEEL_FRAME'
     steelFrameMode.setAllowPointAppend(true)
@@ -33775,6 +35984,7 @@ export function UIevent (uiID, toggle){
     setCreateAddGuideYModeActive(false);
     search_object = false
     steelFrameMode.setAllowPointAppend(false)
+    decorationGuideContextActive = false;
     if (editObject === 'STEEL_FRAME') {
       objectEditMode = 'Standby'
     }
@@ -33796,6 +36006,7 @@ export function UIevent (uiID, toggle){
     if (guideWindow) {
       guideWindow.style.display = 'none';
     }
+    decorationGuideContextActive = false;
     guidePlacementTemplate = null;
     guidePlacementActive = false;
     resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide: false });
@@ -33804,6 +36015,9 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'guide' ){ if ( toggle === 'active' ){
   console.log( 'guide _active' )
     guideRectangleModeActive = true;
+    if (guidePlacementActive && isDecorationGuidePlacementTemplate()) {
+      setAddPointGuideGridVisibleFromUI(false);
+    }
     ensureGuideRectangleGizmo();
     syncGuideRectangleTransform();
   } else {
@@ -33821,6 +36035,10 @@ export function UIevent (uiID, toggle){
       guideRectangleGroup.visible = false;
     }
     guideRectangleEdgeMeshes.forEach((edgeMesh) => { if (edgeMesh) edgeMesh.visible = false; });
+    if (guidePlacementActive && isDecorationGuidePlacementTemplate()) {
+      setAddPointGuideGridVisibleFromUI(true);
+      updateDecorationGuidePlacementHoverFromPointer();
+    }
   }} else if ( uiID === 'miller' ){ if ( toggle === 'active' ){
   console.log( 'miller _active' )
     guideMillerModeActive = true;
@@ -33878,6 +36096,7 @@ export function UIevent (uiID, toggle){
   } else {
   console.log( 'add _inactive' )
     guideAddModeActive = false;
+    decorationGuideContextActive = false;
     guidePlacementTemplate = null;
     guidePlacementActive = false;
     resetDecorationGuidePlacementHoverVisuals({ keepBaseGuide: false });
@@ -34374,7 +36593,7 @@ export function UIevent (uiID, toggle){
       movePlaneBasisQuat.identity();
     }
     syncMovePlaneGizmoFromBasis();
-    AddPointGuideGrid.visible = true;
+    setAddPointGuideGridVisibleFromUI(true);
     GuideGrid.visible = false;
     addPointGridActive = true;
     movePlaneAnchor.copy(changeAngleGridTarget.position);
@@ -35011,7 +37230,7 @@ function isInteractionAllowed(clientX, clientY){
 }
 
 const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel, #group-point-edit-mode-panel, #train-panel, #scene-panel, #performance-panel';
-const OVERLAY_UI_TARGET_SELECTOR = '#save-buttons, #show-instructions-btn, #instructions-panel, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #train-panel, #performance-panel, #performance-toggle-btn, #scene-panel, #scene-toggle-btn, #create-mode-utility-buttons, #create-guide-y-button, #UiGroup, #frontViewButtons, #guide-window';
+const OVERLAY_UI_TARGET_SELECTOR = '#save-buttons, #show-instructions-btn, #demo-play-btn, #instructions-panel, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #train-panel, #performance-panel, #performance-toggle-btn, #scene-panel, #scene-toggle-btn, #create-mode-utility-buttons, #create-guide-y-button, #UiGroup, #frontViewButtons, #guide-window';
 const PANEL_INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [contenteditable]:not([contenteditable="false"])';
 
 function isPanelValueInputTarget(target) {
@@ -35668,7 +37887,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 function animate() {
-
   // console.log(b6dm.rotation)
 
   const moveSpeed = baseSpeed;
@@ -35770,6 +37988,9 @@ function animate() {
   renderer.setScissorTest(true);
 
   // document.body.classList.toggle('dragging', dragging === true);
+  syncAddPointGuideGridGroundUniform();
+  syncCreateAddPointHoverGridTransform();
+  syncAddPointGuideGridVisibility();
   if (movePlaneMode === 'change_angle') {
     updateMovePlaneGizmo();
   }
@@ -35830,10 +38051,10 @@ function animate() {
       GuideGrid_Center_z.visible = false
     }
   }
-    requestAnimationFrame(animate);
+  requestMainRenderLoop();
 }
 
-animate();
+requestMainRenderLoop();
 
 window.addEventListener('beforeunload', () => {
   persistCameraViewStateToLocalStorage({ force: true });
@@ -35843,3 +38064,1085 @@ document.addEventListener('visibilitychange', () => {
     persistCameraViewStateToLocalStorage({ force: true });
   }
 });
+
+function demoFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+async function demoWaitFrames(count = 1) {
+  const safeCount = Math.max(1, Number(count) || 1);
+  for (let index = 0; index < safeCount; index += 1) {
+    await demoFrame();
+  }
+}
+
+function getDemoPointerClient() {
+  if (lastPointerClient && Number.isFinite(lastPointerClient.x) && Number.isFinite(lastPointerClient.y)) {
+    return { x: lastPointerClient.x, y: lastPointerClient.y };
+  }
+  const rect = canvas?.getBoundingClientRect?.();
+  if (rect) {
+    return {
+      x: rect.left + rect.width * 0.5,
+      y: rect.top + rect.height * 0.5,
+    };
+  }
+  return { x: 0, y: 0 };
+}
+
+function setDemoView(view = {}) {
+  const position = view?.position || {};
+  const angles = view?.angles || {};
+  const nextX = Number(position.x);
+  const nextY = Number(position.y);
+  const nextZ = Number(position.z);
+  const nextYaw = Number(angles.yaw);
+  const nextPitch = Number(angles.pitch);
+  if (Number.isFinite(nextX) && Number.isFinite(nextY) && Number.isFinite(nextZ)) {
+    camera.position.set(nextX, nextY, nextZ);
+  }
+  if (Number.isFinite(nextYaw)) {
+    cameraAngleY = nextYaw;
+  }
+  if (Number.isFinite(nextPitch)) {
+    cameraAngleX = Math.max(-pitchLimit, Math.min(pitchLimit, nextPitch));
+  }
+  persistCameraViewStateToLocalStorage({ force: true });
+}
+
+async function tweenDemoView(view = {}, durationMs = 0, steps = 30) {
+  const duration = Math.max(0, Number(durationMs) || 0);
+  if (duration <= 0) {
+    setDemoView(view);
+    await demoWaitFrames(2);
+    return;
+  }
+  const totalSteps = Math.max(1, Number(steps) || 30);
+  const startState = {
+    position: {
+      x: Number(camera.position.x) || 0,
+      y: Number(camera.position.y) || 0,
+      z: Number(camera.position.z) || 0,
+    },
+    angles: {
+      yaw: Number(cameraAngleY) || 0,
+      pitch: Number(cameraAngleX) || 0,
+    },
+  };
+  const targetPosition = view?.position || {};
+  const targetAngles = view?.angles || {};
+  const endState = {
+    position: {
+      x: Number.isFinite(Number(targetPosition.x)) ? Number(targetPosition.x) : startState.position.x,
+      y: Number.isFinite(Number(targetPosition.y)) ? Number(targetPosition.y) : startState.position.y,
+      z: Number.isFinite(Number(targetPosition.z)) ? Number(targetPosition.z) : startState.position.z,
+    },
+    angles: {
+      yaw: Number.isFinite(Number(targetAngles.yaw)) ? Number(targetAngles.yaw) : startState.angles.yaw,
+      pitch: Number.isFinite(Number(targetAngles.pitch)) ? Number(targetAngles.pitch) : startState.angles.pitch,
+    },
+  };
+  for (let stepIndex = 1; stepIndex <= totalSteps; stepIndex += 1) {
+    const t = stepIndex / totalSteps;
+    setDemoView({
+      position: {
+        x: startState.position.x + (endState.position.x - startState.position.x) * t,
+        y: startState.position.y + (endState.position.y - startState.position.y) * t,
+        z: startState.position.z + (endState.position.z - startState.position.z) * t,
+      },
+      angles: {
+        yaw: startState.angles.yaw + (endState.angles.yaw - startState.angles.yaw) * t,
+        pitch: startState.angles.pitch + (endState.angles.pitch - startState.angles.pitch) * t,
+      },
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, duration / totalSteps));
+  }
+  await demoWaitFrames(2);
+}
+
+const structureReplayPreviewState = {
+  previewObjects: [],
+  previewGuides: [],
+  hiddenSourceMeshes: [],
+};
+
+const lineReplayPreviewState = {
+  previewObjects: [],
+  hiddenSourceObjects: [],
+  controlLineObject: null,
+  curveLineObject: null,
+};
+
+function disposeReplayPreviewObject(obj) {
+  if (!obj) { return; }
+  if (obj.parent) {
+    obj.parent.remove(obj);
+  }
+  obj.traverse?.((node) => {
+    node?.geometry?.dispose?.();
+    if (Array.isArray(node?.material)) {
+      node.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      node?.material?.dispose?.();
+    }
+  });
+}
+
+function clearStructureReplayPreview() {
+  structureReplayPreviewState.previewObjects.forEach((obj) => {
+    disposeReplayPreviewObject(obj);
+  });
+  structureReplayPreviewState.previewObjects.length = 0;
+
+  structureReplayPreviewState.previewGuides.forEach((grid) => {
+    const pick = grid?.userData?.pickMesh || null;
+    const gIdx = guideAddGrids.indexOf(grid);
+    if (gIdx >= 0) {
+      guideAddGrids.splice(gIdx, 1);
+    }
+    if (pick) {
+      const pIdx = guideAddGridPicks.indexOf(pick);
+      if (pIdx >= 0) {
+        guideAddGridPicks.splice(pIdx, 1);
+      }
+    }
+    disposeReplayPreviewObject(pick);
+    disposeReplayPreviewObject(grid);
+  });
+  structureReplayPreviewState.previewGuides.length = 0;
+}
+
+function removeStructureReplayPreviewObject(obj) {
+  if (!obj) { return; }
+  const idx = structureReplayPreviewState.previewObjects.indexOf(obj);
+  if (idx >= 0) {
+    structureReplayPreviewState.previewObjects.splice(idx, 1);
+  }
+  disposeReplayPreviewObject(obj);
+}
+
+function clearLineReplayPreview() {
+  lineReplayPreviewState.previewObjects.forEach((obj) => {
+    disposeReplayPreviewObject(obj);
+  });
+  lineReplayPreviewState.previewObjects.length = 0;
+  lineReplayPreviewState.hiddenSourceObjects.length = 0;
+  lineReplayPreviewState.controlLineObject = null;
+  lineReplayPreviewState.curveLineObject = null;
+}
+
+function registerLineReplayPreviewObject(obj) {
+  if (!obj) { return obj; }
+  lineReplayPreviewState.previewObjects.push(obj);
+  return obj;
+}
+
+function removeLineReplayPreviewObject(obj) {
+  if (!obj) { return; }
+  const idx = lineReplayPreviewState.previewObjects.indexOf(obj);
+  if (idx >= 0) {
+    lineReplayPreviewState.previewObjects.splice(idx, 1);
+  }
+  disposeReplayPreviewObject(obj);
+}
+
+function findLiveSteelFramePointFromReplayState(pointState, livePoints = null) {
+  const pos = Array.isArray(pointState?.position) ? pointState.position : [];
+  if (pos.length < 3) { return null; }
+  const points = Array.isArray(livePoints) ? livePoints : (steelFrameMode?.getAllPointMeshes?.() || []);
+  const targetLineIndex = Number.isInteger(pointState?.lineIndex) ? pointState.lineIndex : 0;
+  const epsilon = 0.0001;
+  return points.find((mesh) => {
+    if (!mesh?.parent || !mesh?.userData?.steelFramePoint) { return false; }
+    const lineIndex = Number.isInteger(mesh?.userData?.steelFrameLine) ? mesh.userData.steelFrameLine : 0;
+    if (lineIndex !== targetLineIndex) { return false; }
+    return Math.abs((Number(mesh.position.x) || 0) - (Number(pos[0]) || 0)) <= epsilon
+      && Math.abs((Number(mesh.position.y) || 0) - (Number(pos[1]) || 0)) <= epsilon
+      && Math.abs((Number(mesh.position.z) || 0) - (Number(pos[2]) || 0)) <= epsilon;
+  }) || null;
+}
+
+function collectStructureReplaySourceMeshes(groupName, payload = null) {
+  const id = String(groupName || '').trim();
+  if (!id) { return []; }
+  const targets = [];
+  const seenIds = new Set();
+  const pushUnique = (mesh) => {
+    if (!mesh?.parent) { return; }
+    if (seenIds.has(mesh.id)) { return; }
+    seenIds.add(mesh.id);
+    targets.push(mesh);
+  };
+
+  getConstructionCopyTargets()
+    .filter((mesh) => mesh?.parent)
+    .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === id)
+    .forEach(pushUnique);
+
+  const pointStates = Array.isArray(payload?.steelFrame?.points) ? payload.steelFrame.points : [];
+  const livePoints = steelFrameMode?.getAllPointMeshes?.() || [];
+  pointStates.forEach((pointState) => {
+    const matchedPoint = findLiveSteelFramePointFromReplayState(pointState, livePoints);
+    if (matchedPoint) {
+      pushUnique(matchedPoint);
+    }
+  });
+  return targets;
+}
+
+function setStructureReplaySourceVisible(groupName, visible, payload = null) {
+  const id = String(groupName || '').trim();
+  if (!id) { return []; }
+  const targets = collectStructureReplaySourceMeshes(groupName, payload);
+  if (!visible) {
+    structureReplayPreviewState.hiddenSourceMeshes = targets.slice();
+  }
+  const restoreTargets = visible
+    ? structureReplayPreviewState.hiddenSourceMeshes.slice()
+    : targets;
+  restoreTargets.forEach((mesh) => {
+    mesh.visible = Boolean(visible);
+  });
+  if (visible) {
+    structureReplayPreviewState.hiddenSourceMeshes.length = 0;
+  }
+  return restoreTargets;
+}
+
+function buildStructureReplaySourcePointMap(payload = null) {
+  const pointStates = Array.isArray(payload?.steelFrame?.points) ? payload.steelFrame.points : [];
+  const livePoints = steelFrameMode?.getAllPointMeshes?.() || [];
+  const pointMap = new Map();
+  pointStates.forEach((pointState) => {
+    const key = String(pointState?.key || '').trim();
+    if (!key || pointMap.has(key)) { return; }
+    const matchedPoint = findLiveSteelFramePointFromReplayState(pointState, livePoints);
+    if (matchedPoint) {
+      pointMap.set(key, matchedPoint);
+    }
+  });
+  return pointMap;
+}
+
+function revealStructureReplaySourceMeshesForSegment(segmentState, sourcePointByKey = new Map()) {
+  const pointKeys = Array.isArray(segmentState?.pointKeys)
+    ? segmentState.pointKeys.map((key) => String(key || '').trim()).filter(Boolean)
+    : [];
+  if (pointKeys.length < 2) { return []; }
+  const sourcePoints = pointKeys
+    .map((key) => sourcePointByKey.get(key) || null)
+    .filter((mesh) => mesh?.userData?.steelFramePoint && mesh?.parent);
+  if (sourcePoints.length !== pointKeys.length) { return []; }
+  const sourcePointSet = new Set(sourcePoints);
+  const revealed = [];
+  structureReplayPreviewState.hiddenSourceMeshes.forEach((mesh) => {
+    if (!mesh?.parent || mesh?.name !== 'SteelFrameSegment') { return; }
+    const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+      ? mesh.userData.steelFrameSegmentPointRefs.filter((pointMesh) => pointMesh?.userData?.steelFramePoint)
+      : [];
+    if (refs.length !== sourcePoints.length) { return; }
+    const isMatch = refs.every((pointMesh) => sourcePointSet.has(pointMesh));
+    if (!isMatch) { return; }
+    mesh.visible = true;
+    revealed.push(mesh);
+  });
+  return revealed;
+}
+
+function buildStructureReplayGuideMaps(payload) {
+  const normalizedGuidePayload = normalizeGuideGridCatalogPayload(payload);
+  const guideGridStates = normalizedGuidePayload.guideGridStates;
+  const mirrorGuideStates = [];
+  const nonMirrorGuideStates = [];
+  guideGridStates.forEach((state) => {
+    const isMirrorGrid = Boolean(state?.guideMirrorLocked) && !Boolean(state?.guideMillerInfluencePlane);
+    if (isMirrorGrid) {
+      mirrorGuideStates.push(state);
+    } else {
+      nonMirrorGuideStates.push(state);
+    }
+  });
+
+  const keyToGrid = new Map();
+  keyToGrid.set('base', AddPointGuideGrid);
+  const idToGrid = new Map();
+  idToGrid.set('base', AddPointGuideGrid);
+  const createdGuideGrids = [];
+
+  const existingGuideSet = new Set(guideAddGrids);
+  nonMirrorGuideStates.forEach((state, idx) => {
+    const grid = addGuideGridFromState(state);
+    if (grid) {
+      grid.userData = {
+        ...(grid.userData || {}),
+        structureReplayGuide: true,
+      };
+      createdGuideGrids.push(grid);
+      const key = typeof state?.saveKey === 'string' ? state.saveKey : `g${idx}`;
+      if (key) {
+        keyToGrid.set(key, grid);
+      }
+      const gridId = normalizeGuideGridPersistentId(state?.gridId);
+      if (gridId) {
+        idToGrid.set(gridId, grid);
+      }
+    }
+  });
+
+  rebuildMirrorFromStatesRuntime({
+    mirrorStates: mirrorGuideStates,
+    maxPasses: 6,
+    tryCreateMirrorFromState: (state) => createGuideMirrorGridFromStateLink(state, keyToGrid),
+  });
+
+  guideAddGrids.forEach((grid) => {
+    if (!existingGuideSet.has(grid) && !createdGuideGrids.includes(grid)) {
+      grid.userData = {
+        ...(grid.userData || {}),
+        structureReplayGuide: true,
+      };
+      createdGuideGrids.push(grid);
+    }
+  });
+
+  createdGuideGrids.forEach((grid, idx) => {
+    const key = typeof grid?.userData?.saveKey === 'string' ? grid.userData.saveKey : '';
+    if (key && !keyToGrid.has(key)) {
+      keyToGrid.set(key, grid);
+    }
+    const gridId = normalizeGuideGridPersistentId(grid?.userData?.guideGridPersistentId);
+    if (gridId && !idToGrid.has(gridId)) {
+      idToGrid.set(gridId, grid);
+    }
+    if (!grid?.userData?.pickMesh && guideAddGridPicks[idx]) {
+      grid.userData = {
+        ...(grid.userData || {}),
+        pickMesh: guideAddGridPicks[idx],
+      };
+    }
+  });
+
+  structureReplayPreviewState.previewGuides.push(...createdGuideGrids);
+  return { keyToGrid, idToGrid, createdGuideGrids };
+}
+
+function cloneStructureReplayPointMaterial(sourceMesh = null) {
+  const sourceMaterial = sourceMesh?.material || cube_material;
+  const clonedMaterial = Array.isArray(sourceMaterial)
+    ? sourceMaterial.map((mat) => mat?.clone?.() || mat)
+    : (sourceMaterial?.clone?.() || cube_material.clone());
+  const applyTuning = (mat) => {
+    if (!mat) { return; }
+    mat.transparent = true;
+    if (typeof mat.opacity === 'number') {
+      mat.opacity = Math.min(1, Math.max(mat.opacity, 0.92));
+    } else {
+      mat.opacity = 0.95;
+    }
+    mat.depthWrite = false;
+  };
+  if (Array.isArray(clonedMaterial)) {
+    clonedMaterial.forEach(applyTuning);
+  } else {
+    applyTuning(clonedMaterial);
+  }
+  return clonedMaterial;
+}
+
+function setStructureReplayObjectColor(mesh, color) {
+  if (!mesh) { return; }
+  const applyColor = (mat) => {
+    mat?.color?.set?.(color);
+  };
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach(applyColor);
+  } else {
+    applyColor(mesh.material);
+  }
+}
+
+function createStructureReplayPointMesh(position, options = {}) {
+  const mesh = new THREE.Mesh(
+    cube_geometry,
+    cloneStructureReplayPointMaterial(options?.sourceMesh || null)
+  );
+  mesh.position.copy(position);
+  const scale = Array.isArray(options?.scale) ? options.scale : null;
+  mesh.scale.set(
+    Number(scale?.[0]) || 1,
+    Number(scale?.[1]) || 1,
+    Number(scale?.[2]) || 1,
+  );
+  if (Number.isFinite(Number(options?.color))) {
+    setStructureReplayObjectColor(mesh, Number(options.color));
+  }
+  scene.add(mesh);
+  structureReplayPreviewState.previewObjects.push(mesh);
+  return mesh;
+}
+
+function createStructureReplaySegmentObject(from, to, color = 0xffd84d) {
+  const line = createLine(from, to, color);
+  if (line?.material) {
+    line.material.transparent = true;
+    line.material.opacity = 0.95;
+    line.material.depthWrite = false;
+  }
+  scene.add(line);
+  structureReplayPreviewState.previewObjects.push(line);
+  return line;
+}
+
+function createReplayPolylineObject(points, color = 0xffd84d, {
+  opacity = 0.95,
+  renderOrder = 9500,
+} = {}) {
+  const pointList = Array.isArray(points)
+    ? points.filter((point) => point?.isVector3).map((point) => point.clone())
+    : [];
+  if (pointList.length < 2) { return null; }
+  const geometry = new THREE.BufferGeometry().setFromPoints(pointList);
+  const material = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const line = new THREE.Line(geometry, material);
+  line.renderOrder = renderOrder;
+  scene.add(line);
+  return registerLineReplayPreviewObject(line);
+}
+
+function resolveReplayLineTrackName(rawName) {
+  const direct = String(rawName || '').trim();
+  if (!direct) { return ''; }
+  const directTrack = getRailTrackByName(direct);
+  if (directTrack?.name) { return String(directTrack.name); }
+  const aliasMap = buildDifferenceLineTrackAliasMap();
+  const aliasHit = aliasMap.get(direct.toLowerCase());
+  if (aliasHit) { return aliasHit; }
+  const match = direct.toLowerCase().match(/^line_(\d+)$/);
+  if (match) {
+    const idx = Number(match[1]);
+    const exact = getRailTrackByName(`Points_${idx}`);
+    if (exact?.name) { return String(exact.name); }
+    if (idx > 0) {
+      const shifted = getRailTrackByName(`Points_${idx - 1}`);
+      if (shifted?.name) { return String(shifted.name); }
+    }
+  }
+  return '';
+}
+
+function getReplayLinePayload(lineName) {
+  const trackName = resolveReplayLineTrackName(lineName);
+  if (!trackName) { return null; }
+  const track = getRailTrackByName(trackName);
+  const points = Array.isArray(track?.points)
+    ? track.points.filter((point) => point?.isVector3).map((point) => point.clone())
+    : [];
+  if (!track || points.length < 2) { return null; }
+  return { trackName, track, points };
+}
+
+function collectReplayLineSourceObjects(trackName) {
+  const key = String(trackName || '').trim();
+  if (!key) { return []; }
+  if (!railTubeMesh || railTubeDirty) {
+    toggleRailTube(true);
+  }
+  const targets = [];
+  const pushUnique = (obj) => {
+    if (!obj?.parent) { return; }
+    if (targets.includes(obj)) { return; }
+    targets.push(obj);
+  };
+  const visualState = railVisualTrackRuntimeMap.get(key) || null;
+  const tubeState = railTubeTrackRuntimeMap.get(key) || null;
+  pushUnique(visualState?.group || null);
+  pushUnique(tubeState?.group || null);
+  return targets;
+}
+
+function setReplayLineSourceVisible(trackName, visible) {
+  const key = String(trackName || '').trim();
+  if (!key) { return []; }
+  const targets = visible
+    ? lineReplayPreviewState.hiddenSourceObjects.slice()
+    : collectReplayLineSourceObjects(key);
+  if (!visible) {
+    lineReplayPreviewState.hiddenSourceObjects = targets.slice();
+  }
+  targets.forEach((obj) => {
+    obj.visible = Boolean(visible);
+  });
+  if (visible) {
+    lineReplayPreviewState.hiddenSourceObjects.length = 0;
+  }
+  return targets;
+}
+
+function findLiveRailPointMesh(trackName, pointIndex) {
+  const key = String(trackName || '').trim();
+  const idx = Number(pointIndex);
+  if (!key || !Number.isInteger(idx)) { return null; }
+  return targetObjects.find((mesh) => (
+    mesh?.parent
+    && String(mesh?.userData?.trackName || '').trim() === key
+    && Number(mesh?.userData?.pointIndex) === idx
+  )) || null;
+}
+
+function ensureReplayLinePointTargets(trackName) {
+  const key = String(trackName || '').trim();
+  if (!key) { return; }
+  const hasTargets = targetObjects.some((mesh) => (
+    mesh?.parent
+    && String(mesh?.userData?.trackName || '').trim() === key
+    && Number.isInteger(mesh?.userData?.pointIndex)
+  ));
+  if (!hasTargets) {
+    refreshRailSelectionTargets();
+  }
+}
+
+function buildReplayLineInsertionBatches(pointCount) {
+  const total = Math.max(0, Number(pointCount) || 0);
+  if (total < 3) { return []; }
+  const batches = [];
+  for (let index = 1; index < total - 1; index += 1) {
+    batches.push([index]);
+  }
+  return batches;
+}
+
+function buildReplayLineOrderedEntries(entryMap) {
+  return Array.from(entryMap.values())
+    .filter((entry) => Number.isInteger(entry?.index) && entry?.previewPoint?.position)
+    .sort((a, b) => a.index - b.index);
+}
+
+function resolveReplayLineInsertPlacement(activeEntries, targetWorld) {
+  const orderedEntries = Array.isArray(activeEntries) ? activeEntries : [];
+  if (!targetWorld?.isVector3 || orderedEntries.length < 2) {
+    return {
+      startWorld: targetWorld?.clone?.() || new THREE.Vector3(),
+      planeTargetWorld: targetWorld?.clone?.() || new THREE.Vector3(),
+    };
+  }
+  const controlPoints = orderedEntries
+    .map((entry) => entry?.previewPoint?.position?.clone?.() || null)
+    .filter((point) => point?.isVector3);
+  if (controlPoints.length < 2) {
+    return {
+      startWorld: targetWorld.clone(),
+      planeTargetWorld: targetWorld.clone(),
+    };
+  }
+  const curve = new THREE.CatmullRomCurve3(controlPoints, false, 'centripetal', 0.5);
+  const sampleCount = Math.max(24, controlPoints.length * 24);
+  const samples = curve.getPoints(sampleCount);
+  let bestPoint = samples[0]?.clone?.() || controlPoints[0].clone();
+  let bestDistSq = bestPoint.distanceToSquared(targetWorld);
+  samples.forEach((sample) => {
+    if (!sample?.isVector3) { return; }
+    const distSq = sample.distanceToSquared(targetWorld);
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestPoint = sample.clone();
+    }
+  });
+  return {
+    startWorld: bestPoint.clone(),
+    planeTargetWorld: new THREE.Vector3(
+      targetWorld.x,
+      bestPoint.y,
+      targetWorld.z,
+    ),
+  };
+}
+
+function redrawReplayLinePreview(activeEntries) {
+  if (lineReplayPreviewState.controlLineObject) {
+    removeLineReplayPreviewObject(lineReplayPreviewState.controlLineObject);
+    lineReplayPreviewState.controlLineObject = null;
+  }
+  if (lineReplayPreviewState.curveLineObject) {
+    removeLineReplayPreviewObject(lineReplayPreviewState.curveLineObject);
+    lineReplayPreviewState.curveLineObject = null;
+  }
+  const orderedEntries = (Array.isArray(activeEntries) ? activeEntries : [])
+    .filter((entry) => Number.isInteger(entry?.index) && entry?.previewPoint?.position)
+    .sort((a, b) => a.index - b.index);
+  const controlPoints = orderedEntries.map((entry) => entry.previewPoint.position.clone());
+  if (controlPoints.length >= 2) {
+    lineReplayPreviewState.controlLineObject = createReplayPolylineObject(controlPoints, 0xffd84d, {
+      opacity: 0.92,
+      renderOrder: 9498,
+    });
+    const curve = new THREE.CatmullRomCurve3(controlPoints.map((point) => point.clone()), false, 'centripetal', 0.5);
+    const curvePoints = curve.getPoints(Math.max(16, controlPoints.length * 12));
+    lineReplayPreviewState.curveLineObject = createReplayPolylineObject(curvePoints, 0x3bc9ff, {
+      opacity: 0.98,
+      renderOrder: 9499,
+    });
+  }
+}
+
+function resolveReplayPlaneRefForPoint(pointState, guideMaps) {
+  const planeRefGridId = normalizeGuideGridPersistentId(pointState?.planeRefGridId);
+  if (planeRefGridId) {
+    return guideMaps?.idToGrid?.get?.(planeRefGridId) || null;
+  }
+  const planeRefKey = typeof pointState?.planeRefKey === 'string' ? pointState.planeRefKey : '';
+  if (planeRefKey) {
+    return guideMaps?.keyToGrid?.get?.(planeRefKey) || null;
+  }
+  return null;
+}
+
+function buildReplayPointWorldTargets(pointState, planeRef) {
+  const pos = Array.isArray(pointState?.position) ? pointState.position : [0, 0, 0];
+  const finalWorld = new THREE.Vector3(
+    Number(pos[0]) || 0,
+    Number(pos[1]) || 0,
+    Number(pos[2]) || 0,
+  );
+  if (!planeRef?.matrixWorld) {
+    return { startWorld: finalWorld.clone(), finalWorld };
+  }
+  planeRef.updateMatrixWorld(true);
+  const inverse = planeRef.matrixWorld.clone().invert();
+  const local = finalWorld.clone().applyMatrix4(inverse);
+  local.y = 0;
+  const startWorld = local.applyMatrix4(planeRef.matrixWorld.clone());
+  return { startWorld, finalWorld };
+}
+
+async function animateReplayObjectPosition(mesh, from, to, durationMs = 0, steps = 24) {
+  if (!mesh || !from || !to) { return; }
+  const duration = Math.max(0, Number(durationMs) || 0);
+  const totalSteps = Math.max(1, Number(steps) || 24);
+  const movingColor = Number.isFinite(Number(mesh?.userData?.replayMovingColor))
+    ? Number(mesh.userData.replayMovingColor)
+    : null;
+  const restingColor = Number.isFinite(Number(mesh?.userData?.replayRestingColor))
+    ? Number(mesh.userData.replayRestingColor)
+    : null;
+  if (movingColor !== null) {
+    setStructureReplayObjectColor(mesh, movingColor);
+  }
+  if (duration <= 0) {
+    mesh.position.copy(to);
+    if (restingColor !== null) {
+      setStructureReplayObjectColor(mesh, restingColor);
+    }
+    await demoWaitFrames(1);
+    return;
+  }
+  for (let stepIndex = 1; stepIndex <= totalSteps; stepIndex += 1) {
+    const t = stepIndex / totalSteps;
+    mesh.position.set(
+      from.x + (to.x - from.x) * t,
+      from.y + (to.y - from.y) * t,
+      from.z + (to.z - from.z) * t,
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, duration / totalSteps));
+  }
+  if (restingColor !== null) {
+    setStructureReplayObjectColor(mesh, restingColor);
+  }
+  await demoWaitFrames(1);
+}
+
+function buildReplayStructureComponents(pointStates, segmentStates) {
+  const pointStateByKey = new Map(
+    (Array.isArray(pointStates) ? pointStates : [])
+      .map((pointState) => [String(pointState?.key || '').trim(), pointState])
+      .filter(([key]) => key.length > 0)
+  );
+  const normalizedSegments = (Array.isArray(segmentStates) ? segmentStates : [])
+    .map((segmentState, index) => ({
+      segmentState,
+      index,
+      pointKeys: Array.isArray(segmentState?.pointKeys)
+        ? segmentState.pointKeys.map((key) => String(key || '').trim()).filter(Boolean)
+        : [],
+    }))
+    .filter((entry) => entry.pointKeys.length >= 2);
+
+  const pointToSegmentIndexes = new Map();
+  normalizedSegments.forEach((entry, segmentIndex) => {
+    entry.pointKeys.forEach((key) => {
+      const rows = pointToSegmentIndexes.get(key) || [];
+      rows.push(segmentIndex);
+      pointToSegmentIndexes.set(key, rows);
+    });
+  });
+
+  const visited = new Set();
+  const components = [];
+  normalizedSegments.forEach((entry, segmentIndex) => {
+    if (visited.has(segmentIndex)) { return; }
+    const queue = [segmentIndex];
+    const componentSegmentIndexes = [];
+    const componentPointKeys = new Set();
+    visited.add(segmentIndex);
+    while (queue.length > 0) {
+      const currentIndex = queue.shift();
+      const current = normalizedSegments[currentIndex];
+      if (!current) { continue; }
+      componentSegmentIndexes.push(currentIndex);
+      current.pointKeys.forEach((key) => {
+        componentPointKeys.add(key);
+        const linkedIndexes = pointToSegmentIndexes.get(key) || [];
+        linkedIndexes.forEach((linkedIndex) => {
+          if (visited.has(linkedIndex)) { return; }
+          visited.add(linkedIndex);
+          queue.push(linkedIndex);
+        });
+      });
+    }
+
+    const componentSegments = componentSegmentIndexes
+      .map((idx) => normalizedSegments[idx])
+      .sort((a, b) => a.index - b.index);
+    const componentPoints = Array.from(componentPointKeys)
+      .map((key) => pointStateByKey.get(key) || null)
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ai = Array.isArray(a?.position) ? a.position : [0, 0, 0];
+        const bi = Array.isArray(b?.position) ? b.position : [0, 0, 0];
+        if ((Number(ai[0]) || 0) !== (Number(bi[0]) || 0)) {
+          return (Number(ai[0]) || 0) - (Number(bi[0]) || 0);
+        }
+        if ((Number(ai[2]) || 0) !== (Number(bi[2]) || 0)) {
+          return (Number(ai[2]) || 0) - (Number(bi[2]) || 0);
+        }
+        return (Number(ai[1]) || 0) - (Number(bi[1]) || 0);
+      });
+    components.push({
+      points: componentPoints,
+      segments: componentSegments.map((item) => item.segmentState),
+    });
+  });
+
+  if (components.length > 0) {
+    return components;
+  }
+
+  const fallbackPoints = Array.isArray(pointStates) ? pointStates.filter(Boolean) : [];
+  return fallbackPoints.length > 0 ? [{ points: fallbackPoints, segments: [] }] : [];
+}
+
+async function replayStructureBuildByGroupName(groupName, options = {}) {
+  const payload = buildStructurePayloadForGroup(groupName);
+  if (!payload) {
+    throw new Error(`structure group not found: ${groupName}`);
+  }
+  const steelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
+    ? payload.steelFrame
+    : { points: [], segments: [] };
+  const pointStates = Array.isArray(steelFrame.points) ? steelFrame.points : [];
+  const segmentStates = Array.isArray(steelFrame.segments) ? steelFrame.segments : [];
+  if (pointStates.length < 1) {
+    throw new Error(`structure group has no points: ${groupName}`);
+  }
+
+  const timing = options?.timing && typeof options.timing === 'object' ? options.timing : {};
+  const guideMs = Math.max(0, Number(timing.guideMs) || 400);
+  const pointSpawnMs = Math.max(0, Number(timing.pointSpawnMs) || 160);
+  const pointLiftMs = Math.max(0, Number(timing.pointLiftMs) || 360);
+  const segmentMs = Math.max(0, Number(timing.segmentMs) || 180);
+  const buildMs = Math.max(0, Number(timing.buildMs) || 320);
+  const finishMs = Math.max(0, Number(timing.finishMs) || 900);
+  const hideSource = options?.hide_source !== false;
+  const restoreSource = options?.restore_source !== false;
+  const clearPreview = options?.clear_preview !== false;
+  const drawnSegmentKeys = new Set();
+
+  clearStructureReplayPreview();
+  if (hideSource) {
+    setStructureReplaySourceVisible(groupName, false, payload);
+  }
+  const sourcePointByKey = buildStructureReplaySourcePointMap(payload);
+  const guideMaps = buildStructureReplayGuideMaps(payload);
+  if (guideMs > 0) {
+    await editModeDemoApi.wait(guideMs);
+  }
+
+  const pointPreviewByKey = new Map();
+  const components = buildReplayStructureComponents(pointStates, segmentStates);
+  for (const component of components) {
+    const componentPoints = Array.isArray(component?.points) ? component.points : [];
+    const componentSegments = Array.isArray(component?.segments) ? component.segments : [];
+
+    for (const pointState of componentPoints) {
+      const pointKey = String(pointState?.key || '').trim();
+      if (!pointKey || pointPreviewByKey.has(pointKey)) { continue; }
+      const planeRef = resolveReplayPlaneRefForPoint(pointState, guideMaps);
+      const { startWorld, finalWorld } = buildReplayPointWorldTargets(pointState, planeRef);
+      const sourcePoint = sourcePointByKey.get(pointKey) || null;
+      const restingColor = sourcePoint?.material?.color?.getHex?.() ?? 0xff0000;
+      const previewPoint = createStructureReplayPointMesh(startWorld, {
+        scale: pointState?.scale,
+        color: restingColor,
+        sourceMesh: sourcePoint,
+      });
+      previewPoint.userData = {
+        ...(previewPoint.userData || {}),
+        replayMovingColor: 0x2bd66f,
+        replayRestingColor: restingColor,
+      };
+      pointPreviewByKey.set(pointKey, previewPoint);
+      if (pointSpawnMs > 0) {
+        await editModeDemoApi.wait(pointSpawnMs);
+      }
+      await animateReplayObjectPosition(previewPoint, startWorld, finalWorld, pointLiftMs, 24);
+
+      for (const segmentState of componentSegments) {
+        const pointKeys = Array.isArray(segmentState?.pointKeys)
+          ? segmentState.pointKeys.map((key) => String(key || '').trim()).filter(Boolean)
+          : [];
+        if (pointKeys.length < 2 || !pointKeys.includes(pointKey)) { continue; }
+        const segmentSignature = pointKeys.join('>');
+        if (drawnSegmentKeys.has(segmentSignature)) { continue; }
+        const previewPoints = pointKeys
+          .map((key) => pointPreviewByKey.get(key) || null)
+          .filter((mesh) => mesh?.position);
+        if (previewPoints.length !== pointKeys.length) { continue; }
+        const createdPreviewSegments = [];
+        for (let index = 1; index < previewPoints.length; index += 1) {
+          createdPreviewSegments.push(
+            createStructureReplaySegmentObject(previewPoints[index - 1].position, previewPoints[index].position)
+          );
+          if (segmentMs > 0) {
+            await editModeDemoApi.wait(segmentMs);
+          }
+        }
+        if (previewPoints.length > 2) {
+          createdPreviewSegments.push(
+            createStructureReplaySegmentObject(previewPoints[previewPoints.length - 1].position, previewPoints[0].position)
+          );
+          if (segmentMs > 0) {
+            await editModeDemoApi.wait(segmentMs);
+          }
+        }
+        const revealedMeshes = revealStructureReplaySourceMeshesForSegment(segmentState, sourcePointByKey);
+        if (revealedMeshes.length > 0) {
+          createdPreviewSegments.forEach((obj) => {
+            removeStructureReplayPreviewObject(obj);
+          });
+        }
+        if (revealedMeshes.length > 0 && buildMs > 0) {
+          await editModeDemoApi.wait(buildMs);
+        }
+        drawnSegmentKeys.add(segmentSignature);
+      }
+    }
+  }
+
+  if (finishMs > 0) {
+    await editModeDemoApi.wait(finishMs);
+  }
+  if (restoreSource) {
+    setStructureReplaySourceVisible(groupName, true, payload);
+  }
+  if (clearPreview) {
+    clearStructureReplayPreview();
+  }
+}
+
+async function replayLineBuildByName(lineName, options = {}) {
+  const payload = getReplayLinePayload(lineName);
+  if (!payload) {
+    throw new Error(`line not found: ${lineName}`);
+  }
+  const points = Array.isArray(payload?.points) ? payload.points : [];
+  if (points.length < 2) {
+    throw new Error(`line has not enough points: ${lineName}`);
+  }
+
+  const timing = options?.timing && typeof options.timing === 'object' ? options.timing : {};
+  const pointSpawnMs = Math.max(0, Number(timing.pointSpawnMs ?? timing.pointMs) || 180);
+  const planeMoveMs = Math.max(0, Number(timing.planeMoveMs) || 220);
+  const pointLiftMs = Math.max(0, Number(timing.pointLiftMs) || 320);
+  const planeMoveSteps = Math.max(1, Number(timing.planeMoveSteps) || 72);
+  const pointLiftSteps = Math.max(1, Number(timing.pointLiftSteps) || 60);
+  const curveMs = Math.max(0, Number(timing.curveMs) || 220);
+  const finishMs = Math.max(0, Number(timing.finishMs) || 900);
+  const hideSource = options?.hide_source !== false;
+  const restoreSource = options?.restore_source !== false;
+  const clearPreview = options?.clear_preview !== false;
+  const fallbackPreviewScale = Array.isArray(options?.previewScale) ? options.previewScale : [1, 1, 1];
+
+  clearLineReplayPreview();
+  ensureReplayLinePointTargets(payload.trackName);
+  if (hideSource) {
+    setReplayLineSourceVisible(payload.trackName, false);
+  }
+
+  const previewPointByIndex = new Map();
+  const createPreviewPointAtIndex = async (index) => {
+    if (!Number.isInteger(index) || previewPointByIndex.has(index)) { return; }
+    const finalWorld = points[index]?.clone?.();
+    if (!finalWorld?.isVector3) { return; }
+    const sourcePoint = findLiveRailPointMesh(payload.trackName, index) || null;
+    const firstPointWorld = points[0]?.clone?.() || finalWorld.clone();
+    const isEndpoint = index === 0 || index === points.length - 1;
+    const placement = isEndpoint
+      ? {
+        startWorld: firstPointWorld.clone(),
+        planeTargetWorld: new THREE.Vector3(finalWorld.x, firstPointWorld.y, finalWorld.z),
+      }
+      : resolveReplayLineInsertPlacement(buildReplayLineOrderedEntries(previewPointByIndex), finalWorld);
+    const startWorld = placement.startWorld.clone();
+    const planeTargetWorld = placement.planeTargetWorld?.clone?.() || finalWorld.clone();
+    const restingColor = sourcePoint?.material?.color?.getHex?.() ?? 0xff0000;
+    const previewPoint = createStructureReplayPointMesh(startWorld, {
+      scale: sourcePoint
+        ? [sourcePoint.scale.x, sourcePoint.scale.y, sourcePoint.scale.z]
+        : fallbackPreviewScale,
+      color: restingColor,
+      sourceMesh: sourcePoint,
+    });
+    previewPoint.userData = {
+      ...(previewPoint.userData || {}),
+      replayMovingColor: 0x2bd66f,
+      replayRestingColor: restingColor,
+    };
+    previewPointByIndex.set(index, { index, previewPoint });
+    if (pointSpawnMs > 0) {
+      await editModeDemoApi.wait(pointSpawnMs);
+    }
+    await animateReplayObjectPosition(previewPoint, startWorld, planeTargetWorld, planeMoveMs, planeMoveSteps);
+    redrawReplayLinePreview(buildReplayLineOrderedEntries(previewPointByIndex));
+    if (curveMs > 0) {
+      await editModeDemoApi.wait(curveMs);
+    }
+    await animateReplayObjectPosition(previewPoint, planeTargetWorld, finalWorld, pointLiftMs, pointLiftSteps);
+    redrawReplayLinePreview(buildReplayLineOrderedEntries(previewPointByIndex));
+    if (curveMs > 0) {
+      await editModeDemoApi.wait(curveMs);
+    }
+  };
+
+  await createPreviewPointAtIndex(0);
+  await createPreviewPointAtIndex(points.length - 1);
+
+  const insertionBatches = buildReplayLineInsertionBatches(points.length);
+  for (const batch of insertionBatches) {
+    for (const index of batch) {
+      await createPreviewPointAtIndex(index);
+    }
+  }
+
+  if (finishMs > 0) {
+    await editModeDemoApi.wait(finishMs);
+  }
+  if (restoreSource) {
+    setReplayLineSourceVisible(payload.trackName, true);
+  }
+  if (clearPreview) {
+    clearLineReplayPreview();
+  }
+}
+
+const editModeDemoApi = {
+  version: 1,
+  async wait(ms = 0) {
+    const duration = Math.max(0, Number(ms) || 0);
+    if (duration > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, duration));
+    }
+    await demoWaitFrames(1);
+  },
+  async waitFrames(count = 1) {
+    await demoWaitFrames(count);
+  },
+  getState() {
+    return {
+      operationMode: OperationMode,
+      editObject,
+      objectEditMode,
+      dragging: dragging === true,
+      pointer: getDemoPointerClient(),
+      view: buildCameraViewState(),
+    };
+  },
+  getPointer() {
+    return getDemoPointerClient();
+  },
+  async setMode(uiID, toggle = 'active') {
+    UIevent(String(uiID || ''), String(toggle || 'active'));
+    await demoWaitFrames(2);
+  },
+  async moveMouse(x, y) {
+    handleMouseMove(Number(x), Number(y));
+    await demoWaitFrames(1);
+  },
+  async mouse(x, y) {
+    await this.moveMouse(x, y);
+  },
+  async click(x, y, options = {}) {
+    if (Number.isFinite(Number(x)) && Number.isFinite(Number(y))) {
+      await this.moveMouse(Number(x), Number(y));
+    }
+    await handleMouseDown();
+    await this.wait(options?.holdMs ?? 120);
+    await handleMouseUp(Boolean(options?.mobile));
+    await demoWaitFrames(2);
+  },
+  async beginDrag(x, y) {
+    await this.moveMouse(x, y);
+    await handleMouseDown();
+    await demoWaitFrames(1);
+  },
+  async dragTo(x, y) {
+    await this.moveMouse(x, y);
+    handleDrag();
+    await demoWaitFrames(1);
+  },
+  async endDrag(options = {}) {
+    await handleMouseUp(Boolean(options?.mobile));
+    await demoWaitFrames(2);
+  },
+  async drag(from, to, options = {}) {
+    const start = from || {};
+    const end = to || {};
+    const totalSteps = Math.max(1, Number(options?.steps) || 30);
+    const duration = Math.max(0, Number(options?.duration) || 0);
+    await this.beginDrag(Number(start.x), Number(start.y));
+    for (let stepIndex = 1; stepIndex <= totalSteps; stepIndex += 1) {
+      const t = stepIndex / totalSteps;
+      const nextX = Number(start.x) + (Number(end.x) - Number(start.x)) * t;
+      const nextY = Number(start.y) + (Number(end.y) - Number(start.y)) * t;
+      await this.dragTo(nextX, nextY);
+      if (duration > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, duration / totalSteps));
+      }
+    }
+    await this.endDrag(options);
+  },
+  async setView(view, options = {}) {
+    await tweenDemoView(view, options?.duration, options?.steps);
+  },
+  notice(message, durationMs = 2600) {
+    showTopNotice(String(message ?? ''), durationMs);
+  },
+  async replayStructureBuild(groupName, options = {}) {
+    await replayStructureBuildByGroupName(groupName, options);
+  },
+  async replayLineBuild(lineName, options = {}) {
+    await replayLineBuildByName(lineName, options);
+  },
+};
+
+window.EditModeDemoApi = editModeDemoApi;
+window.dispatchEvent(new CustomEvent('edit-mode-demo-api-ready', {
+  detail: { api: editModeDemoApi },
+}));

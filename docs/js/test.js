@@ -1071,6 +1071,298 @@ function openDemoArea(area) {
   }
 }
 
+const MANUAL_VIDEO_GUIDES = {
+  rail: {
+    label: 'rail routine',
+    scenes: [
+      {
+        id: 'new',
+        title: 'rail / new',
+        description: '路線を定義し、制御点を追加して最初のドラフトを作るシーンです。',
+        src: './videos/rail_move/new.mp4',
+      },
+      {
+        id: 'move',
+        title: 'rail / move',
+        description: '追加した制御点を動かし、平面形状と高さを調整するシーンです。',
+        src: './videos/rail_move/move.mp4',
+      },
+      {
+        id: 'structure',
+        title: 'rail / structure',
+        description: '配置ピンから bridge などの構造物を生成し、路線に付随する要素を仕上げるシーンです。',
+        src: './videos/rail_move/structure.mp4',
+      },
+    ],
+  },
+  edit: {
+    label: 'edit routine',
+    scenes: [
+      {
+        id: 'add_point',
+        title: 'edit / add_point',
+        description: '新しい点を打って、部材生成の元になる点列を作るシーンです。',
+        src: './videos/edit/add_point.mp4',
+      },
+      {
+        id: 'move_point',
+        title: 'edit / move_point',
+        description: '既存の点を移動し、形状や高さを追い込むシーンです。',
+        src: './videos/edit/move_point.mp4',
+      },
+      {
+        id: 'construction',
+        title: 'edit / construction',
+        description: '点列から柱やチューブを生成し、部材として仕上げるシーンです。',
+        src: './videos/edit/construction.mp4',
+      },
+    ],
+  },
+  'decoration-detail': {
+    label: 'decoration detail demo',
+    scenes: [
+      {
+        id: 'add_point',
+        title: 'decoration / add_point',
+        description: '新しい点を打って、装飾や部材の元になる点列を作るシーンです。',
+        src: './videos/edit/decoration/add_point.mp4',
+      },
+      {
+        id: 'construction',
+        title: 'decoration / construction',
+        description: '点列から部材を生成して仕上げるシーンです。',
+        src: './videos/edit/decoration/construction.mp4',
+      },
+      {
+        id: 'copy',
+        title: 'decoration / copy',
+        description: '選択対象を複製して配置するシーンです。',
+        src: './videos/edit/decoration/copy.mp4',
+      },
+      {
+        id: 'group',
+        title: 'decoration / group',
+        description: '複数の構造物をまとめてグループ化するシーンです。',
+        src: './videos/edit/decoration/group.mp4',
+      },
+      {
+        id: 'template',
+        title: 'decoration / template',
+        description: 'テンプレート形状から点列を起こすシーンです。',
+        src: './videos/edit/decoration/template.mp4',
+      },
+      {
+        id: 'guide',
+        title: 'decoration / guide',
+        description: 'ガイド面や補助面を使って作業面を整えるシーンです。',
+        src: './videos/edit/decoration/guide.mp4',
+      },
+      {
+        id: 'rotation',
+        title: 'decoration / rotation',
+        description: '選択点群をまとめて回転するシーンです。',
+        src: './videos/edit/decoration/rotation.mp4',
+      },
+      {
+        id: 'search',
+        title: 'decoration / search',
+        description: '点同士の距離や角度を測定するシーンです。',
+        src: './videos/edit/decoration/search.mp4',
+      },
+      {
+        id: 'move_point',
+        title: 'decoration / move_point',
+        description: '既存の点を移動し、形状や高さを追い込むシーンです。',
+        src: './videos/edit/decoration/move_point.mp4',
+      },
+      {
+        id: 'style',
+        title: 'decoration / style',
+        description: '鉄骨などの太さや見た目を調整するシーンです。',
+        src: './videos/edit/decoration/style.mp4',
+      },
+      {
+        id: 'delete',
+        title: 'decoration / delete',
+        description: '選択対象を削除するシーンです。',
+        src: './videos/edit/decoration/delete.mp4',
+      },
+    ],
+  },
+};
+
+MANUAL_VIDEO_GUIDES['rail-inline'] = {
+  ...MANUAL_VIDEO_GUIDES.rail,
+  label: 'rail quick demo',
+};
+
+MANUAL_VIDEO_GUIDES['edit-inline'] = {
+  ...MANUAL_VIDEO_GUIDES.edit,
+  label: 'edit quick demo',
+};
+
+function initializeManualVideoGuides() {
+  document.querySelectorAll('[data-video-guide]').forEach((guide) => {
+    const guideId = guide.dataset.videoGuide || '';
+    const config = MANUAL_VIDEO_GUIDES[guideId];
+    if (!config) { return; }
+
+    const player = guide.querySelector('[data-video-player]');
+    const placeholder = guide.querySelector('[data-video-placeholder]');
+    const label = guide.querySelector('[data-video-guide-label]');
+    const title = guide.querySelector('[data-video-scene-title]');
+    const description = guide.querySelector('[data-video-scene-description]');
+    const status = guide.querySelector('[data-video-status]');
+    const playAllButton = guide.querySelector('[data-video-play-all]');
+    const replayButton = guide.querySelector('[data-video-replay-scene]');
+    const sceneButtons = guide.querySelectorAll('[data-video-scene]');
+    const sceneCards = guide.querySelectorAll('[data-scene-card]');
+    if (!player || !placeholder || !title || !description || !status || !playAllButton || !replayButton) { return; }
+
+    const state = {
+      sceneIndex: 0,
+      sequenceMode: false,
+    };
+
+    const sceneIndexById = new Map(config.scenes.map((scene, index) => [scene.id, index]));
+
+    function currentScene() {
+      return config.scenes[state.sceneIndex] || config.scenes[0];
+    }
+
+    function syncActiveState() {
+      const scene = currentScene();
+      sceneCards.forEach((card) => {
+        card.classList.toggle('is-active', card.dataset.sceneCard === scene.id);
+      });
+      document.querySelectorAll(`[data-video-highlight^="${guideId}:"]`).forEach((card) => {
+        const highlightTargets = (card.dataset.videoHighlight || '').split(/\s+/).filter(Boolean);
+        card.classList.toggle('is-video-focus', highlightTargets.includes(`${guideId}:${scene.id}`));
+      });
+    }
+
+    function syncText(message) {
+      const scene = currentScene();
+      if (label) {
+        label.textContent = config.label;
+      }
+      title.textContent = scene.title;
+      description.textContent = scene.description;
+      status.textContent = message;
+      syncActiveState();
+    }
+
+    function playCurrentScene({ autoplay = false, sequence = false } = {}) {
+      const scene = currentScene();
+      state.sequenceMode = sequence;
+      player.src = scene.src;
+      player.load();
+      placeholder.hidden = true;
+      syncText(sequence ? `${scene.title} をシーケンス再生します。` : `${scene.title} を準備しています。`);
+      if (!autoplay) { return; }
+      const playResult = player.play();
+      if (playResult && typeof playResult.catch === 'function') {
+        playResult.catch(() => {
+          syncText(`${scene.title} はユーザー操作後に再生されます。`);
+        });
+      }
+    }
+
+    function setScene(sceneId, options = {}) {
+      const nextIndex = sceneIndexById.get(sceneId);
+      if (nextIndex == null) { return; }
+      state.sceneIndex = nextIndex;
+      playCurrentScene(options);
+    }
+
+    function playSequenceFromStart() {
+      state.sceneIndex = 0;
+      playCurrentScene({ autoplay: true, sequence: true });
+    }
+
+    player.addEventListener('loadeddata', () => {
+      placeholder.hidden = true;
+      const scene = currentScene();
+      syncText(state.sequenceMode ? `${scene.title} を再生中です。終了後に次のシーンへ進みます。` : `${scene.title} を再生できます。`);
+    });
+
+    player.addEventListener('ended', () => {
+      if (!state.sequenceMode) { return; }
+      const nextIndex = state.sceneIndex + 1;
+      if (nextIndex >= config.scenes.length) {
+        state.sequenceMode = false;
+        state.sceneIndex = 0;
+        syncText('全シーンの再生が完了しました。先頭シーンに戻っています。');
+        return;
+      }
+      state.sceneIndex = nextIndex;
+      playCurrentScene({ autoplay: true, sequence: true });
+    });
+
+    player.addEventListener('error', () => {
+      placeholder.hidden = false;
+      const scene = currentScene();
+      syncText(`動画が見つかりません: ${scene.src}`);
+    });
+
+    playAllButton.addEventListener('click', playSequenceFromStart);
+    replayButton.addEventListener('click', () => {
+      playCurrentScene({ autoplay: true, sequence: false });
+    });
+
+    sceneButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const sceneId = button.dataset.videoScene || '';
+        setScene(sceneId, { autoplay: true, sequence: false });
+      });
+    });
+
+    playCurrentScene({ autoplay: true, sequence: false });
+  });
+
+  document.querySelectorAll('.manual-video-jump[data-video-guide-target]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const guideId = button.dataset.videoGuideTarget || '';
+      const sceneId = button.dataset.videoScene || '';
+      const guide = document.querySelector(`[data-video-guide="${guideId}"]`);
+      if (!guide || !sceneId) { return; }
+      if (guide.dataset.inlineAnchorGuide === 'true') {
+        button.insertAdjacentElement('afterend', guide);
+      }
+      if (guide.hidden) {
+        guide.hidden = false;
+      }
+      guide.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const internalButton = guide.querySelector(`[data-video-scene="${sceneId}"]`);
+      if (internalButton instanceof HTMLButtonElement) {
+        internalButton.click();
+      }
+    });
+  });
+}
+
+initializeManualVideoGuides();
+
+function initializeFeatureHubAccordions() {
+  document.querySelectorAll('.feature-hub').forEach((hub) => {
+    const detailsList = Array.from(hub.querySelectorAll('.feature-hub-children .feature-detail'));
+    if (!detailsList.length) { return; }
+
+    function syncHubState() {
+      const hasOpenDetail = detailsList.some((detail) => detail.open);
+      hub.classList.toggle('is-detail-open', hasOpenDetail);
+    }
+
+    detailsList.forEach((detail) => {
+      detail.addEventListener('toggle', syncHubState);
+    });
+
+    syncHubState();
+  });
+}
+
+initializeFeatureHubAccordions();
+
 document.querySelectorAll('.manual-demo-toggle').forEach((button) => {
   button.addEventListener('click', () => {
     const targetId = button.dataset.demoTarget;

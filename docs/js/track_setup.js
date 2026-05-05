@@ -264,7 +264,10 @@ async function loadRuntimeTrackDataFromUpload() {
   return null;
 }
 
-function normalizeTrackData(rawData) {
+function normalizeTrackData(rawData, options = {}) {
+  const requiredTrackKeys = Array.isArray(options.requiredTrackKeys)
+    ? options.requiredTrackKeys.filter((name) => typeof name === 'string' && name.length > 0)
+    : REQUIRED_TRACK_KEYS;
   const rawTracks = rawData && typeof rawData === 'object' ? rawData.tracks : null;
   if (!rawTracks || typeof rawTracks !== 'object') {
     throw new Error('track_points.json に tracks がありません。');
@@ -288,7 +291,7 @@ function normalizeTrackData(rawData) {
     tracks[name] = pointsToVector3(rawList);
   });
 
-  REQUIRED_TRACK_KEYS.forEach((name) => {
+  requiredTrackKeys.forEach((name) => {
     if (Array.isArray(tracks[name]) && tracks[name].length >= 2) { return; }
     console.warn(`[track_setup] 不足/不正な点群を補完しました: ${name}`);
     tracks[name] = pointsToVector3(baseFallback);
@@ -317,6 +320,19 @@ function buildFallbackTrackData() {
       source: 'public_upload_fallback',
     },
     tracks: fallbackTracks,
+  };
+}
+
+function buildEmptyTrackData() {
+  return {
+    meta: {
+      version: TRACK_DATA_VERSION,
+      scaled: true,
+      scale: BASE_WORLD_SCALE,
+      savedAt: new Date().toISOString(),
+      source: 'public_upload_empty',
+    },
+    tracks: {},
   };
 }
 
@@ -362,12 +378,14 @@ export async function initTrackSetup(options = {}) {
     const runtimeMapMode = String(new URLSearchParams(window.location.search).get('runtime_map') || '').trim();
     const isRuntimeLocalView = runtimeMapMode === 'public_upload' || runtimeMapMode === 'edit_upload';
     const trackDataRaw = isRuntimeLocalView
-      ? (runtimeTrackData || buildFallbackTrackData())
+      ? (runtimeTrackData || buildEmptyTrackData())
       : await loadTrackData(TRACK_DATA_URL);
     if (isRuntimeLocalView && !runtimeTrackData) {
-      console.warn('[public_upload][tracks] uploaded track data missing, using fallback tracks');
+      console.warn('[public_upload][tracks] uploaded track data missing, leaving tracks empty');
     }
-    const normalized = normalizeTrackData(trackDataRaw);
+    const normalized = normalizeTrackData(trackDataRaw, {
+      requiredTrackKeys: isRuntimeLocalView ? [] : REQUIRED_TRACK_KEYS,
+    });
     trackMap = normalized.tracks;
     sourceScale = normalized.sourceScale;
   } catch (err) {

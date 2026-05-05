@@ -55,9 +55,13 @@ const groundGeo = new THREE.PlaneGeometry(1000, 1000);
 const groundMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0, roughness: 0.9 });
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = 0; // 必要ならシーンの床の高さに合わせる
+ground.position.y = -0.05; // city 側 ground と完全に同面にしない
 ground.receiveShadow = true; // 影を受ける
 ground.name = 'GroundPlane';
+ground.renderOrder = -100;
+groundMat.depthTest = true;
+groundMat.depthWrite = true;
+groundMat.transparent = false;
 scene.add(ground);
 
 function alignRootVisualCenterToOrigin(root) {

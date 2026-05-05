@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Edit Mode Demo",
+    "description": "mode, mouse, click, drag, view の自動実行サンプル"
+  },
+  "defaults": {
+    "clickHoldMs": 120,
+    "dragSteps": 30,
+    "moveSteps": 30
+  },
+  "steps": [
+    { "type": "wait", "ms": 800 },
+    { "type": "note", "message": "demo ready", "durationMs": 1600, "waitMs": 500 },
+    { "type": "mode", "ui": "edit", "toggle": "active" },
+    { "type": "mode", "ui": "creat", "toggle": "active" },
+    {
+  "type": "replay_line_build",
+  "group_name": "Points_0",
+  "timing": {
+    "pointMs": 180,
+    "planeMoveMs": 2200,
+    "pointLiftMs": 320,
+    "curveMs": 220,
+    "finishMs": 900
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Edit Mode Demo",
+    "description": "mode, mouse, click, drag, view の自動実行サンプル"
+  },
+  "defaults": {
+    "clickHoldMs": 120,
+    "dragSteps": 30,
+    "moveSteps": 30
+  },
+  "steps": [
+    {
+  "type": "view",
+  "position": { "x": 0, "y": 12, "z": 25 },
+  "angles": { "yaw": 3.14159, "pitch": -0.52 },
+  "duration": 1200
+}]
+}

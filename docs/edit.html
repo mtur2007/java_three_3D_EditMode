@@ -141,21 +141,23 @@
         <aside class="status-board" aria-label="編集ページローカルマップローダー">
           <p class="status-title">LOCAL MAP LOADER</p>
           <div class="status-row">
-            <span>構造物</span>
+            <span>構造物 [ st_~ ]</span>
             <strong id="local-structure-file-value">未読込</strong>
           </div>
           <div class="status-row">
-            <span>都市</span>
+            <span>都市 [ ct_~ ]</span>
             <strong id="local-map-file-value">未読込</strong>
           </div>
           <div class="status-row">
-            <span>車両</span>
+            <span>車両 [ tr_~ ]</span>
             <strong id="local-train-file-value">未読込</strong>
           </div>
           <div class="local-map-panel" aria-label="ローカルマップファイル読込">
             <input id="local-map-file-input" class="local-map-file-input" type="file" multiple accept=".zip,.msgpack,.mpk,.json,.glb,application/zip,application/x-zip-compressed,application/x-msgpack,application/json,model/gltf-binary,application/octet-stream,*/*" />
+            <input id="local-train-folder-input" class="local-map-file-input" type="file" multiple webkitdirectory directory accept=".glb,.gltf,model/gltf-binary,model/gltf+json,application/octet-stream,*/*" />
             <div class="local-map-action-row">
               <button class="ghost-btn local-map-action-btn" type="button" id="local-map-select-btn">読み込む</button>
+              <button class="ghost-btn local-map-action-btn" type="button" id="local-train-folder-btn">車両フォルダ</button>
               <button class="primary-btn local-map-action-btn local-map-start-btn" type="button" id="local-map-start-btn" aria-disabled="true">表示を開始する</button>
             </div>
             <p id="local-map-comment" class="local-map-comment" data-type="info" hidden></p>
@@ -207,6 +209,7 @@
         <div class="edit-action-row">
           <button class="primary-btn" type="button" id="save-slot-zip-btn">PCへ保存</button>
           <button class="ghost-btn" type="button" id="resume-world-btn" data-auth-protected hidden>編集を再開</button>
+          <button class="ghost-btn" type="button" id="play-demo-world-btn" aria-disabled="true">デモ再生</button>
           <a class="ghost-btn start-world-btn" id="edit-detail-start-world-btn" href="./public_local_load.html?runtime_map=edit_upload" data-auth-protected>サムネを撮影</a>
           <button class="ghost-btn publish-btn" type="button" id="publish-world-btn" data-auth-protected disabled>公開する</button>
         </div>

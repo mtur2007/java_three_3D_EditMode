@@ -623,6 +623,432 @@
     .grid.grid-wide {
       grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
     }
+    .card.card-stacked {
+      grid-column: 1 / -1;
+    }
+    .feature-hub {
+      display: grid;
+      gap: 18px;
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px solid rgba(141, 187, 245, 0.2);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 36px rgba(0, 0, 0, 0.18);
+    }
+    .feature-hub + .feature-hub {
+      margin-top: 18px;
+    }
+    .feature-hub-rail {
+      background:
+        radial-gradient(circle at top left, rgba(83, 201, 245, 0.16), transparent 34%),
+        linear-gradient(180deg, rgba(11, 26, 43, 0.96), rgba(8, 18, 30, 0.98));
+    }
+    .feature-hub-creat {
+      background:
+        radial-gradient(circle at top left, rgba(116, 225, 189, 0.16), transparent 34%),
+        linear-gradient(180deg, rgba(18, 31, 43, 0.96), rgba(10, 20, 30, 0.98));
+    }
+    .feature-hub-header {
+      display: grid;
+      gap: 10px;
+    }
+    .feature-hub-copy {
+      display: grid;
+      gap: 10px;
+    }
+    .feature-hub-header h3 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .feature-hub-header p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .feature-hub-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .feature-hub-pills .pill {
+      background: rgba(7, 16, 26, 0.66);
+    }
+    .feature-hub-overview {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .feature-hub.is-detail-open .feature-hub-overview {
+      grid-template-columns: 1fr;
+    }
+    .feature-hub.is-detail-open > .feature-hub-overview > .manual-video-guide-inline {
+      display: none;
+    }
+    .feature-hub-children {
+      display: grid;
+      gap: 12px;
+    }
+    .feature-detail {
+      position: relative;
+      border-radius: 16px;
+      border: 1px solid rgba(141, 187, 245, 0.16);
+      background: rgba(7, 15, 26, 0.54);
+      overflow: hidden;
+      transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+    .feature-detail[open] {
+      background: rgba(11, 21, 35, 0.84);
+      border-color: rgba(141, 187, 245, 0.28);
+    }
+    .feature-detail:hover,
+    .feature-detail.is-video-focus {
+      border-color: rgba(116, 225, 189, 0.48);
+      box-shadow: 0 0 0 1px rgba(116, 225, 189, 0.14), 0 18px 34px rgba(0, 0, 0, 0.22);
+      transform: translateY(-1px);
+    }
+    .feature-detail > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 16px 18px;
+      position: relative;
+    }
+    .feature-detail > summary::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 14px;
+      bottom: 14px;
+      width: 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(116, 225, 189, 0.9), rgba(83, 201, 245, 0.7));
+      opacity: 0.9;
+    }
+    .feature-detail > summary::-webkit-details-marker {
+      display: none;
+    }
+    .feature-summary {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+    }
+    .feature-summary-copy h4 {
+      margin: 0 0 4px;
+      font-size: 17px;
+      color: var(--text);
+    }
+    .feature-summary-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .feature-summary-toggle {
+      color: #d5e7ff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .feature-detail[open] .feature-summary-toggle::before {
+      content: "close";
+    }
+    .feature-detail:not([open]) .feature-summary-toggle::before {
+      content: "open";
+    }
+    .feature-detail-body {
+      padding: 0 18px 18px;
+      border-top: 1px solid rgba(141, 187, 245, 0.12);
+    }
+    .feature-detail-body > :first-child {
+      margin-top: 14px;
+    }
+    .manual-video-guide.manual-video-guide-inline {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-self: stretch;
+      min-width: 0;
+      width: 100%;
+    }
+    .manual-video-guide.manual-video-guide-inline .manual-video-stage {
+      width: 100%;
+      min-height: auto;
+      border-radius: 18px;
+    }
+    .manual-video-guide.manual-video-guide-inline .manual-video-shell {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      min-height: 280px;
+    }
+    .manual-video-guide.manual-video-guide-inline .manual-video-shell video,
+    .manual-video-guide.manual-video-guide-inline .manual-video-placeholder,
+    .manual-video-guide.manual-video-guide-inline .manual-video-meta {
+      width: 100%;
+    }
+    .manual-video-guide.manual-video-guide-inline .manual-video-meta {
+      padding: 14px 16px 16px;
+    }
+    .manual-video-guide.manual-video-guide-inline .manual-video-meta h3 {
+      font-size: 18px;
+    }
+    .manual-video-scene-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .manual-video-scene-pills .manual-video-jump {
+      min-height: 34px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+    .feature-detail-video {
+      margin: 18px 0 22px;
+    }
+    .decoration-focus-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+      margin-top: 12px;
+    }
+    .decoration-focus-layout .feature-detail-video {
+      margin: 0;
+    }
+    .decoration-focus-layout .feature-mini-list {
+      margin-top: 0;
+    }
+    .decoration-focus-pair {
+      display: grid;
+      gap: 12px;
+    }
+    @media (max-width: 980px) {
+      .decoration-focus-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+    .feature-mini-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .feature-mini-section {
+      padding: 14px 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(141, 187, 245, 0.1);
+    }
+    .feature-mini-section:nth-child(odd) {
+      background: rgba(12, 22, 36, 0.72);
+    }
+    .feature-mini-section:nth-child(even) {
+      background: rgba(8, 17, 29, 0.88);
+    }
+    .feature-mini-section h4 {
+      margin-top: 0;
+    }
+    .feature-mini-section .manual-video-jump {
+      margin-top: 10px;
+    }
+    .manual-video-guide {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.9fr);
+      gap: 20px;
+      align-items: start;
+    }
+    .manual-video-stage {
+      position: relative;
+      overflow: hidden;
+      border-radius: 22px;
+      border: 1px solid rgba(141, 187, 245, 0.22);
+      background:
+        radial-gradient(circle at top left, rgba(116, 225, 189, 0.12), transparent 34%),
+        linear-gradient(180deg, rgba(12, 22, 37, 0.96), rgba(8, 15, 27, 0.98));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 20px 40px rgba(0, 0, 0, 0.24);
+      min-height: 100%;
+    }
+    .manual-video-stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.16));
+    }
+    .manual-video-shell {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      background: rgba(2, 7, 14, 0.72);
+    }
+    .manual-video-shell video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: linear-gradient(180deg, #07111d, #0d1524);
+    }
+    .manual-video-placeholder {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      text-align: center;
+      color: var(--muted);
+      background:
+        linear-gradient(135deg, rgba(83, 201, 245, 0.12), transparent 48%),
+        linear-gradient(180deg, rgba(5, 11, 20, 0.34), rgba(5, 11, 20, 0.7));
+    }
+    .manual-video-placeholder[hidden] {
+      display: none !important;
+    }
+    .manual-video-placeholder strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text);
+      font-size: 18px;
+    }
+    .manual-video-badge {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(7, 14, 24, 0.72);
+      border: 1px solid rgba(141, 187, 245, 0.18);
+      color: var(--text);
+      font-size: 13px;
+      backdrop-filter: blur(10px);
+    }
+    .manual-video-badge::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 6px rgba(116, 225, 189, 0.14);
+    }
+    .manual-video-meta {
+      position: relative;
+      z-index: 1;
+      padding: 18px 18px 20px;
+    }
+    .manual-video-meta h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+    .manual-video-meta p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .manual-video-status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #bad0ef;
+    }
+    .manual-video-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .manual-video-action,
+    .manual-video-jump {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid rgba(141, 187, 245, 0.24);
+      border-radius: 999px;
+      background: rgba(16, 30, 50, 0.92);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      text-decoration: none;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+    .manual-video-action:hover,
+    .manual-video-jump:hover {
+      transform: translateY(-1px);
+      border-color: rgba(116, 225, 189, 0.44);
+      background: rgba(20, 40, 67, 0.98);
+    }
+    .manual-video-action.is-secondary,
+    .manual-video-jump {
+      background: rgba(10, 20, 34, 0.86);
+      color: #d5e7ff;
+    }
+    .manual-scene-list {
+      display: grid;
+      gap: 12px;
+    }
+    .manual-scene-card {
+      position: relative;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(141, 187, 245, 0.14);
+      background: rgba(11, 21, 36, 0.82);
+      transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+    .manual-scene-card.is-active {
+      border-color: rgba(116, 225, 189, 0.56);
+      box-shadow: 0 0 0 1px rgba(116, 225, 189, 0.16), 0 18px 34px rgba(0, 0, 0, 0.22);
+      transform: translateY(-1px);
+    }
+    .manual-scene-step {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(116, 225, 189, 0.1);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .manual-scene-card h3 {
+      margin: 12px 0 8px;
+      font-size: 19px;
+    }
+    .manual-scene-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .manual-scene-points {
+      display: grid;
+      gap: 8px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .manual-scene-points li {
+      padding-left: 18px;
+      position: relative;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .manual-scene-points li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.72em;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(116, 225, 189, 0.72);
+    }
+    .manual-scene-card .manual-video-jump {
+      margin-top: 14px;
+    }
+    .card.is-video-focus {
+      border-color: rgba(116, 225, 189, 0.48);
+      box-shadow: 0 0 0 1px rgba(116, 225, 189, 0.14), 0 16px 36px rgba(0, 0, 0, 0.2);
+    }
     ul {
       margin: 8px 0 0;
       padding-left: 18px;
@@ -632,6 +1058,9 @@
       color: var(--muted);
     }
     @media (max-width: 720px) {
+      .feature-hub-overview {
+        grid-template-columns: 1fr;
+      }
       .page {
         width: min(100vw - 20px, 1120px);
         padding-top: 20px;
@@ -639,6 +1068,12 @@
       .section,
       .hero {
         padding: 18px;
+      }
+      .manual-video-guide {
+        grid-template-columns: 1fr;
+      }
+      .manual-video-meta {
+        padding: 16px 16px 18px;
       }
     }
   </style>
@@ -716,339 +1151,618 @@
 
     <section class="section">
       <h2>rail 系のボタン</h2>
-      <div class="grid grid-wide">
-        <div class="card">
-          <span class="path">edit &gt; rail</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">🛤️</span>
-            <h3>rail</h3>
-          </div>
-          <p>線路編集モードです。線路制御点を対象にした追加・移動・構造生成が有効になります。</p>
-        </div>
-        <div class="card">
-          <span class="path">edit &gt; rail &gt; new</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M6 4.5h5"></path>
-                <path d="M8.5 2v5"></path>
-                <path d="M9.5 8.5h8l0 8-8 0z"></path>
-                <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
-                <path d="M17.5 8.5v8l3.8-3v-8z"></path>
-              </svg>
-            </span>
-            <h3>new</h3>
-          </div>
-          <p>線路の制御点を追加します。直線ドラフトや新しいレールの起点づくりに使います。</p>
-        </div>
-        <div class="card">
-          <span class="path">edit &gt; rail &gt; move</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M12 3.8v16.4"></path>
-                <path d="M3.8 12h16.4"></path>
-                <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
-                <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
-                <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
-                <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
-                <rect x="10.5" y="10.5" width="3" height="3" fill="currentColor" stroke="none"></rect>
-              </svg>
-            </span>
-            <h3>move</h3>
-          </div>
-          <p>既存の線路制御点を移動するモードです。<br>線路の形状を変更できます。</p>
-          <div class="manual-subicon-row" aria-label="rail move sub icons">
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">⤮</span>
-              <span>x_z</span>
+      <div class="feature-hub feature-hub-rail">
+        <div class="feature-hub-header">
+          <div class="feature-hub-copy">
+            <span class="path">edit &gt; rail</span>
+            <div class="heading-with-icon">
+              <span class="manual-icon-button" aria-hidden="true">🛤️</span>
+              <h3>rail</h3>
             </div>
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">⇡</span>
-              <span>y</span>
+            <p>線路編集モードです。線路制御点を対象にした追加・移動・構造生成が有効になります。</p>
+            <div class="feature-hub-pills" aria-label="rail functions">
+              <span class="pill">new</span>
+              <span class="pill">move</span>
+              <span class="pill">structure</span>
             </div>
           </div>
-          <h4>x_z</h4>
-          <p>X/Z 平面で移動します。地面に沿った位置合わせ向けです。</p>
-          <h4>y</h4>
-          <p>Y 軸方向だけ動かします。高さだけを変えたいときに使います。</p>
         </div>
-        <div class="card">
-          <span class="path">edit &gt; rail &gt; structure</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M4.5 15.5h15"></path>
-                <path d="M6.5 15.5V9.2"></path>
-                <path d="M17.5 15.5V9.2"></path>
-                <path d="M5.5 9.2h13"></path>
-                <path d="M7.3 9.2l2.5-2.7h4.4l2.5 2.7"></path>
-                <path d="M8.2 12.4h7.6"></path>
-              </svg>
-            </span>
-            <h3>structure</h3>
-          </div>
-          <p>線路に関連する構造物を扱う枝です。配置ピンを打ってからカテゴリ生成します。</p>
-          <div class="manual-action-grid">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>new</span></div>
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <path d="M8 8h8v8H8z"></path>
-                  <path d="M6 6h2v2H6z" fill="currentColor" stroke="none"></path>
-                  <path d="M16 6h2v2h-2z" fill="currentColor" stroke="none"></path>
-                  <path d="M6 16h2v2H6z" fill="currentColor" stroke="none"></path>
-                  <path d="M16 16h2v2h-2z" fill="currentColor" stroke="none"></path>
-                </svg>
-              </span>
-              <span>construction</span>
+        <div class="feature-hub-overview">
+          <div class="manual-video-guide manual-video-guide-inline" data-video-guide="rail-inline">
+            <div class="manual-video-stage">
+              <div class="manual-video-shell">
+                <video
+                  controls
+                  muted
+                  playsinline
+                  preload="metadata"
+                  data-video-player
+                  aria-label="rail inline video"
+                ></video>
+                <div class="manual-video-placeholder" data-video-placeholder>
+                  <div>
+                    <strong>このパネル内で動画を確認できます</strong>
+                    <span><code>new</code> / <code>move</code> / <code>structure</code> の切り替えに合わせて再生します。</span>
+                  </div>
+                </div>
+              </div>
+              <div class="manual-video-meta">
+                <h3 data-video-scene-title>rail 全体デモ</h3>
+                <p data-video-scene-description>選択中の機能に合わせて、この場で動画を切り替えます。</p>
+                <div class="manual-video-status" data-video-status>動画ファイルを待機中です。</div>
+                <div class="manual-video-controls">
+                  <button class="manual-video-action" type="button" data-video-play-all>連続再生</button>
+                  <button class="manual-video-action is-secondary" type="button" data-video-replay-scene>このシーンを再生</button>
+                </div>
+                <div class="manual-video-scene-pills">
+                  <button class="manual-video-jump" type="button" data-video-scene="new">new</button>
+                  <button class="manual-video-jump" type="button" data-video-scene="move">move</button>
+                  <button class="manual-video-jump" type="button" data-video-scene="structure">structure</button>
+                </div>
+              </div>
             </div>
           </div>
-          <h4>new</h4>
-          <p>構造物配置用のピンを追加します。橋脚や壁などを生成する際の対象区間を設定するために使用します。</p>
-          <h4>construction</h4>
-          <p>対象線路のピンで区間を指定し、構造物カテゴリを選んで生成します。</p>
-          <div class="manual-action-grid tight">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🌉</span><span>bridge</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🏙️</span><span>elevated</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▥</span><span>wall</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>floor</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">#</span><span>rib_bridge</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>tunnel_rect</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◯</span><span>tunnel_circle</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▤</span><span>platform</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">≡</span><span>group_rail</span></div>
+          <div class="feature-hub-children">
+            <details class="feature-detail" data-video-highlight="rail-inline:new">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M6 4.5h5"></path>
+                    <path d="M8.5 2v5"></path>
+                    <path d="M9.5 8.5h8l0 8-8 0z"></path>
+                    <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+                    <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>new</h4>
+                  <p>線路の制御点を追加します。直線ドラフトや新しいレールの起点づくりに使います。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; rail &gt; new</span>
+              <p>線路の制御点を追加します。直線ドラフトや新しいレールの起点づくりに使います。</p>
+              <button class="manual-video-jump" type="button" data-video-guide-target="rail-inline" data-video-scene="new">動画説明を見る</button>
+            </div>
+            </details>
+            <details class="feature-detail" data-video-highlight="rail-inline:move">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 3.8v16.4"></path>
+                    <path d="M3.8 12h16.4"></path>
+                    <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+                    <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+                    <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+                    <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+                    <rect x="10.5" y="10.5" width="3" height="3" fill="currentColor" stroke="none"></rect>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>move</h4>
+                  <p>既存の線路制御点を移動するモードです。線路の形状を変更できます。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; rail &gt; move</span>
+              <p>既存の線路制御点を移動するモードです。<br>線路の形状を変更できます。</p>
+              <div class="manual-subicon-row" aria-label="rail move sub icons">
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">⤮</span>
+                  <span>x_z</span>
+                </div>
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">⇡</span>
+                  <span>y</span>
+                </div>
+              </div>
+              <h4>x_z</h4>
+              <p>X/Z 平面で移動します。地面に沿った位置合わせ向けです。</p>
+              <h4>y</h4>
+              <p>Y 軸方向だけ動かします。高さだけを変えたいときに使います。</p>
+              <button class="manual-video-jump" type="button" data-video-guide-target="rail-inline" data-video-scene="move">動画説明を見る</button>
+            </div>
+            </details>
+            <details class="feature-detail" data-video-highlight="rail-inline:structure">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M4.5 15.5h15"></path>
+                    <path d="M6.5 15.5V9.2"></path>
+                    <path d="M17.5 15.5V9.2"></path>
+                    <path d="M5.5 9.2h13"></path>
+                    <path d="M7.3 9.2l2.5-2.7h4.4l2.5 2.7"></path>
+                    <path d="M8.2 12.4h7.6"></path>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>structure</h4>
+                  <p>線路に関連する構造物を扱う枝です。配置ピンを打ってからカテゴリ生成します。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; rail &gt; structure</span>
+              <p>線路に関連する構造物を扱う枝です。配置ピンを打ってからカテゴリ生成します。</p>
+              <div class="manual-action-grid">
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>new</span></div>
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M8 8h8v8H8z"></path>
+                      <path d="M6 6h2v2H6z" fill="currentColor" stroke="none"></path>
+                      <path d="M16 6h2v2h-2z" fill="currentColor" stroke="none"></path>
+                      <path d="M6 16h2v2H6z" fill="currentColor" stroke="none"></path>
+                      <path d="M16 16h2v2h-2z" fill="currentColor" stroke="none"></path>
+                    </svg>
+                  </span>
+                  <span>construction</span>
+                </div>
+              </div>
+              <h4>new</h4>
+              <p>構造物配置用のピンを追加します。橋脚や壁などを生成する際の対象区間を設定するために使用します。</p>
+              <h4>construction</h4>
+              <p>対象線路のピンで区間を指定し、構造物カテゴリを選んで生成します。</p>
+              <div class="manual-action-grid tight">
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🌉</span><span>bridge</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🏙️</span><span>elevated</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▥</span><span>wall</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>floor</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">#</span><span>rib_bridge</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>tunnel_rect</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◯</span><span>tunnel_circle</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▤</span><span>platform</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">≡</span><span>group_rail</span></div>
+              </div>
+              <ul>
+                <li><strong>bridge</strong>: 橋梁系の構造を生成します。</li>
+                <li><strong>elevated</strong>: 高架系の構造を生成します。</li>
+                <li><strong>wall</strong>: 壁状の構造を生成します。</li>
+                <li><strong>floor</strong>: 床面系の構造を生成します。</li>
+                <li><strong>pillar</strong>: 柱系の構造を生成します。</li>
+                <li><strong>rib_bridge</strong>: リブ付き橋梁系の構造を生成します。</li>
+                <li><strong>tunnel_rect</strong>: 矩形断面のトンネルを生成します。</li>
+                <li><strong>tunnel_circle</strong>: 円形断面のトンネルを生成します。</li>
+                <li><strong>platform</strong>: ホーム構造を生成します。</li>
+                <li><strong>group_rail</strong>: グループ扱いの線路構造生成に使います。</li>
+              </ul>
+              <button class="manual-video-jump" type="button" data-video-guide-target="rail-inline" data-video-scene="structure">動画説明を見る</button>
+            </div>
+            </details>
           </div>
-          <ul>
-            <li><strong>bridge</strong>: 橋梁系の構造を生成します。</li>
-            <li><strong>elevated</strong>: 高架系の構造を生成します。</li>
-            <li><strong>wall</strong>: 壁状の構造を生成します。</li>
-            <li><strong>floor</strong>: 床面系の構造を生成します。</li>
-            <li><strong>pillar</strong>: 柱系の構造を生成します。</li>
-            <li><strong>rib_bridge</strong>: リブ付き橋梁系の構造を生成します。</li>
-            <li><strong>tunnel_rect</strong>: 矩形断面のトンネルを生成します。</li>
-            <li><strong>tunnel_circle</strong>: 円形断面のトンネルを生成します。</li>
-            <li><strong>platform</strong>: ホーム構造を生成します。</li>
-            <li><strong>group_rail</strong>: グループ扱いの線路構造生成に使います。</li>
-          </ul>
         </div>
       </div>
     </section>
 
     <section class="section">
       <h2>creat 系のボタン</h2>
-      <div class="grid grid-wide">
-        <div class="card">
-          <span class="path">edit &gt; creat</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <rect x="1" y="1" width="22" height="22" rx="4.2" fill="#2f9ae6" stroke="#8ff0c2" stroke-width="0.2"></rect>
-                <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke="#8ff0c2" stroke-width="0.2"></path>
-                <circle cx="12" cy="12" r="8.5" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
-                <circle cx="12" cy="12" r="4.8" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
-                <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke="#8ff0c2" stroke-width="0.2"></path>
-              </svg>
-            </span>
-            <h3>creat</h3>
+      <div class="feature-hub feature-hub-creat">
+        <div class="feature-hub-header">
+          <div class="feature-hub-copy">
+            <span class="path">edit &gt; creat</span>
+            <div class="heading-with-icon">
+              <span class="manual-icon-button" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="1" y="1" width="22" height="22" rx="4.2" fill="#2f9ae6" stroke="#8ff0c2" stroke-width="0.2"></rect>
+                  <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke="#8ff0c2" stroke-width="0.2"></path>
+                  <circle cx="12" cy="12" r="8.5" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+                  <circle cx="12" cy="12" r="4.8" stroke="#8ff0c2" stroke-width="0.2" fill="none"></circle>
+                  <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke="#8ff0c2" stroke-width="0.2"></path>
+                </svg>
+              </span>
+              <h3>creat</h3>
+            </div>
+            <p>creatモード・簡易モデリングツールの入り口です。<br>これは点と点を結ぶ形で構造を作成する方式のツールで、<br>駅や橋など鉄骨感のある表現を簡単に再現することができます。</p>
+            <div class="feature-hub-pills" aria-label="creat functions">
+              <span class="pill">view</span>
+              <span class="pill">decoration</span>
+              <span class="pill">Difference</span>
+            </div>
           </div>
-          <p>creatモード・簡易モデリングツールの入り口です。<br>
-            これは点と点を結ぶ形で構造を作成する方式のツールで、<br>
-            駅や橋など鉄骨感のある表現を簡単に再現することができます。
-          </p>
         </div>
-        <div class="card">
-          <span class="path">edit &gt; creat &gt; view</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5z"></path>
-                <circle cx="12" cy="12" r="2.4"></circle>
-              </svg>
-            </span>
-            <h3>view</h3>
-          </div>
-          <p>クリエイト対象の表示確認用です。通常表示に戻しながら、点やコピー対象の見え方を整理します。</p>
-        </div>
-        <div class="card">
-          <span class="path">edit &gt; creat &gt; decoration</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <rect x="1" y="1" width="22" height="22" rx="4.2"></rect>
-                <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke-width="0.2"></path>
-                <circle cx="12" cy="12" r="8.5" stroke-width="0.2"></circle>
-                <circle cx="12" cy="12" r="4.8" stroke-width="0.2"></circle>
-                <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke-width="0.2"></path>
-              </svg>
-            </span>
-            <h3>decoration</h3>
-          </div>
-          <p>モデリングツールの実際の作業をまとめた枝です。<br>
-            点追加、回転、移動、コピー、グループ化、スタイル変更、削除、部材生成が並びます。</p>
-          <div class="manual-action-grid">
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <path d="M6 4.5h5"></path>
-                  <path d="M8.5 2v5"></path>
-                  <path d="M9.5 8.5h8l0 8-8 0z"></path>
-                  <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
-                  <path d="M17.5 8.5v8l3.8-3v-8z"></path>
-                </svg>
-              </span>
-              <span>add_point</span>
+        <div class="feature-hub-overview">
+          <div class="manual-video-guide manual-video-guide-inline" data-video-guide="edit-inline">
+            <div class="manual-video-stage">
+              <div class="manual-video-shell">
+                <video
+                  controls
+                  muted
+                  playsinline
+                  preload="metadata"
+                  data-video-player
+                  aria-label="edit inline video"
+                ></video>
+                <div class="manual-video-placeholder" data-video-placeholder>
+                  <div>
+                    <strong>このパネル内で creat 動画を確認できます</strong>
+                    <span><code>add_point</code> と <code>construction</code> をこの場で切り替え、連続再生できます。</span>
+                  </div>
+                </div>
+              </div>
+              <div class="manual-video-meta">
+                <h3 data-video-scene-title>creat / add_point</h3>
+                <p data-video-scene-description><code>add_point</code> と <code>construction</code> の2本をこの場で切り替えます。</p>
+                <div class="manual-video-status" data-video-status>動画ファイルを待機中です。</div>
+                <div class="manual-video-controls">
+                  <button class="manual-video-action" type="button" data-video-play-all>連続再生</button>
+                  <button class="manual-video-action is-secondary" type="button" data-video-replay-scene>このシーンを再生</button>
+                </div>
+                <div class="manual-video-scene-pills">
+                  <button class="manual-video-jump" type="button" data-video-scene="add_point">add_point</button>
+                  <button class="manual-video-jump" type="button" data-video-scene="construction">construction</button>
+                </div>
+              </div>
             </div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◫</span><span>template</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⌗</span><span>guide</span></div>
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="2.6"></circle>
-                  <path d="M4.7 9.2a8.3 8.3 0 0 1 13.5-2.4"></path>
-                  <path d="M19.3 14.8a8.3 8.3 0 0 1-13.5 2.4"></path>
-                </svg>
-              </span>
-              <span>rotation</span>
+          </div>
+          <div class="feature-hub-children">
+            <details class="feature-detail">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5z"></path>
+                    <circle cx="12" cy="12" r="2.4"></circle>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>view</h4>
+                  <p>クリエイト対象の表示確認用です。通常表示に戻しながら、点やコピー対象の見え方を整理します。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; creat &gt; view</span>
+              <p>クリエイト対象の表示確認用です。通常表示に戻しながら、点やコピー対象の見え方を整理します。</p>
             </div>
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <path d="M6 5v14"></path>
-                  <path d="M6 19h13"></path>
-                  <path d="M9.3 19a9.7 9.7 0 0 0-3.3-7.3"></path>
-                </svg>
-              </span>
-              <span>search</span>
+            </details>
+            <details class="feature-detail" data-video-highlight="edit-inline:add_point edit-inline:move_point edit-inline:construction">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <rect x="1" y="1" width="22" height="22" rx="4.2"></rect>
+                    <path d="M6.2 2.1v19.8M12 2.1v19.8M17.8 2.1v19.8M2.1 6.2h19.8M2.1 12h19.8M2.1 17.8h19.8" stroke-width="0.2"></path>
+                    <circle cx="12" cy="12" r="8.5" stroke-width="0.2"></circle>
+                    <circle cx="12" cy="12" r="4.8" stroke-width="0.2"></circle>
+                    <path d="M2.1 2.1l19.8 19.8M21.9 2.1L2.1 21.9" stroke-width="0.2"></path>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>decoration</h4>
+                  <p>点追加、回転、移動、コピー、グループ化、スタイル変更、削除、部材生成をまとめた枝です。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; creat &gt; decoration</span>
+              <p>モデリングツールの実際の作業をまとめた枝です。<br>点追加、回転、移動、コピー、グループ化、スタイル変更、削除、部材生成が並びます。</p>
+              <div class="manual-action-grid">
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M6 4.5h5"></path>
+                      <path d="M8.5 2v5"></path>
+                      <path d="M9.5 8.5h8l0 8-8 0z"></path>
+                      <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+                      <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+                    </svg>
+                  </span>
+                  <span>add_point</span>
+                </div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◫</span><span>template</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⌗</span><span>guide</span></div>
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="2.6"></circle>
+                      <path d="M4.7 9.2a8.3 8.3 0 0 1 13.5-2.4"></path>
+                      <path d="M19.3 14.8a8.3 8.3 0 0 1-13.5 2.4"></path>
+                    </svg>
+                  </span>
+                  <span>rotation</span>
+                </div>
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M6 5v14"></path>
+                      <path d="M6 19h13"></path>
+                      <path d="M9.3 19a9.7 9.7 0 0 0-3.3-7.3"></path>
+                    </svg>
+                  </span>
+                  <span>search</span>
+                </div>
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M12 3.8v16.4"></path>
+                      <path d="M3.8 12h16.4"></path>
+                      <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
+                      <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
+                      <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
+                      <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
+                    </svg>
+                  </span>
+                  <span>move_point</span>
+                </div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⧉</span><span>copy</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∞</span><span>group</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◰</span><span>style</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🗑</span><span>delete</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>construction</span></div>
+              </div>
+              <div class="decoration-focus-layout">
+                <div class="manual-video-guide manual-video-guide-inline feature-detail-video" data-video-guide="decoration-detail" data-inline-anchor-guide="true" hidden>
+                  <div class="manual-video-stage">
+                    <div class="manual-video-shell">
+                      <video
+                        controls
+                        muted
+                        playsinline
+                        preload="metadata"
+                        data-video-player
+                        aria-label="decoration detail video"
+                      ></video>
+                      <div class="manual-video-placeholder" data-video-placeholder>
+                        <div>
+                          <strong>decoration の詳細動画をここで再生します</strong>
+                          <span><code>videos/edit/decoration/*.mp4</code> に置いた小機能動画を、この場で切り替えて確認できます。</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="manual-video-meta">
+                      <h3 data-video-scene-title>decoration / add_point</h3>
+                      <p data-video-scene-description>選択した小機能の作業動画をここで切り替えます。</p>
+                      <div class="manual-video-status" data-video-status>動画ファイルを待機中です。</div>
+                      <div class="manual-video-controls">
+                        <button class="manual-video-action" type="button" data-video-play-all>連続再生</button>
+                        <button class="manual-video-action is-secondary" type="button" data-video-replay-scene>このシーンを再生</button>
+                      </div>
+                      <div class="manual-video-scene-pills">
+                        <button class="manual-video-jump" type="button" data-video-scene="add_point">add_point</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="construction">construction</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="copy">copy</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="group">group</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="template">template</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="guide">guide</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="rotation">rotation</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="search">search</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="move_point">move_point</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="style">style</button>
+                        <button class="manual-video-jump" type="button" data-video-scene="delete">delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="decoration-focus-pair">
+                <details class="feature-detail" data-video-highlight="edit-inline:add_point">
+                <summary>
+                  <div class="feature-summary">
+                    <span class="manual-icon-button" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M6 4.5h5"></path>
+                        <path d="M8.5 2v5"></path>
+                        <path d="M9.5 8.5h8l0 8-8 0z"></path>
+                        <path d="M9.5 8.5l3.8-3h8l-3.7 3z"></path>
+                        <path d="M17.5 8.5v8l3.8-3v-8z"></path>
+                      </svg>
+                    </span>
+                    <div class="feature-summary-copy">
+                      <h4>add_point</h4>
+                      <p>新しい点を打って、装飾や部材の元になる点列を作ります。</p>
+                    </div>
+                    <span class="feature-summary-toggle" aria-hidden="true"></span>
+                  </div>
+                </summary>
+                <div class="feature-detail-body">
+                  <span class="path">edit &gt; creat &gt; decoration &gt; add_point</span>
+                  <p>新しい点を打って、装飾や部材の元になる点列を作ります。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="edit-inline" data-video-scene="add_point">動画説明を見る</button>
+                </div>
+                </details>
+                <details class="feature-detail" data-video-highlight="edit-inline:construction">
+                <summary>
+                  <div class="feature-summary">
+                    <span class="manual-icon-button" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <rect x="4.5" y="6" width="4" height="12"></rect>
+                        <rect x="9.8" y="10" width="9.7" height="4"></rect>
+                        <circle cx="7" cy="12" r="0.9" fill="currentColor" stroke="none"></circle>
+                      </svg>
+                    </span>
+                    <div class="feature-summary-copy">
+                      <h4>construction</h4>
+                      <p>点列から部材を生成します。</p>
+                    </div>
+                    <span class="feature-summary-toggle" aria-hidden="true"></span>
+                  </div>
+                </summary>
+                <div class="feature-detail-body">
+                  <span class="path">edit &gt; creat &gt; decoration &gt; construction</span>
+                  <p>点列から部材を生成します。</p>
+                  <div class="manual-action-grid tight">
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>rite</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
+                  </div>
+                  <ul>
+                    <li><strong>pillar</strong>: 柱系部材。<code>Round_bar</code> / <code>H_beam</code> / <code>T_beam</code> / <code>L_beam</code> を選べます。</li>
+                    <li><strong>rite</strong>: 板・ライト系。現在のツリーでは <code>tubular</code> が使えます。</li>
+                    <li><strong>tube</strong>: チューブ系部材。<code>normal</code> が使えます。</li>
+                  </ul>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="edit-inline" data-video-scene="construction">動画説明を見る</button>
+                </div>
+                </details>
+                <details class="feature-detail" data-video-highlight="edit-inline:copy">
+                <summary>
+                  <div class="feature-summary">
+                    <span class="manual-icon-button" aria-hidden="true">⧉</span>
+                    <div class="feature-summary-copy">
+                      <h4>copy</h4>
+                      <p>選択対象を複製します。</p>
+                    </div>
+                    <span class="feature-summary-toggle" aria-hidden="true"></span>
+                  </div>
+                </summary>
+                <div class="feature-detail-body">
+                  <span class="path">edit &gt; creat &gt; decoration &gt; copy</span>
+                  <p>選択対象を複製します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="edit-inline" data-video-scene="copy">動画説明を見る</button>
+                </div>
+                </details>
+                <details class="feature-detail" data-video-highlight="edit-inline:group">
+                <summary>
+                  <div class="feature-summary">
+                    <span class="manual-icon-button" aria-hidden="true">∞</span>
+                    <div class="feature-summary-copy">
+                      <h4>group</h4>
+                      <p>複数の構造物をグループ化します。</p>
+                    </div>
+                    <span class="feature-summary-toggle" aria-hidden="true"></span>
+                  </div>
+                </summary>
+                <div class="feature-detail-body">
+                  <span class="path">edit &gt; creat &gt; decoration &gt; group</span>
+                  <p>複数の構造物をグループ化します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="edit-inline" data-video-scene="group">動画説明を見る</button>
+                </div>
+                </details>
+                </div>
+              </div>
+              <div class="feature-mini-list">
+                <section class="feature-mini-section">
+                  <h4>template</h4>
+                  <p>正方形など、事前に用意された形状を基に点列を作成します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="template">動画説明を見る</button>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>guide</h4>
+                  <p>ガイド面や補助面を扱います。点を打つ向きや作業面を整えるための枝です。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="guide">動画説明を見る</button>
+                  <div class="manual-action-grid tight">
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∡</span><span>change_angle</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇄</span><span>miller</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⊞</span><span>miller_add</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◎</span><span>Influence</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↔</span><span>x_z_move</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↕</span><span>y_add</span></div>
+                  </div>
+                  <ul>
+                    <li><strong>add</strong>: ガイド面を追加します。</li>
+                    <li><strong>change_angle</strong>: ガイド面の角度を調整します。</li>
+                    <li><strong>miller</strong>: ミラー系の補助処理です。</li>
+                    <li><strong>miller_add</strong>: ミラー補助を追加します。</li>
+                    <li><strong>Influence</strong>: 影響面ベースの補助処理です。</li>
+                    <li><strong>x_z_move</strong>: ガイド面を X/Z 方向へ動かします。</li>
+                    <li><strong>y_add</strong>: ガイド面の高さ方向追加に使います。</li>
+                  </ul>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>rotation</h4>
+                  <p>選択点群をまとめて回転します。回転パネルと連動する回転操作です。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="rotation">動画説明を見る</button>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>search</h4>
+                  <p>点同士の距離や角度を測定します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="search">動画説明を見る</button>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>move_point</h4>
+                  <p>既存の点を直接移動します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="move_point">動画説明を見る</button>
+                  <div class="manual-action-grid tight">
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤮</span><span>x_z_sf</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇡</span><span>y_sf</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
+                    <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
+                  </div>
+                  <ul>
+                    <li><strong>x_z_sf</strong>: X/Z 平面移動。</li>
+                    <li><strong>y_sf</strong>: Y 軸移動。</li>
+                    <li><strong>rotation</strong>: 指定した方向に移動。</li>
+                    <li><strong>scale</strong>: 点列や対象の拡縮調整。</li>
+                  </ul>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>style</h4>
+                  <p>鉄骨などの太さなど、構造物のスタイルを変更します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="style">動画説明を見る</button>
+                </section>
+                <section class="feature-mini-section">
+                  <h4>delete</h4>
+                  <p>選択対象を削除します。</p>
+                  <button class="manual-video-jump" type="button" data-video-guide-target="decoration-detail" data-video-scene="delete">動画説明を見る</button>
+                </section>
+              </div>
             </div>
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <path d="M12 3.8v16.4"></path>
-                  <path d="M3.8 12h16.4"></path>
-                  <path d="M12 3.8l-2.4 3.1h4.8z" fill="currentColor" stroke="none"></path>
-                  <path d="M20.2 12l-3.1-2.4v4.8z" fill="currentColor" stroke="none"></path>
-                  <path d="M12 20.2l2.4-3.1H9.6z" fill="currentColor" stroke="none"></path>
-                  <path d="M3.8 12l3.1 2.4V9.6z" fill="currentColor" stroke="none"></path>
-                </svg>
-              </span>
-              <span>move_point</span>
+            </details>
+            <details class="feature-detail">
+            <summary>
+              <div class="feature-summary">
+                <span class="manual-icon-button" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <rect x="6" y="9" width="11" height="11" stroke-dasharray="2 3"></rect>
+                    <path d="M19 15v-8H11" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"></path>
+                  </svg>
+                </span>
+                <div class="feature-summary-copy">
+                  <h4>Difference [demo]</h4>
+                  <p>都市モデルに対し、特定の空間でくり抜きを行うモードです。地下鉄や通路などの空洞表現に使います。</p>
+                </div>
+                <span class="feature-summary-toggle" aria-hidden="true"></span>
+              </div>
+            </summary>
+            <div class="feature-detail-body">
+              <span class="path">edit &gt; creat &gt; Difference</span>
+              <p>都市モデルに対し、特定の空間でくり抜きを行うモードです。<br>地下鉄、通路などの空洞部分の表現を可能にします。</p>
+              <div class="manual-action-grid">
+                <div class="manual-subicon-chip">
+                  <span class="manual-subicon-glyph">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M5.3 8.9L14.7 8.9L14.7 18.3L5.3 18.3L5.3 8.9" stroke-dasharray="2 3"></path>
+                      <path d="M5.3 8.9L9.7 5.4L19.1 5.4L14.7 8.9" stroke-dasharray="2 3"></path>
+                      <path d="M14.7 8.9L14.7 18.3L19.1 14.8L19.1 5.4" stroke-dasharray="2 3"></path>
+                    </svg>
+                  </span>
+                  <span>space</span>
+                </div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▶</span><span>excavation</span></div>
+              </div>
+              <h4>space</h4>
+              <p>くり抜く空間の作成・編集用の枝です。</p>
+              <div class="manual-action-grid tight">
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">✥</span><span>move</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
+                <div class="manual-subicon-chip"><span class="manual-subicon-glyph">／</span><span>line</span></div>
+              </div>
+              <ul>
+                <li><strong>add</strong>: 何もない場所をクリック/タップで空間作成。<br>add: スペースの面をクリック/タップで拡張します。</li>
+                <li><strong>move</strong>: スペースの 面,辺,頂点 を移動します。</li>
+                <li><strong>rotation</strong>: スペースの 面,辺,頂点 回転します。</li>
+                <li><strong>scale</strong>: スペースを拡大縮小します。</li>
+                <li><strong>tube</strong>: チューブ系の空間作成に使います。</li>
+                <li><strong>line</strong>: 線路に沿った空間作成に使います。</li>
+              </ul>
+              <h4>excavation</h4>
+              <p>差分処理を実行する入口です。<br>作った空間を使って対象をくり抜く用途です。</p>
             </div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⧉</span><span>copy</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∞</span><span>group</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◰</span><span>style</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">🗑</span><span>delete</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▣</span><span>construction</span></div>
+            </details>
           </div>
-          <h4>add_point</h4>
-          <p>新しい点を打って、装飾や部材の元になる点列を作ります。</p>
-          <h4>template</h4>
-          <p>正方形など、事前に用意された形状を基に点列を作成します。</p>
-          <h4>guide</h4>
-          <p>ガイド面や補助面を扱います。点を打つ向きや作業面を整えるための枝です。</p>
-          <div class="manual-action-grid tight">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">∡</span><span>change_angle</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇄</span><span>miller</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⊞</span><span>miller_add</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◎</span><span>Influence</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↔</span><span>x_z_move</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">↕</span><span>y_add</span></div>
-          </div>
-          <ul>
-            <li><strong>add</strong>: ガイド面を追加します。</li>
-            <li><strong>change_angle</strong>: ガイド面の角度を調整します。</li>
-            <li><strong>miller</strong>: ミラー系の補助処理です。</li>
-            <li><strong>miller_add</strong>: ミラー補助を追加します。</li>
-            <li><strong>Influence</strong>: 影響面ベースの補助処理です。</li>
-            <li><strong>x_z_move</strong>: ガイド面を X/Z 方向へ動かします。</li>
-            <li><strong>y_add</strong>: ガイド面の高さ方向追加に使います。</li>
-          </ul>
-          <h4>rotation</h4>
-          <p>選択点群をまとめて回転します。回転パネルと連動する回転操作です。</p>
-          <h4>search</h4>
-          <p>点同士の距離や角度を測定します。</p>
-          <h4>move_point</h4>
-          <p>既存の点を直接移動します。</p>
-          <div class="manual-action-grid tight">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤮</span><span>x_z_sf</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⇡</span><span>y_sf</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
-          </div>
-          <ul>
-            <li><strong>x_z_sf</strong>: X/Z 平面移動。</li>
-            <li><strong>y_sf</strong>: Y 軸移動。</li>
-            <li><strong>rotation</strong>: 指定した方向に移動。</li>
-            <li><strong>scale</strong>: 点列や対象の拡縮調整。</li>
-          </ul>
-          <h4>copy</h4>
-          <p>選択対象を複製します。</p>
-          <h4>group</h4>
-          <p>複数の構造物をグループ化します。</p>
-          <h4>style</h4>
-          <p>鉄骨などの太さなど、構造物のスタイルを変更します。</p>
-          <h4>delete</h4>
-          <p>選択対象を削除します。</p>
-          <h4>construction</h4>
-          <p>点列から部材を生成します。</p>
-          <div class="manual-action-grid tight">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">┃</span><span>pillar</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▭</span><span>rite</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
-          </div>
-          <ul>
-            <li><strong>pillar</strong>: 柱系部材。<code>Round_bar</code> / <code>H_beam</code> / <code>T_beam</code> / <code>L_beam</code> を選べます。</li>
-            <li><strong>rite</strong>: 板・ライト系。現在のツリーでは <code>tubular</code> が使えます。</li>
-            <li><strong>tube</strong>: チューブ系部材。<code>normal</code> が使えます。</li>
-          </ul>
-        </div>
-        <div class="card">
-          <span class="path">edit &gt; creat &gt; Difference</span>
-          <div class="heading-with-icon">
-            <span class="manual-icon-button" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <rect x="6" y="9" width="11" height="11" stroke-dasharray="2 3"></rect>
-                <path d="M19 15v-8H11" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"></path>
-              </svg>
-            </span>
-            <h3>Difference [demo] </h3>
-          </div>
-          <p>都市モデルに対し、特定の空間でくり抜きを行うモードです。<br>地下鉄、通路などの空洞部分の表現を可能にします。</p>
-          <div class="manual-action-grid">
-            <div class="manual-subicon-chip">
-              <span class="manual-subicon-glyph">
-                <svg viewBox="0 0 24 24">
-                  <path d="M5.3 8.9L14.7 8.9L14.7 18.3L5.3 18.3L5.3 8.9" stroke-dasharray="2 3"></path>
-                  <path d="M5.3 8.9L9.7 5.4L19.1 5.4L14.7 8.9" stroke-dasharray="2 3"></path>
-                  <path d="M14.7 8.9L14.7 18.3L19.1 14.8L19.1 5.4" stroke-dasharray="2 3"></path>
-                </svg>
-              </span>
-              <span>space</span>
-            </div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">▶</span><span>excavation</span></div>
-          </div>
-          <h4>space</h4>
-          <p>くり抜く空間の作成・編集用の枝です。</p>
-          <div class="manual-action-grid tight">
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">+</span><span>add</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">✥</span><span>move</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⟳</span><span>rotation</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">⤢</span><span>scale</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">◌</span><span>tube</span></div>
-            <div class="manual-subicon-chip"><span class="manual-subicon-glyph">／</span><span>line</span></div>
-          </div>
-          <ul>
-            <li><strong>add</strong>: 何もない場所をクリック/タップで空間作成。<br>add: スペースの面をクリック/タップで拡張します。</li>
-            <li><strong>move</strong>: スペースの 面,辺,頂点 を移動します。</li>
-            <li><strong>rotation</strong>: スペースの 面,辺,頂点 回転します。</li>
-            <li><strong>scale</strong>: スペースを拡大縮小します。</li>
-            <li><strong>tube</strong>: チューブ系の空間作成に使います。</li>
-            <li><strong>line</strong>: 線路に沿った空間作成に使います。</li>
-          </ul>
-          <h4>excavation</h4>
-          <p>差分処理を実行する入口です。<br>作った空間を使って対象をくり抜く用途です。</p>
         </div>
       </div>
     </section>

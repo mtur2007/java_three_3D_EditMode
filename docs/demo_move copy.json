@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Edit Mode Demo",
+    "description": "mode, mouse, click, drag, view の自動実行サンプル"
+  },
+  "defaults": {
+    "clickHoldMs": 120,
+    "dragSteps": 30,
+    "moveSteps": 30
+  },
+  "steps": [
+    { "type": "wait", "ms": 800 },
+    { "type": "note", "message": "demo ready", "durationMs": 1600, "waitMs": 500 },
+    { "type": "mode", "ui": "edit", "toggle": "active" },
+    { "type": "mode", "ui": "creat", "toggle": "active" },
+    {
+        "type": "replay_structure_build",
+        "group_name": "st_old_roof",
+        "timing": {
+            "guideMs": 400,
+            "pointSpawnMs": 160,
+            "pointLiftMs": 360,
+            "segmentMs": 180,
+            "finishMs": 900
+        },
+        "hide_source": true,
+        "restore_source": true,
+        "clear_preview": true
+    }
+  ]
+}

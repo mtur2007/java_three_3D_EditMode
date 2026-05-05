@@ -14,6 +14,7 @@ const PUBLIC_WORLD_PAGE_SIZE = 6;
 const QUOTA_GROUP_STRUCTURE = "structure_download";
 const PUBLIC_LIBRARY_ASSET_VALUES = new Set(["st", "ct", "tr"]);
 const DEFAULT_EDITOR_SLOT_LIMIT = 3;
+const TRAIN_MODEL_SET_ROLES = ["head", "middle", "tail"];
 const RUNTIME_FILE_PREFIXES = {
   st: "構造物",
   ct: "マップ",
@@ -224,6 +225,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     ct: null,
     tr: null,
   };
+  let jsZipCtorPromise = null;
   let fallbackMapDataAvailable = false;
   let featuresGuideActive = false;
   let guideReturnScrollY = 0;
@@ -255,6 +257,8 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const loadStructureWorldBtn = document.getElementById("load-structure-world-btn");
   const localMapFileInput = document.getElementById("local-map-file-input");
   const localMapSelectBtn = document.getElementById("local-map-select-btn");
+  const localTrainFolderInput = document.getElementById("local-train-folder-input");
+  const localTrainFolderBtn = document.getElementById("local-train-folder-btn");
   const localMapStartBtn = document.getElementById("local-map-start-btn");
   const localMapComment = document.getElementById("local-map-comment");
   const publicStructureQuotaValue = document.getElementById("public-structure-quota-value");
@@ -283,6 +287,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   const editSaveNote = document.getElementById("edit-save-note");
   const saveSlotZipBtn = document.getElementById("save-slot-zip-btn");
   const resumeWorldBtn = document.getElementById("resume-world-btn");
+  const playDemoWorldBtn = document.getElementById("play-demo-world-btn");
   const slotZipFileInput = document.getElementById("slot-zip-file-input");
   const publishWorldBtn = document.getElementById("publish-world-btn");
   const slotZipName = document.getElementById("slot-zip-name");
@@ -666,6 +671,15 @@ async function readEditorSlotThumbnailRecord(slotId) {
     resumeWorldBtn.setAttribute("aria-disabled", hasRemoteWorld ? "false" : "true");
   }
 
+  function syncPlayDemoWorldButtonState(slot) {
+    if (!playDemoWorldBtn) {
+      return;
+    }
+    const hasRunnableWorld = Boolean(slot?.fileName) || Boolean(String(slot?.remoteWorldId || "").trim());
+    playDemoWorldBtn.disabled = !hasRunnableWorld;
+    playDemoWorldBtn.setAttribute("aria-disabled", hasRunnableWorld ? "false" : "true");
+  }
+
   function setEditorTitleEditingState(editing) {
     isEditingEditorSlotTitle = Boolean(editing && detailTitleInput && detailTitle);
     if (detailTitle) {
@@ -863,6 +877,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
     }
     syncPublishButtonState(activeSlot);
     syncResumeWorldButtonState(activeSlot);
+    syncPlayDemoWorldButtonState(activeSlot);
   }
 
   function normalizeEditorSlotRuntimeRecord(record) {
@@ -968,7 +983,13 @@ async function readEditorSlotThumbnailRecord(slotId) {
     setEditSaveNote(`${activeSlot.label} に保存しました。${saveSummary.join(" / ")}`, "success");
   }
 
-  async function openThumbnailCaptureWorldForActiveSlot(event) {
+  async function openRuntimeWorldForActiveSlot({
+    event = null,
+    thumbnailMode = false,
+    demoPath = "",
+    autorun = false,
+    reserveUsageType = "resume",
+  } = {}) {
     const activeSlot = getEditorSlotById(activeEditorSlotId);
     if (!activeSlot) {
       if (event) {
@@ -982,7 +1003,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       await loadStructureWorldFromSupabaseById(activeSlot.remoteWorldId, {
         syncDraft: false,
         originMode: "preserve",
-        reserveUsageType: "thumbnail_resume",
+        reserveUsageType,
       });
       slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null));
     }
@@ -1005,11 +1026,31 @@ async function readEditorSlotThumbnailRecord(slotId) {
       meta: buildActiveEditorSlotRuntimeMeta(activeSlot, slotRecord.meta || {}),
     });
 
-    const nextUrl = `./public_local_load.html?runtime_map=edit_upload&thumbnail_mode=1&slot=${encodeURIComponent(activeSlot.slotId)}`;
+    const params = new URLSearchParams();
+    params.set("runtime_map", "edit_upload");
+    params.set("slot", activeSlot.slotId);
+    if (thumbnailMode) {
+      params.set("thumbnail_mode", "1");
+    }
+    if (demoPath) {
+      params.set("demo", demoPath);
+    }
+    if (autorun) {
+      params.set("autorun", "1");
+    }
+    const nextUrl = `./public_local_load.html?${params.toString()}`;
     if (event?.currentTarget instanceof HTMLAnchorElement) {
       event.currentTarget.href = nextUrl;
     }
     window.location.href = nextUrl;
+  }
+
+  async function openThumbnailCaptureWorldForActiveSlot(event) {
+    await openRuntimeWorldForActiveSlot({
+      event,
+      thumbnailMode: true,
+      reserveUsageType: "thumbnail_resume",
+    });
   }
 
   async function updateWorldMetadataForActiveSlot({
@@ -1841,6 +1882,13 @@ async function readEditorSlotThumbnailRecord(slotId) {
     };
   }
 
+  function hasRuntimeKindLoaded(kind) {
+    if (kind === "tr") {
+      return Array.isArray(runtimeFiles?.tr) ? runtimeFiles.tr.length > 0 : Boolean(runtimeFiles?.tr);
+    }
+    return Boolean(runtimeFiles?.[kind]);
+  }
+
   function getRuntimeFileName(kind) {
     if (kind === "tr") {
       const list = Array.isArray(runtimeFiles?.tr) ? runtimeFiles.tr : [];
@@ -1853,7 +1901,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   }
 
   function getMissingRuntimeKinds() {
-    return Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => !runtimeFiles[kind]);
+    return Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => !hasRuntimeKindLoaded(kind));
   }
 
   function hasCityRuntimeFile() {
@@ -1863,7 +1911,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
   }
 
   function getStartValidationMessage() {
-    const loadedKinds = Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => Boolean(runtimeFiles[kind]));
+    const loadedKinds = Object.keys(RUNTIME_FILE_PREFIXES).filter((kind) => hasRuntimeKindLoaded(kind));
     if (loadedKinds.length > 0) {
       if (!hasCityRuntimeFile()) {
         return "表示には都市データ `ct_*.glb` が必要です。";
@@ -1934,6 +1982,30 @@ async function readEditorSlotThumbnailRecord(slotId) {
     return readMapDataFilePromise;
   }
 
+  async function ensureJsZipCtor() {
+    if (!jsZipCtorPromise) {
+      const candidates = [
+        "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm",
+        "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      ];
+      jsZipCtorPromise = (async () => {
+        for (const url of candidates) {
+          try {
+            const mod = await import(url);
+            const ctor = mod?.default || mod?.JSZip || null;
+            if (ctor) {
+              return ctor;
+            }
+          } catch (_error) {
+            // Try the next candidate.
+          }
+        }
+        throw new Error("ZIP 解析ライブラリの読み込みに失敗しました。");
+      })();
+    }
+    return jsZipCtorPromise;
+  }
+
   async function validateCtRuntimeFile(file) {
     const lowerName = String(file?.name || "").trim().toLowerCase();
     if (lowerName.endsWith(".glb")) {
@@ -1943,20 +2015,203 @@ async function readEditorSlotThumbnailRecord(slotId) {
     await readMapDataFile(file);
   }
 
+  function getRuntimeTrainEntryKey(entry) {
+    const modelName = String(entry?.trainModelName || "").trim().toLowerCase();
+    if (modelName) {
+      return `model:${modelName}`;
+    }
+    const name = String(entry?.name || "").trim().toLowerCase();
+    return name ? `name:${name}` : `generated:${Date.now()}:${Math.random()}`;
+  }
+
+  function describeTrainFolderRuntimeFile(file) {
+    const relativePath = String(file?.webkitRelativePath || file?.name || "").trim().replace(/\\/g, "/");
+    const segments = relativePath.split("/").filter(Boolean);
+    const fileName = String(segments[segments.length - 1] || file?.name || "").trim();
+    if (!/\.(glb|gltf)$/i.test(fileName)) {
+      return null;
+    }
+    if (segments.length < 2) {
+      return { invalid: true, label: relativePath || fileName || "unknown" };
+    }
+    const role = fileName.replace(/\.(glb|gltf)$/i, "").trim().toLowerCase();
+    if (!TRAIN_MODEL_SET_ROLES.includes(role)) {
+      return { invalid: true, label: relativePath || fileName || "unknown" };
+    }
+    return {
+      invalid: false,
+      modelName: String(segments[segments.length - 2] || "").trim(),
+      role,
+      fileName,
+      relativePath: relativePath || fileName || "unknown",
+    };
+  }
+
+  function describeTrainArchiveEntryPath(entryName, fallbackModelName = "") {
+    const normalizedPath = String(entryName || "").trim().replace(/\\/g, "/");
+    if (!normalizedPath || normalizedPath.endsWith("/")) {
+      return null;
+    }
+    if (normalizedPath.startsWith("__MACOSX/")) {
+      return null;
+    }
+    const segments = normalizedPath.split("/").filter(Boolean);
+    const fileName = String(segments[segments.length - 1] || "").trim();
+    if (!fileName || fileName.startsWith("._") || !/\.(glb|gltf)$/i.test(fileName)) {
+      return null;
+    }
+    const role = fileName.replace(/\.(glb|gltf)$/i, "").trim().toLowerCase();
+    if (!TRAIN_MODEL_SET_ROLES.includes(role)) {
+      return { invalid: true, label: normalizedPath };
+    }
+    const folderName = segments.length >= 2 ? String(segments[segments.length - 2] || "").trim() : "";
+    const modelName = folderName || String(fallbackModelName || "").trim();
+    if (!modelName) {
+      return { invalid: true, label: normalizedPath };
+    }
+    return {
+      invalid: false,
+      modelName,
+      role,
+      fileName,
+      relativePath: normalizedPath,
+    };
+  }
+
+  function buildRuntimeTrainEntriesFromModelMap(folderMap) {
+    return Array.from(folderMap.values()).map((folderEntry) => {
+      const files = TRAIN_MODEL_SET_ROLES
+        .map((role) => folderEntry.roles.get(role))
+        .filter(Boolean);
+      if (files.length < 1) {
+        return null;
+      }
+      const totalSize = files.reduce((sum, entry) => sum + (Number(entry?.size) || 0), 0);
+      return {
+        name: `tr_${folderEntry.trainModelName}`,
+        type: "application/x-train-model-set",
+        size: totalSize,
+        lastModified: folderEntry.lastModified || Date.now(),
+        savedAt: Date.now(),
+        trainModelName: folderEntry.trainModelName,
+        files,
+      };
+    }).filter(Boolean);
+  }
+
+  function mergeRuntimeTrainEntries(nextTrainEntries) {
+    const currentTrainEntries = Array.isArray(runtimeFiles.tr) ? runtimeFiles.tr.filter(Boolean) : [];
+    const mergedEntries = new Map(currentTrainEntries.map((entry) => [getRuntimeTrainEntryKey(entry), entry]));
+    nextTrainEntries.forEach((entry) => {
+      mergedEntries.set(getRuntimeTrainEntryKey(entry), entry);
+    });
+    runtimeFiles.tr = Array.from(mergedEntries.values());
+  }
+
+  async function readRuntimeTrainEntriesFromZipFile(file) {
+    const zipName = String(file?.name || "").trim();
+    const fallbackModelName = zipName.replace(/\.zip$/i, "").trim();
+    const JSZipCtor = await ensureJsZipCtor();
+    const zip = await JSZipCtor.loadAsync(await file.arrayBuffer());
+    const folderMap = new Map();
+    const rejectedNames = [];
+
+    for (const entry of Object.values(zip.files || {})) {
+      if (!entry || entry.dir) {
+        continue;
+      }
+      const descriptor = describeTrainArchiveEntryPath(entry.name, fallbackModelName);
+      if (!descriptor) {
+        continue;
+      }
+      if (descriptor.invalid || !descriptor.modelName) {
+        rejectedNames.push(descriptor.label || entry.name || "unknown");
+        continue;
+      }
+      const buffer = await entry.async("arraybuffer");
+      let folderEntry = folderMap.get(descriptor.modelName);
+      if (!folderEntry) {
+        folderEntry = {
+          trainModelName: descriptor.modelName,
+          roles: new Map(),
+          lastModified: Number(file?.lastModified) || Date.now(),
+        };
+        folderMap.set(descriptor.modelName, folderEntry);
+      }
+      folderEntry.roles.set(descriptor.role, {
+        role: descriptor.role,
+        name: descriptor.fileName,
+        type: "model/gltf-binary",
+        size: buffer.byteLength,
+        lastModified: Number(file?.lastModified) || Date.now(),
+        savedAt: Date.now(),
+        buffer,
+      });
+    }
+
+    return {
+      entries: buildRuntimeTrainEntriesFromModelMap(folderMap),
+      rejectedNames,
+    };
+  }
+
+  async function syncRuntimeFilesToActiveEditorSlot(activeSlot) {
+    if (!isEditorPage || !activeSlot) {
+      return;
+    }
+    const slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null));
+    const nextFiles = {
+      st: runtimeFiles.st || slotRecord.st || null,
+      ct: runtimeFiles.ct || slotRecord.ct || null,
+      tr: (Array.isArray(runtimeFiles.tr) && runtimeFiles.tr.length > 0) ? runtimeFiles.tr : (Array.isArray(slotRecord.tr) ? slotRecord.tr : []),
+    };
+    const savedAt = new Date().toISOString();
+    await saveEditorSlotRuntimeRecord(activeSlot.slotId, {
+      savedAt,
+      files: nextFiles,
+      meta: buildActiveEditorSlotRuntimeMeta(activeSlot),
+    });
+    activeSlot.fileName = nextFiles.st?.name || "";
+    activeSlot.fileSize = Number(nextFiles.st?.size) || 0;
+    activeSlot.cityFileName = nextFiles.ct?.name || "";
+    activeSlot.trainFileCount = Array.isArray(nextFiles.tr) ? nextFiles.tr.length : 0;
+    activeSlot.savedAt = savedAt;
+    persistEditorSlotsMeta();
+    await syncActiveEditorSlotRuntimeFilesToLoader();
+    renderEditorSlots();
+  }
+
   async function cacheSelectedRuntimeFiles(fileList) {
     const acceptedKinds = [];
     const rejectedNames = [];
     const activeSlot = isEditorPage ? getEditorSlotById(activeEditorSlotId) : null;
 
     for (const file of fileList) {
-      const kind = classifyRuntimeFile(file?.name || "");
-      if (!kind) {
-        rejectedNames.push(file?.name || "unknown");
-        continue;
+      const fileName = String(file?.name || "").trim();
+      const lowerName = fileName.toLowerCase();
+      let kind = classifyRuntimeFile(fileName);
+      if (lowerName.endsWith(".zip")) {
+        try {
+          const trainZipRows = await readRuntimeTrainEntriesFromZipFile(file);
+          if (Array.isArray(trainZipRows.entries) && trainZipRows.entries.length > 0) {
+            mergeRuntimeTrainEntries(trainZipRows.entries);
+            acceptedKinds.push("tr");
+            if (Array.isArray(trainZipRows.rejectedNames) && trainZipRows.rejectedNames.length > 0) {
+              rejectedNames.push(...trainZipRows.rejectedNames);
+            }
+            continue;
+          }
+          if (kind === "tr") {
+            throw new Error("head.glb / middle.glb / tail.glb を含む車両 ZIP が必要です。");
+          }
+        } catch (error) {
+          if (kind === "tr") {
+            throw new Error(`車両 ZIP の解析に失敗しました: ${error?.message || error}`);
+          }
+        }
       }
-
-      if (isEditorPage && kind === "st") {
-        rejectedNames.push(file?.name || "unknown");
+      if (!kind) {
+        rejectedNames.push(fileName || "unknown");
         continue;
       }
 
@@ -1989,26 +2244,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
       throw new Error(`${detail}。先頭が st / ct / tr のファイル名を使用してください。`);
     }
 
-    if (isEditorPage && activeSlot) {
-      const slotRecord = normalizeEditorSlotRuntimeRecord(await readEditorSlotZipRecord(activeSlot.slotId).catch(() => null));
-      const nextFiles = {
-        st: slotRecord.st || null,
-        ct: runtimeFiles.ct || slotRecord.ct || null,
-        tr: (Array.isArray(runtimeFiles.tr) && runtimeFiles.tr.length > 0) ? runtimeFiles.tr : (Array.isArray(slotRecord.tr) ? slotRecord.tr : []),
-      };
-      const savedAt = new Date().toISOString();
-      await saveEditorSlotRuntimeRecord(activeSlot.slotId, {
-        savedAt,
-        files: nextFiles,
-        meta: buildActiveEditorSlotRuntimeMeta(activeSlot),
-      });
-      activeSlot.cityFileName = nextFiles.ct?.name || "";
-      activeSlot.trainFileCount = Array.isArray(nextFiles.tr) ? nextFiles.tr.length : 0;
-      activeSlot.savedAt = savedAt;
-      persistEditorSlotsMeta();
-      await syncActiveEditorSlotRuntimeFilesToLoader();
-      renderEditorSlots();
-    }
+    await syncRuntimeFilesToActiveEditorSlot(activeSlot);
 
     await persistRuntimeFiles();
     updateLocalMapSummary();
@@ -2019,6 +2255,93 @@ async function readEditorSlotThumbnailRecord(slotId) {
       return;
     }
     setLocalMapComment(`${updatedLabels} を読み込みました。`, "success");
+  }
+
+  async function cacheSelectedRuntimeTrainFolders(fileList) {
+    const selectedFiles = Array.from(fileList || []).filter(Boolean);
+    if (selectedFiles.length < 1) {
+      throw new Error("車両フォルダが選択されていません。");
+    }
+
+    const activeSlot = isEditorPage ? getEditorSlotById(activeEditorSlotId) : null;
+    const rejectedNames = [];
+    const folderMap = new Map();
+
+    for (const file of selectedFiles) {
+      const descriptor = describeTrainFolderRuntimeFile(file);
+      if (!descriptor) {
+        continue;
+      }
+      if (descriptor.invalid || !descriptor.modelName) {
+        rejectedNames.push(descriptor.label || file?.name || "unknown");
+        continue;
+      }
+
+      const buffer = await file.arrayBuffer();
+      let folderEntry = folderMap.get(descriptor.modelName);
+      if (!folderEntry) {
+        folderEntry = {
+          trainModelName: descriptor.modelName,
+          roles: new Map(),
+          lastModified: 0,
+        };
+        folderMap.set(descriptor.modelName, folderEntry);
+      }
+      folderEntry.roles.set(descriptor.role, {
+        role: descriptor.role,
+        name: descriptor.fileName,
+        type: file.type || "",
+        size: Number(file.size) || 0,
+        lastModified: Number(file.lastModified) || Date.now(),
+        savedAt: Date.now(),
+        buffer,
+      });
+      folderEntry.lastModified = Math.max(folderEntry.lastModified, Number(file.lastModified) || 0);
+    }
+
+    const nextTrainEntries = Array.from(folderMap.values()).map((folderEntry) => {
+      const files = TRAIN_MODEL_SET_ROLES
+        .map((role) => folderEntry.roles.get(role))
+        .filter(Boolean);
+      if (files.length < 1) {
+        return null;
+      }
+      const totalSize = files.reduce((sum, entry) => sum + (Number(entry?.size) || 0), 0);
+      return {
+        name: `tr_${folderEntry.trainModelName}`,
+        type: "application/x-train-model-set",
+        size: totalSize,
+        lastModified: folderEntry.lastModified || Date.now(),
+        savedAt: Date.now(),
+        trainModelName: folderEntry.trainModelName,
+        files,
+      };
+    }).filter(Boolean);
+
+    if (nextTrainEntries.length < 1) {
+      const detail = rejectedNames.length > 0
+        ? `無効ファイル: ${rejectedNames.join(", ")}`
+        : "head.glb / middle.glb / tail.glb が見つかりません。";
+      throw new Error(`車両フォルダの読込に失敗しました。${detail}`);
+    }
+
+    const currentTrainEntries = Array.isArray(runtimeFiles.tr) ? runtimeFiles.tr.filter(Boolean) : [];
+    const mergedEntries = new Map(currentTrainEntries.map((entry) => [getRuntimeTrainEntryKey(entry), entry]));
+    nextTrainEntries.forEach((entry) => {
+      mergedEntries.set(getRuntimeTrainEntryKey(entry), entry);
+    });
+    runtimeFiles.tr = Array.from(mergedEntries.values());
+
+    await syncRuntimeFilesToActiveEditorSlot(activeSlot);
+    await persistRuntimeFiles();
+    updateLocalMapSummary();
+
+    const loadedNames = nextTrainEntries.map((entry) => String(entry?.trainModelName || entry?.name || "").trim()).filter(Boolean);
+    if (rejectedNames.length > 0) {
+      setLocalMapComment(`車両フォルダを読み込みました: ${loadedNames.join(", ")}。無効ファイル: ${rejectedNames.join(", ")}`, "error");
+      return;
+    }
+    setLocalMapComment(`車両フォルダを読み込みました: ${loadedNames.join(", ")}`, "success");
   }
 
   async function restoreCachedRuntimeMap() {
@@ -2053,7 +2376,7 @@ async function readEditorSlotThumbnailRecord(slotId) {
         return Boolean(name) && (kind === "st" || kind === "ct" || kind === "tr");
       });
       updateLocalMapSummary();
-      if (fallbackMapDataAvailable && !runtimeFiles.st && !runtimeFiles.ct && !runtimeFiles.tr) {
+      if (fallbackMapDataAvailable && !hasRuntimeKindLoaded("st") && !hasRuntimeKindLoaded("ct") && !hasRuntimeKindLoaded("tr")) {
         setLocalMapComment("未選択時は map_data から自動ロードします。", "success");
       }
       return fallbackMapDataAvailable;
@@ -2325,6 +2648,11 @@ async function readEditorSlotThumbnailRecord(slotId) {
       localMapFileInput.click();
     });
   }
+  if (localTrainFolderBtn && localTrainFolderInput) {
+    localTrainFolderBtn.addEventListener("click", () => {
+      localTrainFolderInput.click();
+    });
+  }
   if (loadStructureWorldBtn) {
     loadStructureWorldBtn.addEventListener("click", async () => {
       setEditSaveNote("構造物ワールドを取得中です...", "info");
@@ -2365,6 +2693,29 @@ async function readEditorSlotThumbnailRecord(slotId) {
       } catch (error) {
         updateLocalMapSummary();
         setLocalMapComment(`読込に失敗しました: ${error?.message || error}`, "error");
+      } finally {
+        event.target.value = "";
+      }
+    });
+  }
+  if (localTrainFolderInput) {
+    localTrainFolderInput.addEventListener("change", async (event) => {
+      const files = Array.from(event.target?.files || []);
+      if (files.length < 1) {
+        return;
+      }
+      const folderNames = Array.from(new Set(files
+        .map((file) => describeTrainFolderRuntimeFile(file))
+        .filter((entry) => entry && !entry.invalid && entry.modelName)
+        .map((entry) => entry.modelName)));
+      setLocalMapComment(`車両フォルダを読み込み中: ${folderNames.join(", ") || "selected folder"}`, "info");
+      try {
+        await cacheSelectedRuntimeTrainFolders(files);
+      } catch (error) {
+        updateLocalMapSummary();
+        setLocalMapComment(`読込に失敗しました: ${error?.message || error}`, "error");
+      } finally {
+        event.target.value = "";
       }
     });
   }
@@ -2405,6 +2756,21 @@ async function readEditorSlotThumbnailRecord(slotId) {
         await resumeRemoteWorldEditingForActiveSlot();
       } catch (error) {
         setEditSaveNote(`編集再開に失敗しました: ${error?.message || error}`, "error");
+      }
+    });
+  }
+
+  if (playDemoWorldBtn) {
+    playDemoWorldBtn.addEventListener("click", async () => {
+      setEditSaveNote("デモ再生用ワールドを起動します...", "info");
+      try {
+        await openRuntimeWorldForActiveSlot({
+          demoPath: "demo_move.json",
+          autorun: true,
+          reserveUsageType: "demo_resume",
+        });
+      } catch (error) {
+        setEditSaveNote(`デモ再生の起動に失敗しました: ${error?.message || error}`, "error");
       }
     });
   }
