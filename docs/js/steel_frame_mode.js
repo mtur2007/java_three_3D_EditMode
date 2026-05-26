@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
+import { createCatenaryTrussTower } from './train_system.js';
 
 export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
   const lines = [[]];
@@ -104,6 +105,33 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamThickness: 0.004,
       };
     }
+    if (p === 'truss_column') {
+      return {
+        // truss_column: X=柱幅, Y=パネル長, Z=主材太さ
+        beamWidthHorizontal: 0.22,
+        beamHeightVertical: 0.42,
+        beamThickness: 0.03,
+        beamRollDeg: 0,
+      };
+    }
+    if (p === 'truss_ladder') {
+      return {
+        // truss_ladder: X=柱幅, Y=パネル長, Z=主材太さ
+        beamWidthHorizontal: 0.24,
+        beamHeightVertical: 0.4,
+        beamThickness: 0.028,
+        beamRollDeg: 0,
+      };
+    }
+    if (p === 'truss_catenary') {
+      return {
+        // truss_catenary: X=塔の1辺, Y=格子ピッチ, Z=主材太さ
+        beamWidthHorizontal: 0.1,
+        beamHeightVertical: 0.1,
+        beamThickness: 0.02,
+        beamRollDeg: 0,
+      };
+    }
     return null;
   }
 
@@ -144,6 +172,30 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
         beamWidthHorizontal: width,
         beamHeightVertical: THREE.MathUtils.clamp(angleRaw, -180, 180),
         beamThickness: THREE.MathUtils.clamp(densityRaw, 0.5, 24),
+      };
+    }
+    if (p === 'truss_column' || p === 'truss_ladder') {
+      const panelLenRaw = Number.isFinite(merged.beamHeightVertical) ? merged.beamHeightVertical : base.beamHeightVertical;
+      const memberRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
+      return {
+        beamWidthHorizontal: width,
+        beamHeightVertical: Math.max(0.08, panelLenRaw),
+        beamThickness: THREE.MathUtils.clamp(memberRaw, 0.01, Math.max(0.01, width * 0.35)),
+        beamRollDeg: Number.isFinite(merged.beamRollDeg)
+          ? THREE.MathUtils.clamp(merged.beamRollDeg, -180, 180)
+          : (Number.isFinite(base.beamRollDeg) ? base.beamRollDeg : 0),
+      };
+    }
+    if (p === 'truss_catenary') {
+      const panelLenRaw = Number.isFinite(merged.beamHeightVertical) ? merged.beamHeightVertical : base.beamHeightVertical;
+      const memberRaw = Number.isFinite(merged.beamThickness) ? merged.beamThickness : base.beamThickness;
+      return {
+        beamWidthHorizontal: Math.max(0.04, width),
+        beamHeightVertical: Math.max(0.04, panelLenRaw),
+        beamThickness: THREE.MathUtils.clamp(memberRaw, 0.01, Math.max(0.01, width * 0.4)),
+        beamRollDeg: Number.isFinite(merged.beamRollDeg)
+          ? THREE.MathUtils.clamp(merged.beamRollDeg, -180, 180)
+          : (Number.isFinite(base.beamRollDeg) ? base.beamRollDeg : 0),
       };
     }
     if (p === 'panel_wall') {
@@ -430,6 +482,178 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     );
     mesh.visible = active;
     return mesh;
+  }
+
+  function createTrussColumnSegmentMesh(start, end, style = null) {
+    const dir = end.clone().sub(start);
+    const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
+    const len = dir.length();
+    if (len < 0.001) { return null; }
+
+    const dims = normalizeBeamStyle('truss_column', style);
+    const width = Math.max(0.06, Number(dims?.beamWidthHorizontal) || 0.22);
+    const panelLen = Math.max(0.08, Number(dims?.beamHeightVertical) || 0.42);
+    const memberSize = Math.max(0.01, Number(dims?.beamThickness) || 0.03);
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
+    const diagonalSize = Math.max(0.008, memberSize * 0.55);
+    const half = width * 0.5;
+    const bayCount = Math.max(1, Math.round(len / panelLen));
+    const actualPanelLen = len / bayCount;
+
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
+    const group = new THREE.Group();
+    group.name = segmentName;
+
+    const localCorners = [
+      new THREE.Vector3( half,  half, 0),
+      new THREE.Vector3( half, -half, 0),
+      new THREE.Vector3(-half,  half, 0),
+      new THREE.Vector3(-half, -half, 0),
+    ];
+
+    const addLocalBar = (a, b, thickness = memberSize) => {
+      const segmentDir = b.clone().sub(a);
+      const segmentLen = segmentDir.length();
+      if (segmentLen < 1e-4) { return; }
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(thickness, thickness, segmentLen),
+        material.clone(),
+      );
+      mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        segmentDir.normalize(),
+      );
+      group.add(mesh);
+    };
+
+    localCorners.forEach((corner) => {
+      addLocalBar(
+        new THREE.Vector3(corner.x, corner.y, -len * 0.5),
+        new THREE.Vector3(corner.x, corner.y, len * 0.5),
+      );
+    });
+
+    for (let i = 0; i <= bayCount; i += 1) {
+      const z = (-len * 0.5) + (actualPanelLen * i);
+      addLocalBar(new THREE.Vector3(-half,  half, z), new THREE.Vector3( half,  half, z), memberSize);
+      addLocalBar(new THREE.Vector3(-half, -half, z), new THREE.Vector3( half, -half, z), memberSize);
+      addLocalBar(new THREE.Vector3( half, -half, z), new THREE.Vector3( half,  half, z), memberSize);
+      addLocalBar(new THREE.Vector3(-half, -half, z), new THREE.Vector3(-half,  half, z), memberSize);
+    }
+
+    for (let i = 0; i < bayCount; i += 1) {
+      const z0 = (-len * 0.5) + (actualPanelLen * i);
+      const z1 = z0 + actualPanelLen;
+      addLocalBar(new THREE.Vector3( half,  half, z0), new THREE.Vector3( half, -half, z1), diagonalSize);
+      addLocalBar(new THREE.Vector3( half, -half, z0), new THREE.Vector3(-half, -half, z1), diagonalSize);
+      addLocalBar(new THREE.Vector3(-half, -half, z0), new THREE.Vector3(-half,  half, z1), diagonalSize);
+      addLocalBar(new THREE.Vector3(-half,  half, z0), new THREE.Vector3( half,  half, z1), diagonalSize);
+    }
+
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    group.position.copy(mid);
+    const yaw = Math.atan2(planarDir.x, planarDir.z);
+    const planarLen = Math.max(1e-8, planarDir.length());
+    const pitch = Math.atan2(dir.y, planarLen);
+    group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
+    group.visible = active;
+    return group;
+  }
+
+  function createLadderTrussSegmentMesh(start, end, style = null) {
+    const dir = end.clone().sub(start);
+    const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
+    const len = dir.length();
+    if (len < 0.001) { return null; }
+
+    const dims = normalizeBeamStyle('truss_ladder', style);
+    const width = Math.max(0.06, Number(dims?.beamWidthHorizontal) || 0.24);
+    const panelLen = Math.max(0.08, Number(dims?.beamHeightVertical) || 0.4);
+    const memberSize = Math.max(0.01, Number(dims?.beamThickness) || 0.028);
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
+    const half = width * 0.5;
+    const bayCount = Math.max(1, Math.round(len / panelLen));
+    const actualPanelLen = len / bayCount;
+
+    const material = createCreatStandardMaterial(BEAM_BASE_COLOR);
+    const group = new THREE.Group();
+    group.name = segmentName;
+
+    const addLocalBar = (a, b, thickness = memberSize) => {
+      const segmentDir = b.clone().sub(a);
+      const segmentLen = segmentDir.length();
+      if (segmentLen < 1e-4) { return; }
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(thickness, thickness, segmentLen),
+        material.clone(),
+      );
+      mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        segmentDir.normalize(),
+      );
+      group.add(mesh);
+    };
+
+    addLocalBar(
+      new THREE.Vector3(-half, 0, -len * 0.5),
+      new THREE.Vector3(-half, 0, len * 0.5),
+    );
+    addLocalBar(
+      new THREE.Vector3(half, 0, -len * 0.5),
+      new THREE.Vector3(half, 0, len * 0.5),
+    );
+
+    for (let i = 0; i <= bayCount; i += 1) {
+      const z = (-len * 0.5) + (actualPanelLen * i);
+      addLocalBar(
+        new THREE.Vector3(-half, 0, z),
+        new THREE.Vector3(half, 0, z),
+        memberSize,
+      );
+    }
+
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    group.position.copy(mid);
+    const yaw = Math.atan2(planarDir.x, planarDir.z);
+    const planarLen = Math.max(1e-8, planarDir.length());
+    const pitch = Math.atan2(dir.y, planarLen);
+    group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
+    group.visible = active;
+    return group;
+  }
+
+  function createCatenaryTrussColumnSegmentMesh(start, end, style = null) {
+    const dir = end.clone().sub(start);
+    const planarDir = new THREE.Vector3(dir.x, 0, dir.z);
+    const len = dir.length();
+    if (len < 0.001) { return null; }
+
+    const dims = normalizeBeamStyle('truss_catenary', style);
+    const sideLength = Math.max(0.04, Number(dims?.beamWidthHorizontal) || 0.1);
+    const rollDeg = Number(dims?.beamRollDeg) || 0;
+    const tower = createCatenaryTrussTower(len, { sideLength });
+    const roundedHeight = Math.max(0.001, Number(tower?.userData?.catenaryTrussHeight) || len);
+
+    const group = new THREE.Group();
+    group.name = segmentName;
+    // 円柱や梁と同じく、ローカルZ軸を長手方向として扱う。
+    tower.rotation.x = Math.PI * 0.5;
+    tower.position.z = -roundedHeight * 0.5;
+    group.add(tower);
+
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    group.position.copy(mid);
+    const yaw = Math.atan2(planarDir.x, planarDir.z);
+    const planarLen = Math.max(1e-8, planarDir.length());
+    const pitch = Math.atan2(dir.y, planarLen);
+    group.rotation.set(-pitch, yaw, 0, 'YXZ');
+    applyLocalZRoll(group, rollDeg);
+    group.visible = active;
+    return group;
   }
 
   function createInterpolatedTubeSegmentMesh(pointMeshes, style = null) {
@@ -894,6 +1118,15 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
     }
     if (profile === 'rect_bar') {
       return createRectBarSegmentMesh(start, end, style);
+    }
+    if (profile === 'truss_column') {
+      return createTrussColumnSegmentMesh(start, end, style);
+    }
+    if (profile === 'truss_ladder') {
+      return createLadderTrussSegmentMesh(start, end, style);
+    }
+    if (profile === 'truss_catenary') {
+      return createCatenaryTrussColumnSegmentMesh(start, end, style);
     }
     if (profile === 'corrugated_bar') {
       return createCorrugatedBarSegmentMesh(start, end, style);
@@ -1527,6 +1760,12 @@ export function createSteelFrameMode(scene, cubeGeometry, cubeMaterial) {
       segmentProfile = 't_beam';
     } else if (profile === 'l_beam') {
       segmentProfile = 'l_beam';
+    } else if (profile === 'truss_column') {
+      segmentProfile = 'truss_column';
+    } else if (profile === 'truss_ladder') {
+      segmentProfile = 'truss_ladder';
+    } else if (profile === 'truss_catenary') {
+      segmentProfile = 'truss_catenary';
     } else if (profile === 'rect_bar') {
       segmentProfile = 'rect_bar';
     } else if (profile === 'corrugated_bar') {

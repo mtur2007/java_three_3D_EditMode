@@ -6,6 +6,81 @@ const PILLAR_STEEL_COLOR = 0x5f6670;
 const PILLAR_STEEL_METALNESS = 0.28;
 const PILLAR_STEEL_ROUGHNESS = 0.72;
 
+function updateInstancedObject({
+  ins_obj = NaN,
+  ins_idx = NaN,
+  pos_x = NaN,
+  pos_y = NaN,
+  pos_z = NaN,
+  rot_x = NaN,
+  rot_y = NaN,
+  rot_z = NaN,
+  scale = NaN,
+} = {}) {
+  const dummy = new THREE.Object3D();
+  if (!Number.isNaN(pos_x)) dummy.position.x = pos_x;
+  if (!Number.isNaN(pos_y)) dummy.position.y = pos_y;
+  if (!Number.isNaN(pos_z)) dummy.position.z = pos_z;
+  if (!Number.isNaN(rot_x)) dummy.rotation.x = rot_x;
+  if (!Number.isNaN(rot_y)) dummy.rotation.y = rot_y;
+  if (!Number.isNaN(rot_z)) dummy.rotation.z = rot_z;
+  if (!Number.isNaN(scale)) dummy.scale.setScalar(scale);
+  dummy.updateMatrix();
+  ins_obj.setMatrixAt(ins_idx, dummy.matrix);
+  ins_obj.instanceMatrix.needsUpdate = true;
+}
+
+export function createCatenaryTrussTower(height, {
+  sideLength = 0.1,
+  material = null,
+} = {}) {
+  const tower = new THREE.Group();
+  const safeSide = Math.max(0.02, Number(sideLength) || 0.1);
+  const rawHeight = Math.max(0, Number(height) || 0);
+  const roundedHeight = rawHeight - (rawHeight % safeSide);
+  tower.userData = {
+    ...(tower.userData || {}),
+    catenaryTrussHeight: roundedHeight,
+    catenaryTrussSideLength: safeSide,
+  };
+  if (roundedHeight <= 0) { return tower; }
+
+  const poleMaterial = material || new THREE.MeshStandardMaterial({
+    color: PILLAR_STEEL_COLOR,
+    metalness: PILLAR_STEEL_METALNESS,
+    roughness: PILLAR_STEEL_ROUGHNESS,
+    envMapIntensity: 1,
+    side: THREE.FrontSide,
+  });
+  const boardRotation = 45 * Math.PI / 180;
+  const rotationXLen = Math.sin(boardRotation) * safeSide * 0.8;
+  const boardXLen = (safeSide / rotationXLen) * rotationXLen + rotationXLen;
+  const boardGeometry = new THREE.BoxGeometry(boardXLen, 0.02, 0.01);
+  const boardCount = Math.round(roundedHeight / safeSide) * 4;
+  const board = new THREE.InstancedMesh(boardGeometry, poleMaterial, boardCount);
+
+  for (let i = 0; i < roundedHeight / safeSide; i += 1) {
+    const rotZ = i % 2 === 0 ? boardRotation : -boardRotation;
+    updateInstancedObject({ ins_obj: board, ins_idx: i * 4, pos_x: 0, pos_y: safeSide * i + safeSide * 0.5, pos_z: safeSide * 0.5, rot_x: NaN, rot_y: 0, rot_z: rotZ, scale: NaN });
+    updateInstancedObject({ ins_obj: board, ins_idx: i * 4 + 1, pos_x: safeSide * 0.5, pos_y: safeSide * i + safeSide * 0.5, pos_z: 0, rot_x: NaN, rot_y: 90 * Math.PI / 180, rot_z: rotZ, scale: NaN });
+    updateInstancedObject({ ins_obj: board, ins_idx: i * 4 + 2, pos_x: 0, pos_y: safeSide * i + safeSide * 0.5, pos_z: -safeSide * 0.5, rot_x: NaN, rot_y: 180 * Math.PI / 180, rot_z: rotZ, scale: NaN });
+    updateInstancedObject({ ins_obj: board, ins_idx: i * 4 + 3, pos_x: -safeSide * 0.5, pos_y: safeSide * i + safeSide * 0.5, pos_z: 0, rot_x: NaN, rot_y: 270 * Math.PI / 180, rot_z: rotZ, scale: NaN });
+  }
+
+  const poleGeometry = new THREE.BoxGeometry(0.02, roundedHeight, 0.02);
+  const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+  pole.position.set(safeSide * 0.5, roundedHeight * 0.5, safeSide * 0.5);
+  tower.add(pole.clone());
+  pole.position.set(safeSide * 0.5, roundedHeight * 0.5, -safeSide * 0.5);
+  tower.add(pole.clone());
+  pole.position.set(-safeSide * 0.5, roundedHeight * 0.5, safeSide * 0.5);
+  tower.add(pole.clone());
+  pole.position.set(-safeSide * 0.5, roundedHeight * 0.5, -safeSide * 0.5);
+  tower.add(pole.clone());
+  tower.add(board);
+  return tower;
+}
+
 export class TrainSystem {
   constructor(scene, light) {
     this.scene = scene;

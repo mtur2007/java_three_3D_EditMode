@@ -76,12 +76,14 @@ export function createPointActions(deps) {
         && !mesh?.userData?.steelFrameCopied
         && !mesh?.userData?.steelFrameCopyGroupId
         && !mesh?.userData?.structureGroupCopySourceId
+        && !String(mesh?.userData?.railPlacementGroupId || '').trim()
       ));
       if (direct.length > 0) { return direct; }
       const out = [];
       const seen = new Set();
       getConstructionCopyTargets()
         .filter((obj) => String(obj?.userData?.structureGroupId || '').trim() === gid)
+        .filter((obj) => !String(obj?.userData?.railPlacementGroupId || '').trim())
         .forEach((obj) => {
           getCopyStructurePointMeshes(obj).forEach((pointMesh) => {
             if (!pointMesh?.userData?.steelFramePoint) { return; }
@@ -100,6 +102,7 @@ export function createPointActions(deps) {
     const normalGroupIdsByPointKey = new Map();
     getConstructionCopyTargets()
       .filter((obj) => !obj?.userData?.steelFrameCopiedObject)
+      .filter((obj) => !String(obj?.userData?.railPlacementGroupId || '').trim())
       .forEach((obj) => {
         const gid = String(obj?.userData?.structureGroupId || '').trim();
         if (!gid) { return; }

@@ -231,6 +231,11 @@ const UI_BUTTON_META = {
         svg: STYLE_ICON_SVG,
         variant: 'icon-square',
     },
+    texture: {
+        label: 'テクスチャ',
+        svg: STYLE_ICON_SVG,
+        variant: 'icon-square',
+    },
     search: {
         label: '検索',
         svg: SEARCH_ICON_SVG,
@@ -576,6 +581,7 @@ const uiTree = {
                     'scale': '',
                     'tube': '',
                     'line': '',
+                    'texture': '',
                 },
                 'excavation': '',
             },

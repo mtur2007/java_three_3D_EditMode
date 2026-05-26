@@ -10,6 +10,21 @@ from pathlib import Path
 
 MSGPACK_SUFFIXES = (".msgpack", ".mpk")
 PAYLOAD_SUFFIXES = (".json", ".msgpack", ".mpk")
+POSITION_ARRAY_KEYS = frozenset({
+    "position",
+    "center",
+    "anchorPosition",
+    "anchor",
+})
+POSITION_OBJECT_KEYS = frozenset({
+    "position",
+})
+DIRECT_POINT_PARENT_KEYS = frozenset({
+    "pins",
+})
+DIRECT_POINT_ANCESTOR_KEYS = frozenset({
+    "tracks",
+})
 
 
 def load_msgpack_module():
@@ -30,117 +45,58 @@ def add_y_to_pos_list(pos: list[object] | None, dy: float) -> bool:
     return True
 
 
-def add_y_to_point_obj(point: dict[str, object] | None, dy: float) -> bool:
+def add_y_to_point_obj(
+    point: dict[str, object] | None,
+    dy: float,
+    *,
+    require_xyz: bool = False,
+) -> bool:
     if not isinstance(point, dict) or "y" not in point:
+        return False
+    if require_xyz and ("x" not in point or "z" not in point):
         return False
     point["y"] = float(point.get("y", 0) or 0) + dy
     return True
 
 
-def adjust_track_payload(data: dict[str, object], dy: float) -> int:
+def should_adjust_direct_point_obj(
+    point: dict[str, object] | None,
+    ancestry: tuple[str, ...],
+) -> bool:
+    if not isinstance(point, dict):
+        return False
+    if not all(axis in point for axis in ("x", "y", "z")):
+        return False
+    if not ancestry:
+        return False
+    if ancestry[-1] in DIRECT_POINT_PARENT_KEYS:
+        return True
+    return any(key in DIRECT_POINT_ANCESTOR_KEYS for key in ancestry)
+
+
+def adjust_saved_positions(node: object, dy: float, ancestry: tuple[str, ...] = ()) -> int:
     changed = 0
-    for points in (data.get("tracks") or {}).values():
-        if not isinstance(points, list):
-            continue
-        for point in points:
-            if add_y_to_point_obj(point, dy):
+    if isinstance(node, dict):
+        if should_adjust_direct_point_obj(node, ancestry) and add_y_to_point_obj(node, dy, require_xyz=True):
+            changed += 1
+        for raw_key, value in node.items():
+            key = str(raw_key)
+            if key in POSITION_ARRAY_KEYS and add_y_to_pos_list(value, dy):
                 changed += 1
-    return changed
-
-
-def adjust_group_payload(data: dict[str, object], dy: float) -> int:
-    changed = 0
-    steel_frame = data.get("steelFrame") or {}
-    for point in (steel_frame.get("points") or []):
-        if add_y_to_pos_list(point.get("position"), dy):
-            changed += 1
-    for decoration in (data.get("decorations") or []):
-        if add_y_to_pos_list(decoration.get("position"), dy):
-            changed += 1
-    for pin in (data.get("pins") or []):
-        if add_y_to_point_obj(pin, dy):
-            changed += 1
-    for run in (data.get("generationRuns") or []):
-        for pin in (run.get("pins") or []):
-            if add_y_to_point_obj(pin, dy):
+            elif key in POSITION_OBJECT_KEYS and add_y_to_point_obj(value, dy, require_xyz=True):
                 changed += 1
-    for grid in (data.get("guideAddGrids") or []):
-        if add_y_to_pos_list(grid.get("position"), dy):
-            changed += 1
-        frame = grid.get("guideMirrorCoordFrame") if isinstance(grid, dict) else None
-        if isinstance(frame, dict) and add_y_to_pos_list(frame.get("anchor"), dy):
-            changed += 1
-    if isinstance(data.get("baseGuideGrid"), dict) and add_y_to_pos_list(data["baseGuideGrid"].get("position"), dy):
-        changed += 1
-    return changed
-
-
-def adjust_manual_copy_payload(data: dict[str, object], dy: float) -> int:
-    changed = 0
-    for copied_group in (data.get("copiedStructureGroups") or []):
-        if not isinstance(copied_group, dict):
-            continue
-        if add_y_to_pos_list(copied_group.get("anchorPosition"), dy):
-            changed += 1
-        elif add_y_to_pos_list(copied_group.get("center"), dy):
-            changed += 1
-    return changed
-
-
-def adjust_source_groups_payload(data: dict[str, object], dy: float) -> int:
-    changed = 0
-    for group_payload in (data.get("sourceStructureGroups") or []):
-        if isinstance(group_payload, dict):
-            changed += adjust_group_payload(group_payload, dy)
-    return changed
-
-
-def adjust_group_entries_in_create_mode_payload(data: dict[str, object], dy: float) -> int:
-    changed = 0
-    steel_frame = data.get("steelFrame") or {}
-    segments = steel_frame.get("segments") or []
-    points = steel_frame.get("points") or []
-    point_keys = set()
-
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-        group_id = str(segment.get("structureGroupId") or "").strip()
-        if not group_id:
-            continue
-        for key in (segment.get("pointKeys") or []):
-            normalized = str(key or "").strip()
-            if normalized:
-                point_keys.add(normalized)
-
-    for point in points:
-        if not isinstance(point, dict):
-            continue
-        key = str(point.get("key") or "").strip()
-        if key and key in point_keys and add_y_to_pos_list(point.get("position"), dy):
-            changed += 1
-
-    for decoration in (data.get("decorations") or []):
-        if not isinstance(decoration, dict):
-            continue
-        group_id = str(decoration.get("structureGroupId") or "").strip()
-        if group_id and add_y_to_pos_list(decoration.get("position"), dy):
-            changed += 1
-
+            if isinstance(value, (dict, list)):
+                changed += adjust_saved_positions(value, dy, ancestry + (key,))
+        return changed
+    if isinstance(node, list):
+        for item in node:
+            if isinstance(item, (dict, list)):
+                changed += adjust_saved_positions(item, dy, ancestry)
     return changed
 
 
 def adjust_saved_payload(data: dict[str, object], dy: float) -> int:
-    changed = 0
-    if isinstance(data.get("tracks"), dict):
-        changed += adjust_track_payload(data, dy)
-    if isinstance(data.get("sourceStructureGroups"), list):
-        changed += adjust_source_groups_payload(data, dy)
-    if isinstance(data.get("copiedStructureGroups"), list):
-        changed += adjust_manual_copy_payload(data, dy)
-    if isinstance(data.get("steelFrame"), dict) or isinstance(data.get("decorations"), list):
-        changed += adjust_group_entries_in_create_mode_payload(data, dy)
-    return changed
+    return adjust_saved_positions(data, dy)
 
 
 def load_payload_from_bytes(raw: bytes, suffix: str) -> dict[str, object]:
@@ -215,8 +171,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Add a Y offset to saved runtime data. Supports ZIP saves and single "
-            "JSON/msgpack files. Targets track control points, sourceStructureGroups, "
-            "and copiedStructureGroups."
+            "JSON/msgpack files. Recursively updates saved position-like fields such "
+            "as position, center, anchorPosition, anchor, tracks, and pins."
         )
     )
     parser.add_argument(

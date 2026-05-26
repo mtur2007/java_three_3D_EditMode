@@ -168,6 +168,48 @@ export function createCreateModeStateCodec({ encode, decode }) {
       throw new Error('ZIP 内に読込可能な map_data ファイルが見つかりません。');
     }
 
+    const mergeDifferencePayloadIntoCreatePayload = async () => {
+      const findEntry = (suffix) => candidates.find((entry) => String(entry?.name || '').toLowerCase().endsWith(suffix)) || null;
+      const createEntry = findEntry('single_structure.msgpack')
+        || findEntry('single_structure.mpk')
+        || findEntry('single_structure.json')
+        || findEntry('create_mode_state.msgpack')
+        || findEntry('create_mode_state.mpk')
+        || findEntry('create_mode_state.json');
+      const differenceEntry = findEntry('difference_space.msgpack')
+        || findEntry('difference_space.mpk')
+        || findEntry('difference_space.json');
+      if (!createEntry || !differenceEntry) { return null; }
+
+      const createBytes = new Uint8Array(await createEntry.async('uint8array'));
+      const differenceBytes = new Uint8Array(await differenceEntry.async('uint8array'));
+      const createPayload = parseMapDataBytes(createBytes, {
+        name: createEntry.name || name,
+        size: createBytes.byteLength,
+      });
+      const differencePayload = parseMapDataBytes(differenceBytes, {
+        name: differenceEntry.name || name,
+        size: differenceBytes.byteLength,
+      });
+      if (!createPayload || typeof createPayload !== 'object') { return null; }
+      if (!differencePayload || typeof differencePayload !== 'object') { return createPayload; }
+
+      return {
+        ...createPayload,
+        differenceSpaces: Array.isArray(differencePayload?.differenceSpaces)
+          ? differencePayload.differenceSpaces
+          : (Array.isArray(createPayload?.differenceSpaces) ? createPayload.differenceSpaces : []),
+        differenceRailOperations: Array.isArray(differencePayload?.differenceRailOperations)
+          ? differencePayload.differenceRailOperations
+          : (Array.isArray(createPayload?.differenceRailOperations) ? createPayload.differenceRailOperations : []),
+      };
+    };
+
+    const mergedPayload = await mergeDifferencePayloadIntoCreatePayload();
+    if (mergedPayload) {
+      return mergedPayload;
+    }
+
     const selectedEntry = candidates[0];
     const entryBytes = new Uint8Array(await selectedEntry.async('uint8array'));
     return parseMapDataBytes(entryBytes, {

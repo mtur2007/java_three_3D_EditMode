@@ -1051,8 +1051,11 @@
   #construction-category-panel {
     position: fixed;
     right: 20px;
-    top: 220px;
+    top: 120px;
     width: 280px;
+    max-height: calc(100vh - 140px);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 12px;
     background: rgba(255,255,255,0.92);
     border-radius: 10px;
@@ -1073,6 +1076,21 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     margin-bottom: 8px;
+  }
+  #construction-category-panel .construction-pattern-row {
+    display: none;
+    margin-bottom: 8px;
+  }
+  #construction-category-panel .construction-pattern-label {
+    margin: 0 0 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #45607f;
+  }
+  #construction-category-panel .construction-pattern-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
   #construction-category-panel .construction-card {
     appearance: none;
@@ -1101,6 +1119,37 @@
     border: 1px solid rgba(130, 160, 210, 0.25);
   }
   #construction-category-panel .construction-card span {
+    font-size: 10px;
+    line-height: 1.2;
+    color: #2c405a;
+  }
+  #construction-category-panel .construction-pattern-card {
+    appearance: none;
+    border: 1px solid rgba(90, 120, 170, 0.35);
+    border-radius: 10px;
+    background: #f9fbff;
+    padding: 6px;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+  }
+  #construction-category-panel .construction-pattern-card.is-selected {
+    border-color: #2f74e2;
+    box-shadow: 0 0 0 2px rgba(47, 116, 226, 0.2) inset;
+    background: #eef5ff;
+  }
+  #construction-category-panel .construction-pattern-card img {
+    width: 100%;
+    height: 48px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #f2f7ff, #f8fbff);
+    border: 1px solid rgba(130, 160, 210, 0.25);
+  }
+  #construction-category-panel .construction-pattern-card span {
     font-size: 10px;
     line-height: 1.2;
     color: #2c405a;
@@ -1726,6 +1775,161 @@
       max-width: calc(100vw - 24px);
       font-size: 10px;
     }
+    #create-mode-utility-buttons {
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    #create-mode-utility-buttons > button,
+    #save-buttons .control-square-button,
+    #scene-toggle-btn,
+    #performance-toggle-btn,
+    #demo-play-btn,
+    #show-instructions-btn,
+    #logwindow {
+      min-height: 44px;
+      font-size: 14px !important;
+      touch-action: manipulation;
+    }
+    #toggle-train-panel,
+    #toggle-ground-opacity,
+    #undo-action,
+    #redo-action {
+      min-width: 44px;
+    }
+    #logwindow {
+      position: fixed !important;
+      left: 12px !important;
+      right: 12px !important;
+      top: auto !important;
+      bottom: 196px !important;
+      width: auto !important;
+      max-width: none !important;
+    }
+    #instructions-panel,
+    #rotation-panel,
+    #difference-panel,
+    #construction-category-panel,
+    #rail-construction-panel,
+    #structure-generation-list-panel,
+    #group-mode-panel,
+    #group-point-edit-mode-panel,
+    #train-panel,
+    #guide-window,
+    #scene-panel,
+    #performance-panel {
+      left: 12px !important;
+      right: 12px !important;
+      width: auto !important;
+      max-width: none !important;
+      box-sizing: border-box;
+    }
+    #rotation-panel,
+    #difference-panel,
+    #construction-category-panel,
+    #rail-construction-panel,
+    #structure-generation-list-panel,
+    #group-mode-panel,
+    #group-point-edit-mode-panel,
+    #train-panel {
+      top: 126px !important;
+      max-height: calc(100vh - 150px);
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #guide-window,
+    #scene-panel,
+    #performance-panel {
+      bottom: 68px !important;
+      max-height: calc(100vh - 140px);
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #rotation-panel input,
+    #rotation-panel select,
+    #rotation-panel button,
+    #difference-panel select,
+    #difference-panel button,
+    #construction-category-panel button,
+    #construction-category-panel input,
+    #construction-category-panel select,
+    #rail-construction-panel button,
+    #rail-construction-panel input,
+    #rail-construction-panel select,
+    #structure-generation-list-panel button,
+    #group-mode-panel button,
+    #group-mode-panel select,
+    #group-point-edit-mode-panel button,
+    #train-panel button,
+    #train-panel input,
+    #train-panel select,
+    #guide-window button,
+    #scene-panel button,
+    #scene-panel select,
+    #performance-panel button,
+    #performance-panel select,
+    #performance-panel input {
+      min-height: 44px;
+      font-size: 16px !important;
+      touch-action: manipulation;
+    }
+    #rotation-panel label,
+    #difference-panel label,
+    #construction-category-panel label,
+    #rail-construction-panel label,
+    #group-mode-panel label,
+    #train-panel label,
+    #guide-window .guide-sub,
+    #scene-panel span,
+    #performance-panel label {
+      font-size: 13px !important;
+    }
+    #rotation-panel .panel-axis-row {
+      gap: 6px;
+    }
+    #rotation-panel .panel-axis-tool {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+    }
+    #difference-unify-button,
+    #rail-construction-snap-pins-button,
+    #rail-construction-generate-button,
+    #construction-generate-button,
+    #group-mode-create-button,
+    #group-mode-append-button,
+    #group-mode-arrange-button,
+    #train-add-button,
+    #train-apply-button {
+      padding: 10px 12px;
+    }
+    #difference-panel .difference-title,
+    #construction-category-panel .construction-title,
+    #rail-construction-panel .rail-construction-title,
+    #structure-generation-list-panel .structure-generation-list-title,
+    #group-mode-panel .group-mode-title,
+    #guide-window .guide-title {
+      font-size: 14px;
+    }
+    #construction-category-panel .construction-grid,
+    #rail-construction-panel .rail-construction-grid,
+    #guide-window .guide-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    #construction-category-panel .construction-card,
+    #rail-construction-panel .rail-construction-card,
+    #guide-window .guide-card {
+      min-height: 96px;
+      padding: 10px;
+    }
+    #construction-category-panel .construction-card span,
+    #rail-construction-panel .rail-construction-card span,
+    #guide-window .guide-card .guide-name,
+    #guide-window .guide-card .guide-meta {
+      font-size: 12px;
+    }
   }
 
 </style>
@@ -1988,6 +2192,10 @@
                     <img alt="角柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='22' y='18' width='76' height='36' rx='4' fill='%23859bb8' stroke='%235a6f95' stroke-width='4'/%3E%3C/svg%3E">
                     <span>角柱</span>
                   </button>
+                  <button class="construction-card" data-construction-profile="truss" type="button" aria-pressed="false">
+                    <img alt="トラス柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='36' y1='12' x2='36' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='84' y1='12' x2='84' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='36' y1='12' x2='84' y2='12' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='36' y1='60' x2='84' y2='60' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='36' y1='12' x2='84' y2='28' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='84' y1='28' x2='36' y2='44' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='36' y1='44' x2='84' y2='60' stroke='%23859bb8' stroke-width='4'/%3E%3C/svg%3E">
+                    <span>トラス</span>
+                  </button>
                   <button class="construction-card" data-construction-profile="corrugated_bar" type="button" aria-pressed="false">
                     <img alt="波板柱" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cpath d='M10 44 L18 28 L26 44 L34 28 L42 44 L50 28 L58 44 L66 28 L74 44 L82 28 L90 44 L98 28 L106 44' fill='none' stroke='%235a6f95' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M10 52 L18 36 L26 52 L34 36 L42 52 L50 36 L58 52 L66 36 L74 52 L82 36 L90 52 L98 36 L106 52' fill='none' stroke='%23859bb8' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
                     <span>波板柱</span>
@@ -2004,6 +2212,23 @@
                     <img alt="仮囲い壁" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f9fbff'/%3E%3Cstop offset='100%25' stop-color='%23e9eef4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Crect x='15' y='10' width='90' height='52' rx='3' fill='url(%23g)' stroke='%23c8d3df' stroke-width='2'/%3E%3Cline x1='15' y1='23' x2='105' y2='23' stroke='%23d7e0e8'/%3E%3Cline x1='15' y1='36' x2='105' y2='36' stroke='%23d7e0e8'/%3E%3Cline x1='15' y1='49' x2='105' y2='49' stroke='%23d7e0e8'/%3E%3C/svg%3E">
                     <span>仮囲い壁</span>
                   </button>
+                </div>
+                <div id="construction-pattern-row" class="construction-pattern-row">
+                  <div class="construction-pattern-label">Truss Pattern</div>
+                  <div class="construction-pattern-grid">
+                    <button class="construction-pattern-card" data-construction-pattern="truss_column" type="button" aria-pressed="false">
+                      <img alt="標準トラス" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='30' y1='12' x2='30' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='90' y1='12' x2='90' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='30' y1='12' x2='90' y2='12' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='30' y1='60' x2='90' y2='60' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='30' y1='12' x2='90' y2='36' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='30' y1='36' x2='90' y2='60' stroke='%23859bb8' stroke-width='4'/%3E%3C/svg%3E">
+                      <span>標準</span>
+                    </button>
+                    <button class="construction-pattern-card" data-construction-pattern="truss_ladder" type="button" aria-pressed="false">
+                      <img alt="はしご型トラス" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='34' y1='12' x2='34' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='86' y1='12' x2='86' y2='60' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='34' y1='12' x2='86' y2='12' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='34' y1='28' x2='86' y2='28' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='34' y1='44' x2='86' y2='44' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='34' y1='60' x2='86' y2='60' stroke='%23859bb8' stroke-width='4'/%3E%3C/svg%3E">
+                      <span>はしご型</span>
+                    </button>
+                    <button class="construction-pattern-card" data-construction-pattern="truss_catenary" type="button" aria-pressed="false">
+                      <img alt="架線柱型トラス" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 72'%3E%3Crect width='120' height='72' fill='%23eef4ff'/%3E%3Cline x1='40' y1='10' x2='40' y2='62' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='80' y1='10' x2='80' y2='62' stroke='%235a6f95' stroke-width='5'/%3E%3Cline x1='40' y1='18' x2='80' y2='18' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='40' y1='34' x2='80' y2='34' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='40' y1='50' x2='80' y2='50' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='40' y1='18' x2='80' y2='34' stroke='%23859bb8' stroke-width='4'/%3E%3Cline x1='80' y1='34' x2='40' y2='50' stroke='%23859bb8' stroke-width='4'/%3E%3C/svg%3E">
+                      <span>架線柱型</span>
+                    </button>
+                  </div>
                 </div>
                 <button id="construction-generate-button" type="button">選択カテゴリで生成</button>
                 <p id="construction-category-status">カテゴリを選択し、点を2つ以上選択して生成します。</p>

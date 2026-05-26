@@ -1209,6 +1209,7 @@ function initializeManualVideoGuides() {
 
     const player = guide.querySelector('[data-video-player]');
     const placeholder = guide.querySelector('[data-video-placeholder]');
+    const shell = guide.querySelector('.manual-video-shell');
     const label = guide.querySelector('[data-video-guide-label]');
     const title = guide.querySelector('[data-video-scene-title]');
     const description = guide.querySelector('[data-video-scene-description]');
@@ -1217,11 +1218,12 @@ function initializeManualVideoGuides() {
     const replayButton = guide.querySelector('[data-video-replay-scene]');
     const sceneButtons = guide.querySelectorAll('[data-video-scene]');
     const sceneCards = guide.querySelectorAll('[data-scene-card]');
-    if (!player || !placeholder || !title || !description || !status || !playAllButton || !replayButton) { return; }
+    if (!player || !placeholder || !shell || !title || !description || !status || !playAllButton || !replayButton) { return; }
 
     const state = {
       sceneIndex: 0,
       sequenceMode: false,
+      autoSequencePreferred: true,
     };
 
     const sceneIndexById = new Map(config.scenes.map((scene, index) => [scene.id, index]));
@@ -1239,6 +1241,9 @@ function initializeManualVideoGuides() {
         const highlightTargets = (card.dataset.videoHighlight || '').split(/\s+/).filter(Boolean);
         card.classList.toggle('is-video-focus', highlightTargets.includes(`${guideId}:${scene.id}`));
       });
+      if (typeof guide.syncSceneCardState === 'function') {
+        guide.syncSceneCardState(scene.id);
+      }
     }
 
     function syncText(message) {
@@ -1252,20 +1257,33 @@ function initializeManualVideoGuides() {
       syncActiveState();
     }
 
-    function playCurrentScene({ autoplay = false, sequence = false } = {}) {
-      const scene = currentScene();
-      state.sequenceMode = sequence;
-      player.src = scene.src;
-      player.load();
-      placeholder.hidden = true;
-      syncText(sequence ? `${scene.title} をシーケンス再生します。` : `${scene.title} を準備しています。`);
-      if (!autoplay) { return; }
+    function setIdleVisualState(isIdle) {
+      shell.classList.toggle('is-idle', isIdle);
+    }
+
+    function tryPlayPlayer() {
       const playResult = player.play();
       if (playResult && typeof playResult.catch === 'function') {
         playResult.catch(() => {
-          syncText(`${scene.title} はユーザー操作後に再生されます。`);
+          setIdleVisualState(true);
+          syncText(`${currentScene().title} はユーザー操作後に再生されます。`);
         });
       }
+    }
+
+    function playCurrentScene({ autoplay = false, sequence = false, reload = true } = {}) {
+      const scene = currentScene();
+      state.sequenceMode = sequence;
+      if (reload || player.dataset.sceneId !== scene.id || player.getAttribute('src') !== scene.src) {
+        player.src = scene.src;
+        player.dataset.sceneId = scene.id;
+        player.load();
+      }
+      placeholder.hidden = !autoplay;
+      setIdleVisualState(!autoplay);
+      syncText(sequence ? `${scene.title} をシーケンス再生します。` : `${scene.title} を準備しています。`);
+      if (!autoplay) { return; }
+      tryPlayPlayer();
     }
 
     function setScene(sceneId, options = {}) {
@@ -1282,8 +1300,17 @@ function initializeManualVideoGuides() {
 
     player.addEventListener('loadeddata', () => {
       placeholder.hidden = true;
-      const scene = currentScene();
-      syncText(state.sequenceMode ? `${scene.title} を再生中です。終了後に次のシーンへ進みます。` : `${scene.title} を再生できます。`);
+      if (state.sequenceMode) {
+        const scene = currentScene();
+        syncText(`${scene.title} を再生中です。終了後に次のシーンへ進みます。`);
+        return;
+      }
+      updateViewportPlayback();
+    });
+
+    player.addEventListener('play', () => {
+      placeholder.hidden = true;
+      setIdleVisualState(false);
     });
 
     player.addEventListener('ended', () => {
@@ -1301,51 +1328,149 @@ function initializeManualVideoGuides() {
 
     player.addEventListener('error', () => {
       placeholder.hidden = false;
+      setIdleVisualState(true);
       const scene = currentScene();
       syncText(`動画が見つかりません: ${scene.src}`);
     });
 
     playAllButton.addEventListener('click', playSequenceFromStart);
     replayButton.addEventListener('click', () => {
+      state.autoSequencePreferred = false;
       playCurrentScene({ autoplay: true, sequence: false });
     });
 
     sceneButtons.forEach((button) => {
       button.addEventListener('click', () => {
         const sceneId = button.dataset.videoScene || '';
+        state.autoSequencePreferred = false;
         setScene(sceneId, { autoplay: true, sequence: false });
       });
     });
 
-    playCurrentScene({ autoplay: true, sequence: false });
+    playCurrentScene({ autoplay: false, sequence: false });
+    syncText('画面中央付近に来ると連続再生されます。');
+
+    function updateViewportPlayback() {
+      if (guide.hidden) {
+        if (!player.paused) {
+          player.pause();
+        }
+        setIdleVisualState(true);
+        return;
+      }
+
+      const rect = guide.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const centerBandHalf = Math.max(80, Math.min(180, viewportHeight * 0.18));
+      const bandTop = (viewportHeight / 2) - centerBandHalf;
+      const bandBottom = (viewportHeight / 2) + centerBandHalf;
+      const isCentered = rect.top < bandBottom && rect.bottom > bandTop;
+
+      if (isCentered) {
+        placeholder.hidden = true;
+        setIdleVisualState(false);
+        if (player.paused) {
+          if (state.autoSequencePreferred) {
+            if (!state.sequenceMode && (state.sceneIndex !== 0 || player.currentTime > 0.05)) {
+              state.sceneIndex = 0;
+            }
+            playCurrentScene({
+              autoplay: true,
+              sequence: true,
+              reload: !player.dataset.sceneId || state.sceneIndex === 0,
+            });
+          } else {
+            syncText(`${currentScene().title} を再生中です。`);
+            tryPlayPlayer();
+          }
+        }
+        return;
+      }
+
+      if (!player.paused) {
+        player.pause();
+      }
+      setIdleVisualState(true);
+      syncText(state.autoSequencePreferred ? '画面中央付近に来ると連続再生されます。' : '画面中央付近に来ると再生されます。');
+    }
+
+    const centeredPlaybackObserver = new IntersectionObserver(() => {
+      updateViewportPlayback();
+    }, {
+      threshold: 0,
+      rootMargin: '-35% 0px -35% 0px',
+    });
+
+    centeredPlaybackObserver.observe(guide);
+    guide.manualVideoViewportUpdate = updateViewportPlayback;
+    window.addEventListener('scroll', updateViewportPlayback, { passive: true });
+    window.addEventListener('resize', updateViewportPlayback);
   });
+
+  function triggerManualVideoGuide(trigger) {
+    const guideId = trigger.dataset.videoGuideTarget || '';
+    const sceneId = trigger.dataset.videoScene || '';
+    const guide = document.querySelector(`[data-video-guide="${guideId}"]`);
+    if (!guide || !sceneId) { return; }
+    if (guide.dataset.inlineAnchorGuide === 'true' && guide.hidden) {
+      trigger.insertAdjacentElement('afterend', guide);
+    }
+    if (guide.hidden) {
+      guide.hidden = false;
+    }
+    guide.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const internalButton = guide.querySelector(`[data-video-scene="${sceneId}"]`);
+    if (internalButton instanceof HTMLButtonElement) {
+      internalButton.click();
+    }
+    window.requestAnimationFrame(() => {
+      if (typeof guide.manualVideoViewportUpdate === 'function') {
+        guide.manualVideoViewportUpdate();
+      }
+    });
+  }
 
   document.querySelectorAll('.manual-video-jump[data-video-guide-target]').forEach((button) => {
     button.addEventListener('click', () => {
-      const guideId = button.dataset.videoGuideTarget || '';
-      const sceneId = button.dataset.videoScene || '';
-      const guide = document.querySelector(`[data-video-guide="${guideId}"]`);
-      if (!guide || !sceneId) { return; }
-      if (guide.dataset.inlineAnchorGuide === 'true') {
-        button.insertAdjacentElement('afterend', guide);
-      }
-      if (guide.hidden) {
-        guide.hidden = false;
-      }
-      guide.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      const internalButton = guide.querySelector(`[data-video-scene="${sceneId}"]`);
-      if (internalButton instanceof HTMLButtonElement) {
-        internalButton.click();
-      }
+      triggerManualVideoGuide(button);
+    });
+  });
+
+  document.querySelectorAll('[data-decoration-control][data-video-guide-target]').forEach((control) => {
+    control.addEventListener('click', () => {
+      triggerManualVideoGuide(control);
+    });
+    control.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') { return; }
+      event.preventDefault();
+      triggerManualVideoGuide(control);
     });
   });
 }
 
 initializeManualVideoGuides();
 
+function initializeFeatureDetailBodies() {
+  document.querySelectorAll('.feature-detail-body').forEach((body) => {
+    if (body.querySelector(':scope > .feature-detail-body-inner')) { return; }
+    const inner = document.createElement('div');
+    inner.className = 'feature-detail-body-inner';
+    while (body.firstChild) {
+      inner.append(body.firstChild);
+    }
+    body.append(inner);
+  });
+}
+
+initializeFeatureDetailBodies();
+
 function initializeFeatureHubAccordions() {
   document.querySelectorAll('.feature-hub').forEach((hub) => {
-    const detailsList = Array.from(hub.querySelectorAll('.feature-hub-children .feature-detail'));
+    const childrenContainer = hub.querySelector('.feature-hub-children');
+    if (!(childrenContainer instanceof HTMLElement)) { return; }
+    const detailsList = Array.from(childrenContainer.children).filter((element) => (
+      element instanceof HTMLDetailsElement && element.classList.contains('feature-detail')
+    ));
     if (!detailsList.length) { return; }
 
     function syncHubState() {
@@ -1358,6 +1483,47 @@ function initializeFeatureHubAccordions() {
     });
 
     syncHubState();
+  });
+
+  document.querySelectorAll('[data-video-guide="decoration-detail"]').forEach((guide) => {
+    const decorationRoot = guide.closest('.feature-detail-body');
+    if (!decorationRoot) { return; }
+
+    const controlButtons = Array.from(decorationRoot.querySelectorAll('[data-decoration-control][data-scene-card]'));
+    const syncedDetails = Array.from(decorationRoot.querySelectorAll('.decoration-focus-pair .feature-detail[data-scene-card]'));
+    const syncedCards = Array.from(decorationRoot.querySelectorAll('.feature-mini-list [data-scene-card]'));
+    const allSceneCards = [...controlButtons, ...syncedDetails, ...syncedCards];
+
+    function syncDecorationScene(sceneId) {
+      syncedDetails.forEach((detail) => {
+        const isActive = detail.dataset.sceneCard === sceneId;
+        detail.open = isActive;
+        detail.hidden = !isActive;
+      });
+      allSceneCards.forEach((card) => {
+        card.classList.toggle('is-active', card.dataset.sceneCard === sceneId);
+      });
+    }
+
+    guide.syncSceneCardState = syncDecorationScene;
+
+    syncedDetails.forEach((detail) => {
+      const summary = detail.querySelector(':scope > summary');
+      if (!(summary instanceof HTMLElement)) { return; }
+
+      summary.addEventListener('click', (event) => {
+        event.preventDefault();
+        const sceneId = detail.dataset.sceneCard || '';
+        const sceneButton = guide.querySelector(`[data-video-scene="${sceneId}"]`);
+        if (sceneButton instanceof HTMLButtonElement) {
+          sceneButton.click();
+        }
+      });
+    });
+
+    allSceneCards.forEach((card) => {
+      card.classList.toggle('is-active', card.dataset.sceneCard === 'add_point');
+    });
   });
 }
 

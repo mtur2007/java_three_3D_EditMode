@@ -77,6 +77,74 @@ function alert(txt){
   showTopNotice(txt);
 }
 
+function summarizeRuntimePayloadShape(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      isObject: false,
+      keys: [],
+    };
+  }
+  const steelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
+    ? payload.steelFrame
+    : {};
+  return {
+    isObject: true,
+    keys: Object.keys(payload).sort(),
+    metaType: String(payload?.meta?.type || '').trim(),
+    metaMode: String(payload?.meta?.mode || '').trim(),
+    metaVersion: Number(payload?.meta?.version) || null,
+    guideGridCatalog: Array.isArray(payload?.guideGridCatalog) ? payload.guideGridCatalog.length : -1,
+    guideAddGrids: Array.isArray(payload?.guideAddGrids) ? payload.guideAddGrids.length : -1,
+    hasBaseGuideGrid: Boolean(payload?.baseGuideGrid && typeof payload.baseGuideGrid === 'object'),
+    steelFramePoints: Array.isArray(steelFrame?.points) ? steelFrame.points.length : -1,
+    steelFrameSegments: Array.isArray(steelFrame?.segments) ? steelFrame.segments.length : -1,
+    decorations: Array.isArray(payload?.decorations) ? payload.decorations.length : -1,
+    copiedStructureGroups: Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups.length : -1,
+    pins: Array.isArray(payload?.pins) ? payload.pins.length : -1,
+    generationRuns: Array.isArray(payload?.generationRuns) ? payload.generationRuns.length : -1,
+    differenceSpaces: Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces.length : -1,
+    differenceRailOperations: Array.isArray(payload?.differenceRailOperations) ? payload.differenceRailOperations.length : -1,
+    sourceStructureGroups: Array.isArray(payload?.sourceStructureGroups) ? payload.sourceStructureGroups.length : -1,
+    trainRunConfigs: Array.isArray(payload?.trainRunConfigs) ? payload.trainRunConfigs.length : -1,
+  };
+}
+
+function logRuntimePayloadDiagnostics(label, payload, extra = {}) {
+  console.info(label, {
+    ...extra,
+    payloadSummary: summarizeRuntimePayloadShape(payload),
+  });
+}
+
+function logRuntimePayloadInvalid(label, payload, issues = [], extra = {}) {
+  const normalizedIssues = Array.isArray(issues) ? issues.filter(Boolean) : [];
+  console.error(label, {
+    ...extra,
+    issues: normalizedIssues,
+    payloadSummary: summarizeRuntimePayloadShape(payload),
+    payloadPreview: payload && typeof payload === 'object'
+      ? {
+        meta: payload?.meta || null,
+        mode: payload?.mode || null,
+      }
+      : payload,
+  });
+}
+
+function reportRuntimeLoadError(label, error, extra = {}) {
+  console.error(label, {
+    ...extra,
+    err: error,
+    errMessage: error?.message || String(error),
+    stack: error?.stack || '',
+  });
+  const fileName = String(extra?.name || extra?.runtimeName || extra?.entryName || '').trim();
+  const shortMessage = fileName
+    ? `読込エラー: ${fileName}`
+    : '読込エラーが発生しました。';
+  showTopNotice(shortMessage, 4200);
+}
+
 function keepLastNLines(text, maxLines = 20, options = {}) {
   const {
     treatEscapedNewline = false,
@@ -173,7 +241,82 @@ const EDITOR_ZIP_DB_NAME = 'mouse-demo-editor-slot-zips';
 const EDITOR_ZIP_STORE_NAME = 'slotZips';
 const RUNTIME_WORLD_BUCKET = 'world-files';
 let runtimeMapRecordMeta = {};
+let lastLoadedStandaloneDifferencePayload = null;
 const RUNTIME_STRUCTURE_FILE_NAME = 'st_world_data.zip';
+let runtimeRebuildDiagnostics = null;
+
+function createRuntimeRebuildDiagnosticsState() {
+  return {
+    groupResolveFailed: [],
+    linkedObjectMissing: [],
+    copySourceMissing: [],
+    copyCyclicDependency: [],
+    groupRowLoadFailed: [],
+    copyReferenceUnresolved: [],
+    flushed: false,
+  };
+}
+
+function resetRuntimeRebuildDiagnostics() {
+  runtimeRebuildDiagnostics = createRuntimeRebuildDiagnosticsState();
+}
+
+function ensureRuntimeRebuildDiagnostics() {
+  if (!runtimeRebuildDiagnostics) {
+    resetRuntimeRebuildDiagnostics();
+  }
+  return runtimeRebuildDiagnostics;
+}
+
+function pushRuntimeRebuildDiagnostic(bucket, detail = {}) {
+  const state = ensureRuntimeRebuildDiagnostics();
+  if (!Array.isArray(state?.[bucket])) { return; }
+  state[bucket].push(detail);
+}
+
+function flushRuntimeRebuildDiagnostics(reason = 'unknown') {
+  const state = ensureRuntimeRebuildDiagnostics();
+  if (state.flushed) { return; }
+  state.flushed = true;
+  const counts = {
+    groupResolveFailed: state.groupResolveFailed.length,
+    linkedObjectMissing: state.linkedObjectMissing.length,
+    copySourceMissing: state.copySourceMissing.length,
+    copyCyclicDependency: state.copyCyclicDependency.length,
+    groupRowLoadFailed: state.groupRowLoadFailed.length,
+    copyReferenceUnresolved: state.copyReferenceUnresolved.length,
+  };
+  const total = Object.values(counts).reduce((sum, n) => sum + Number(n || 0), 0);
+  console.info('[runtime][rebuild-diagnostics] summary', {
+    reason,
+    total,
+    counts,
+    samples: {
+      groupResolveFailed: state.groupResolveFailed.slice(0, 5),
+      linkedObjectMissing: state.linkedObjectMissing.slice(0, 5),
+      copySourceMissing: state.copySourceMissing.slice(0, 5),
+      copyCyclicDependency: state.copyCyclicDependency.slice(0, 5),
+      groupRowLoadFailed: state.groupRowLoadFailed.slice(0, 5),
+      copyReferenceUnresolved: state.copyReferenceUnresolved.slice(0, 5),
+    },
+  });
+  if (total < 1) { return; }
+  const parts = [];
+  if (counts.groupResolveFailed > 0) { parts.push(`group解決失敗 ${counts.groupResolveFailed}`); }
+  if (counts.linkedObjectMissing > 0) { parts.push(`linked欠損 ${counts.linkedObjectMissing}`); }
+  if (counts.copySourceMissing > 0) { parts.push(`copy元欠損 ${counts.copySourceMissing}`); }
+  if (counts.copyCyclicDependency > 0) { parts.push(`copy循環 ${counts.copyCyclicDependency}`); }
+  if (counts.groupRowLoadFailed > 0) { parts.push(`group読込失敗 ${counts.groupRowLoadFailed}`); }
+  if (counts.copyReferenceUnresolved > 0) { parts.push(`copy未解決 ${counts.copyReferenceUnresolved}`); }
+  const message = `構造物の再構築で未復元あり: ${parts.join(' / ')}`;
+  showTopNotice(message, 5200);
+  if (typeof setMapLoadStatusText === 'function') {
+    setMapLoadStatusText(message);
+  }
+  if (railConstructionStatus) {
+    railConstructionStatus.textContent = message;
+  }
+}
 
 function openRuntimeMapDb() {
   return new Promise((resolve, reject) => {
@@ -507,6 +650,7 @@ function flushRuntimeMapLoadedUiState() {
 }
 
 function markRuntimeMapStructurePostProcessReady(reason = 'unknown') {
+  flushRuntimeRebuildDiagnostics(reason);
   if (!runtimeMapStructurePostProcessRequired) {
     console.info('[runtime][load-complete] structure post process ready ignored', {
       reason,
@@ -639,22 +783,22 @@ function tryFinishLoadingOverlay() {
   const structurePostProcessReady = !runtimeMapLoadedUiStatePending
     || !runtimeMapStructurePostProcessRequired
     || runtimeMapStructurePostProcessReady;
-  console.info('[runtime][load-complete] tryFinishLoadingOverlay', {
-    renderedFramesSinceReady,
-    requiredFrames: LOADING_STABLE_FRAMES,
-    elapsedMs: Math.round(elapsed),
-    requiredMs: LOADING_MIN_WAIT_MS,
-    forceFinishMs: LOADING_FORCE_FINISH_MS,
-    stableRenderReady,
-    runtimeRestoreReady,
-    structurePostProcessReady,
-    runtimeMapRestorePhaseDone,
-    runtimeMapLoadedUiStatePending,
-    runtimeMapStructurePostProcessRequired,
-    runtimeMapStructurePostProcessReady,
-    loadingDone,
-    canFinish: stableRenderReady && runtimeRestoreReady && structurePostProcessReady,
-  });
+  // console.info('[runtime][load-complete] tryFinishLoadingOverlay', {
+  //   renderedFramesSinceReady,
+  //   requiredFrames: LOADING_STABLE_FRAMES,
+  //   elapsedMs: Math.round(elapsed),
+  //   requiredMs: LOADING_MIN_WAIT_MS,
+  //   forceFinishMs: LOADING_FORCE_FINISH_MS,
+  //   stableRenderReady,
+  //   runtimeRestoreReady,
+  //   structurePostProcessReady,
+  //   runtimeMapRestorePhaseDone,
+  //   runtimeMapLoadedUiStatePending,
+  //   runtimeMapStructurePostProcessRequired,
+  //   runtimeMapStructurePostProcessReady,
+  //   loadingDone,
+  //   canFinish: stableRenderReady && runtimeRestoreReady && structurePostProcessReady,
+  // });
   if (!stableRenderReady) {
     if (loadingText) {
       loadingText.textContent = `描画準備中... (${Math.min(renderedFramesSinceReady, LOADING_STABLE_FRAMES)}/${LOADING_STABLE_FRAMES})`;
@@ -787,8 +931,15 @@ const threeUi = document.getElementById('three-ui');
   const differenceMoveYButton = document.getElementById('difference-move-y');
   const differenceAutoMergeToggleButton = document.getElementById('difference-auto-merge-toggle');
   const differenceUnifyButton = document.getElementById('difference-unify-button');
+  let differenceResetBeforeUnifyButton = document.getElementById('difference-reset-before-unify-button');
   let differenceViewToggleButton = document.getElementById('difference-view-toggle-button');
   const differenceStatus = document.getElementById('difference-status');
+  let differenceTexturePresetSelect = null;
+  let differenceTexturePathInput = null;
+  let differenceTextureRepeatXInput = null;
+  let differenceTextureRepeatYInput = null;
+  let differenceTextureApplyButton = null;
+  let differenceTextureSelectionInfo = null;
   const mapLoadStatus = document.getElementById('map-load-status');
   const toggleGroundOpacityButton = document.getElementById('toggle-ground-opacity');
   const toggleTrainPanelButton = document.getElementById('toggle-train-panel');
@@ -801,6 +952,8 @@ const threeUi = document.getElementById('three-ui');
   const railSelectionStatus = document.getElementById('rail-selection-status');
   const constructionCategoryPanel = document.getElementById('construction-category-panel');
   const constructionCategoryCards = Array.from(document.querySelectorAll('[data-construction-profile]'));
+  const constructionPatternRow = document.getElementById('construction-pattern-row');
+  const constructionPatternCards = Array.from(document.querySelectorAll('[data-construction-pattern]'));
   const constructionGenerateButton = document.getElementById('construction-generate-button');
   const constructionCategoryStatus = document.getElementById('construction-category-status');
   const railConstructionPanel = document.getElementById('rail-construction-panel');
@@ -1359,6 +1512,8 @@ let differenceSpaceTransformMode = 'none';
   const AXES = ['x', 'y', 'z'];
   const MOVE_POINT_REF_HIGHLIGHT = 0xff66ff;
   let selectedConstructionProfile = null;
+  let selectedConstructionParentCategory = null;
+  let selectedConstructionTrussPattern = 'truss_catenary';
   let selectedRailConstructionCategory = null;
   let selectedRailConstructionParentCategory = null;
   let selectedRailConstructionGroupId = '';
@@ -1504,8 +1659,11 @@ let differenceSpaceTransformMode = 'none';
   }
 
   function setConstructionCategory(profile) {
-    const next = (profile === 'round'
+    const directProfile = (profile === 'round'
       || profile === 'rect_bar'
+      || profile === 'truss_column'
+      || profile === 'truss_ladder'
+      || profile === 'truss_catenary'
       || profile === 'panel_wall'
       || profile === 'corrugated_bar'
       || profile === 'h_beam'
@@ -1513,30 +1671,48 @@ let differenceSpaceTransformMode = 'none';
       || profile === 'l_beam'
       || profile === 'tubular'
       || profile === 'tube') ? profile : null;
+    let next = directProfile;
+    if (profile === 'truss') {
+      next = selectedConstructionTrussPattern || 'truss_catenary';
+      selectedConstructionParentCategory = 'truss';
+    } else if (profile === 'truss_column' || profile === 'truss_ladder' || profile === 'truss_catenary') {
+      selectedConstructionTrussPattern = profile;
+      selectedConstructionParentCategory = 'truss';
+    } else {
+      selectedConstructionParentCategory = next;
+    }
     selectedConstructionProfile = next;
     constructionCategoryCards.forEach((card) => {
-      const isSelected = card.dataset.constructionProfile === next;
+      const isSelected = card.dataset.constructionProfile === selectedConstructionParentCategory;
       card.classList.toggle('is-selected', isSelected);
       card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
+    constructionPatternCards.forEach((card) => {
+      const isSelected = card.dataset.constructionPattern === next;
+      card.classList.toggle('is-selected', isSelected);
+      card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+    if (constructionPatternRow) {
+      constructionPatternRow.style.display = selectedConstructionParentCategory === 'truss' ? 'block' : 'none';
+    }
     if (next) {
       steelFrameMode.setSegmentProfile(next);
     }
-    const label = next === 'h_beam'
-      ? 'H形鋼'
-      : (next === 't_beam'
-        ? 'T形鋼'
-        : (next === 'l_beam'
-          ? 'L形鋼'
-          : (next === 'corrugated_bar'
-            ? '波板柱'
-          : (next === 'panel_wall'
-            ? '仮囲い壁'
-          : (next === 'rect_bar'
-            ? '角柱'
-            : (next === 'tubular'
-              ? 'ライト管'
-              : (next === 'tube' ? '補間チューブ' : (next === 'round' ? '丸鋼' : ''))))))));
+    const constructionLabelMap = {
+      round: '丸鋼',
+      h_beam: 'H形鋼',
+      t_beam: 'T形鋼',
+      l_beam: 'L形鋼',
+      truss_column: 'トラス柱',
+      truss_ladder: 'トラス柱(はしご型)',
+      truss_catenary: 'トラス柱(架線柱型)',
+      corrugated_bar: '波板柱',
+      panel_wall: '仮囲い壁',
+      rect_bar: '角柱',
+      tubular: 'ライト管',
+      tube: '補間チューブ',
+    };
+    const label = next ? (constructionLabelMap[next] || next) : '';
     if (constructionCategoryStatus) {
       constructionCategoryStatus.textContent = next
         ? `選択中: ${label}。点を2つ以上選択して「選択カテゴリで生成」。`
@@ -2487,6 +2663,13 @@ let differenceSpaceTransformMode = 'none';
 
   function detachPinGeneratedObject(mesh) {
     if (!mesh) { return false; }
+    if (isDifferenceReadonlyTunnelMesh(mesh)) {
+      clearDifferenceReadonlyTunnelPreviewChunks(mesh);
+      const index = differenceSpacePlanes.indexOf(mesh);
+      if (index >= 0) {
+        differenceSpacePlanes.splice(index, 1);
+      }
+    }
     if (mesh?.userData?.steelFramePoint) {
       return steelFrameMode.removePointMesh(mesh);
     }
@@ -3080,12 +3263,22 @@ let differenceSpaceTransformMode = 'none';
       for (let i = 0; i < linkIds.length; i += 1) {
         const src = templateMap.get(linkIds[i]);
         if (!src?.parent) {
+          pushRuntimeRebuildDiagnostic('linkedObjectMissing', {
+            pinTrackName: String(pin?.userData?.trackName || '').trim() || null,
+            missingObjectId: linkIds[i],
+            linkedCount: linkIds.length,
+          });
           missing = true;
           return;
         }
         sourceMeshes.push(src);
       }
       if (sourceMeshes.length !== linkIds.length) {
+        pushRuntimeRebuildDiagnostic('linkedObjectMissing', {
+          pinTrackName: String(pin?.userData?.trackName || '').trim() || null,
+          linkedCount: linkIds.length,
+          restoredCount: sourceMeshes.length,
+        });
         missing = true;
         return;
       }
@@ -4817,7 +5010,7 @@ let differenceSpaceTransformMode = 'none';
       if (kind === 'tunnel_circle') {
         const tunnelSpace = addDifferenceTunnelTubeSpaceFromTrackCurves(selectedTrackCurves, {
           innerRadius: 1.6,
-          yOffset: -1.0,
+          yOffset: -0.5,
           sideClearance: 1.2,
           sampleStepMeters: 1.2,
           radialSegments: 14,
@@ -4828,7 +5021,8 @@ let differenceSpaceTransformMode = 'none';
           }
           return false;
         }
-        lastRailConstructionCreatedObjects = [];
+        applyPinGenerationRuntimeNameToMeshes([tunnelSpace.mesh], runtimeId, 'tunnel_circle');
+        lastRailConstructionCreatedObjects = [tunnelSpace.mesh];
         recordStructureGenerationRun({
           category: kind,
           pins,
@@ -5003,9 +5197,7 @@ let differenceSpaceTransformMode = 'none';
         differenceSpaceModeActive = true;
         differenceLinePickModeActive = true;
         differenceSpaceTransformMode = 'line';
-        if (differencePanel) {
-          differencePanel.style.display = 'block';
-        }
+        updateDifferenceModePanels();
         toggleRailTube(true);
         setDifferenceLineOptions();
       }
@@ -5037,6 +5229,23 @@ let differenceSpaceTransformMode = 'none';
     }
   }
   if (differenceUnifyButton) {
+    if (!differenceResetBeforeUnifyButton && differenceUnifyButton.parentElement) {
+      differenceResetBeforeUnifyButton = document.createElement('button');
+      differenceResetBeforeUnifyButton.id = 'difference-reset-before-unify-button';
+      differenceResetBeforeUnifyButton.type = 'button';
+      differenceResetBeforeUnifyButton.style.marginTop = '6px';
+      differenceResetBeforeUnifyButton.style.width = '100%';
+      differenceResetBeforeUnifyButton.style.padding = '6px 8px';
+      differenceResetBeforeUnifyButton.style.display = 'none';
+      differenceResetBeforeUnifyButton.textContent = '一体化前に戻る';
+      differenceUnifyButton.insertAdjacentElement('beforebegin', differenceResetBeforeUnifyButton);
+    }
+    if (differenceResetBeforeUnifyButton) {
+      differenceResetBeforeUnifyButton.addEventListener('click', () => {
+        restoreDifferenceSnapshotBeforeLatestUnify();
+      });
+      updateDifferenceResetBeforeUnifyButtonState();
+    }
     differenceUnifyButton.addEventListener('click', () => {
       runHighQualityDifferenceUnify();
     });
@@ -5420,6 +5629,7 @@ let differenceSpaceTransformMode = 'none';
     const isCopyMode = mode === 'copy_mode';
     const isStyleMode = mode === 'style_mode';
     const isDeleteMode = mode === 'delete_mode';
+    const isTextureMode = mode === 'texture_mode';
     if (rotationPanelTitle) {
       rotationPanelTitle.textContent = isMovePoint
         ? 'Move Point'
@@ -5427,7 +5637,7 @@ let differenceSpaceTransformMode = 'none';
           ? 'Scale Point'
           : (isMovePointRotation
             ? 'Point Rotate'
-            : (isDecorationRotation ? 'Decoration Rotate' : (isCopyMode ? 'Copy' : (isStyleMode ? 'Style' : (isDeleteMode ? 'Delete' : 'Rotation'))))));
+            : (isDecorationRotation ? 'Decoration Rotate' : (isCopyMode ? 'Copy' : (isStyleMode ? 'Style' : (isDeleteMode ? 'Delete' : (isTextureMode ? 'Difference Texture' : 'Rotation')))))));
     }
     const axisSuffix = isMovePoint
       ? (movePointCoordinateMode === 'grid' ? ' (grid)' : ' (world)')
@@ -5442,23 +5652,23 @@ let differenceSpaceTransformMode = 'none';
       && !isCopyMode
       && !isDeleteMode;
     if (rotationLabelSetY) {
-      rotationLabelSetY.style.display = showSetY ? '' : 'none';
+      rotationLabelSetY.style.display = (!isTextureMode && showSetY) ? '' : 'none';
       rotationLabelSetY.childNodes[0].nodeValue = isStyleMode ? 'Roll (deg)' : `Set Y${axisSuffix}`;
     }
     if (rotationLabelSetX) {
-      rotationLabelSetX.style.display = (showSetY && !isStyleMode) ? '' : 'none';
+      rotationLabelSetX.style.display = (!isTextureMode && showSetY && !isStyleMode) ? '' : 'none';
       rotationLabelSetX.childNodes[0].nodeValue = `Set X${axisSuffix}`;
     }
     if (rotationLabelX) {
-      rotationLabelX.style.display = isDeleteMode ? 'none' : '';
+      rotationLabelX.style.display = (isDeleteMode || isTextureMode) ? 'none' : '';
       rotationLabelX.childNodes[0].nodeValue = isStyleMode ? '横梁 幅' : (isCopyMode ? 'Offset X' : `X${axisSuffix}`);
     }
     if (rotationLabelY) {
-      rotationLabelY.style.display = isDeleteMode ? 'none' : '';
+      rotationLabelY.style.display = (isDeleteMode || isTextureMode) ? 'none' : '';
       rotationLabelY.childNodes[0].nodeValue = isStyleMode ? '縦梁 高さ' : (isCopyMode ? 'Offset Y' : `Y${axisSuffix}`);
     }
     if (rotationLabelZ) {
-      rotationLabelZ.style.display = isDeleteMode ? 'none' : '';
+      rotationLabelZ.style.display = (isDeleteMode || isTextureMode) ? 'none' : '';
       rotationLabelZ.childNodes[0].nodeValue = isStyleMode
         ? '梁 厚み'
         : (isMovePointRotation
@@ -5469,21 +5679,37 @@ let differenceSpaceTransformMode = 'none';
       rotationApplyBtn.textContent = isStyleMode
         ? 'スタイル適用'
         : (isCopyMode ? 'コピー実行' : (isDeleteMode ? '削除実行' : (isMovePoint ? '座標適用' : (isScalePoint ? 'スケール適用' : '適用'))));
+      rotationApplyBtn.style.display = isTextureMode ? 'none' : '';
       if (!isDeleteMode) {
         rotationApplyBtn.disabled = false;
       }
     }
+    if (rotationDecorationZeroBaseBtn) {
+      rotationDecorationZeroBaseBtn.style.display = isTextureMode ? 'none' : rotationDecorationZeroBaseBtn.style.display;
+    }
+    if (rotationSelectionInfo) {
+      rotationSelectionInfo.style.display = isTextureMode ? 'none' : '';
+    }
+    if (differenceUnifyButton) {
+      differenceUnifyButton.style.display = isTextureMode ? 'none' : differenceUnifyButton.style.display;
+    }
+    if (differenceResetBeforeUnifyButton) {
+      differenceResetBeforeUnifyButton.style.display = isTextureMode ? 'none' : differenceResetBeforeUnifyButton.style.display;
+    }
+    if (differenceViewToggleButton) {
+      differenceViewToggleButton.style.display = isTextureMode ? 'none' : differenceViewToggleButton.style.display;
+    }
     updateDecorationZeroBaseButton();
     if (movePointCoordinateModeRow) {
-      movePointCoordinateModeRow.style.display = (isMovePoint || isScalePoint || isCopyMode) ? 'block' : 'none';
+      movePointCoordinateModeRow.style.display = (!isTextureMode && (isMovePoint || isScalePoint || isCopyMode)) ? 'block' : 'none';
     }
     if (copyTargetModeRow) {
-      copyTargetModeRow.style.display = isCopyMode ? 'block' : 'none';
+      copyTargetModeRow.style.display = (!isTextureMode && isCopyMode) ? 'block' : 'none';
     }
     updateMovePointCoordinateButtons();
     updateCopyTargetModeButtons();
     if (movePointAxisLegend) {
-      movePointAxisLegend.style.display = (isMovePoint || isScalePoint) ? 'block' : 'none';
+      movePointAxisLegend.style.display = (!isTextureMode && (isMovePoint || isScalePoint)) ? 'block' : 'none';
     }
     if (!isMovePoint) {
       movePointAxisReferencePickAxis = null;
@@ -5645,6 +5871,28 @@ let differenceSpaceTransformMode = 'none';
     if (registered?.parent) { return registered; }
     copyObjectRegistry.set(refId, mesh);
     return mesh;
+  }
+
+  function syncCopyModeLiveObjectReferences() {
+    const remappedSelections = [];
+    Array.from(copySelectedObjects).forEach((mesh) => {
+      const liveMesh = resolveCopySourceObject(mesh);
+      if (!liveMesh?.parent) {
+        copySelectedObjects.delete(mesh);
+        return;
+      }
+      if (liveMesh !== mesh) {
+        copySelectedObjects.delete(mesh);
+      }
+      remappedSelections.push(liveMesh);
+    });
+    remappedSelections.forEach((mesh) => {
+      copySelectedObjects.add(mesh);
+    });
+    if (choice_object && !choice_object?.parent) {
+      const liveChoice = resolveCopySourceObject(choice_object);
+      choice_object = liveChoice?.parent ? liveChoice : false;
+    }
   }
 
   function clearCopiedStateFromSegmentsByPoints(points) {
@@ -6136,6 +6384,7 @@ let differenceSpaceTransformMode = 'none';
     });
     latestTargets.forEach((mesh) => push(mesh));
     targetObjects = merged;
+    syncCopyModeLiveObjectReferences();
   }
 
   function getCopyStructurePointMeshes(structureMesh) {
@@ -6214,7 +6463,9 @@ let differenceSpaceTransformMode = 'none';
     return resolveCopySelectableFromHit(decoRoot) || decoRoot;
   }
 
-  function collectStructurePointsFromHitTarget(targetMesh) {
+  function collectStructurePointsFromHitTarget(targetMesh, {
+    includeRailPlacementGroup = true,
+  } = {}) {
     const target = resolveCopySelectableFromHit(targetMesh) || targetMesh;
     if (!target?.parent) { return []; }
     if (target?.userData?.steelFramePoint) { return [target]; }
@@ -6222,7 +6473,9 @@ let differenceSpaceTransformMode = 'none';
       return getCopyStructurePointMeshes(target);
     }
     const structureGroupId = String(target?.userData?.structureGroupId || '').trim();
-    const railPlacementGroupId = String(target?.userData?.railPlacementGroupId || '').trim();
+    const railPlacementGroupId = includeRailPlacementGroup
+      ? String(target?.userData?.railPlacementGroupId || '').trim()
+      : '';
     if (!structureGroupId && !railPlacementGroupId) { return []; }
     const matchedSegments = getConstructionCopyTargets()
       .filter((obj) => obj?.parent && obj?.name === 'SteelFrameSegment')
@@ -6233,6 +6486,9 @@ let differenceSpaceTransformMode = 'none';
           return railPlacementGroupId === railId;
         }
         if (structureGroupId && gid) {
+          if (!includeRailPlacementGroup && railId) {
+            return false;
+          }
           return structureGroupId === gid;
         }
         return false;
@@ -6249,12 +6505,94 @@ let differenceSpaceTransformMode = 'none';
     return out;
   }
 
+  function collectCopyGroupPointsFromTarget(targetMesh) {
+    const target = resolveCopySelectableFromHit(targetMesh) || targetMesh;
+    if (!target?.parent) { return []; }
+    const ownerSegment = target?.userData?.steelFramePoint
+      ? getConstructionCopyTargets()
+        .find((mesh) => {
+          if (!mesh?.parent || mesh?.name !== 'SteelFrameSegment') { return false; }
+          const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+            ? mesh.userData.steelFrameSegmentPointRefs
+            : [];
+          return refs.includes(target);
+        }) || null
+      : null;
+    const baseTarget = ownerSegment || target;
+    const structureGroupId = String(baseTarget?.userData?.structureGroupId || '').trim();
+    const railPlacementGroupId = String(baseTarget?.userData?.railPlacementGroupId || '').trim();
+    if (!structureGroupId && !railPlacementGroupId) {
+      return collectStructurePointsFromHitTarget(baseTarget);
+    }
+    return collectStructurePointsFromHitTarget({
+      parent: baseTarget.parent,
+      userData: {
+        structureGroupId,
+        railPlacementGroupId,
+      },
+    });
+  }
+
   function debugRotateStructureSelection(label, payload = {}) {
     try {
       console.log(`[rotate_debug] ${label}`, payload);
     } catch (_err) {
       // no-op
     }
+  }
+
+  function toggleStructurePointSelectionFromTargets(initialPoints, {
+    pivotTarget = null,
+    clearChoiceOnDeselect = false,
+    redrawOnDeselect = false,
+    refreshUI = null,
+    prepareTargets = null,
+  } = {}) {
+    if (!Array.isArray(initialPoints) || initialPoints.length < 1) { return false; }
+    const wasAllSelected = initialPoints.every((mesh) => steelFrameMode.isSelectedPoint(mesh));
+    const preparedPoints = typeof prepareTargets === 'function'
+      ? prepareTargets(initialPoints)
+      : ensureCopiedGroupReadyForPointEdit(initialPoints, { promptDetachConfirm: true });
+    const points = Array.isArray(preparedPoints)
+      ? preparedPoints.filter((mesh, index, arr) => mesh?.userData?.steelFramePoint && arr.indexOf(mesh) === index)
+      : [];
+    if (!Array.isArray(points) || points.length < 1) { return false; }
+    if (wasAllSelected) {
+      points.forEach((mesh) => {
+        if (steelFrameMode.isSelectedPoint(mesh)) {
+          steelFrameMode.toggleSelectedPoint(mesh);
+        }
+      });
+      if (clearChoiceOnDeselect) {
+        choice_object = false;
+      }
+    } else {
+      points.forEach((mesh) => {
+        if (!steelFrameMode.isSelectedPoint(mesh)) {
+          steelFrameMode.toggleSelectedPoint(mesh);
+        }
+      });
+    }
+    if (!wasAllSelected) {
+      const pivot = pivotTarget?.position
+        ? pivotTarget.position
+        : (points[0]?.position || new THREE.Vector3());
+      const nearest = points.reduce((best, mesh) => {
+        if (!best) { return mesh; }
+        const a = best?.position?.distanceToSquared?.(pivot) ?? Infinity;
+        const b = mesh?.position?.distanceToSquared?.(pivot) ?? Infinity;
+        return b < a ? mesh : best;
+      }, null);
+      if (nearest) {
+        choice_object = nearest;
+      }
+    }
+    if (redrawOnDeselect && wasAllSelected) {
+      drawingObject(points);
+      syncSteelFrameTargetObjectsAfterRebuild();
+    }
+    refreshUI?.();
+    return true;
   }
 
   function toggleMovePointStructureSelection(target) {
@@ -6279,65 +6617,46 @@ let differenceSpaceTransformMode = 'none';
       return true;
     }
 
-    const initialPoints = collectStructurePointsFromHitTarget(target);
-    if (!Array.isArray(initialPoints) || initialPoints.length < 1) { return false; }
-    // 先に元状態を判定する。
-    // ensureCopiedGroupReadyForPointEdit() は設定に応じて全点選択へ展開するため、
-    // 後判定だと直後に解除扱いになってしまう。
-    const wasAllSelected = initialPoints.every((mesh) => steelFrameMode.isSelectedPoint(mesh));
-    const points = ensureCopiedGroupReadyForPointEdit(initialPoints, { promptDetachConfirm: true });
-    if (!Array.isArray(points) || points.length < 1) { return false; }
-    const allSelected = wasAllSelected;
-    if (allSelected) {
-      points.forEach((mesh) => {
-        if (steelFrameMode.isSelectedPoint(mesh)) {
-          steelFrameMode.toggleSelectedPoint(mesh);
-        }
-      });
-      if (choice_object === target) {
-        choice_object = false;
-      }
-    } else {
-      points.forEach((mesh) => {
-        if (!steelFrameMode.isSelectedPoint(mesh)) {
-          steelFrameMode.toggleSelectedPoint(mesh);
-        }
-      });
-    }
-    if (!allSelected) {
-      const pivot = target?.position
-        ? target.position
-        : (points[0]?.position || new THREE.Vector3());
-      const nearest = points.reduce((best, mesh) => {
-        if (!best) { return mesh; }
-        const a = best?.position?.distanceToSquared?.(pivot) ?? Infinity;
-        const b = mesh?.position?.distanceToSquared?.(pivot) ?? Infinity;
-        return b < a ? mesh : best;
-      }, null);
-      if (nearest) {
-        choice_object = nearest;
-      }
-    }
-    // 解除時のみ構造物を再描画する。
-    if (allSelected) {
-      drawingObject(points);
-      syncSteelFrameTargetObjectsAfterRebuild();
-    }
-    refreshPointEditPanelUI({ clearInputs: true });
-    return true;
+    const initialPoints = collectStructurePointsFromHitTarget(target, {
+      includeRailPlacementGroup: false,
+    });
+    return toggleStructurePointSelectionFromTargets(initialPoints, {
+      pivotTarget: target,
+      clearChoiceOnDeselect: true,
+      redrawOnDeselect: true,
+      refreshUI: () => refreshPointEditPanelUI({ clearInputs: true }),
+    });
+  }
+
+  function isCopyGroupMovePointSelectionMode() {
+    return copyModeActive
+      && editObject === 'STEEL_FRAME'
+      && objectEditMode === 'COPY'
+      && copyTargetMode === 'group';
   }
 
   function resolveMovePointTargetFromIntersect(hit) {
     const allowStructureHitSelection = movePointPanelActive
+      || isCopyGroupMovePointSelectionMode()
       || (editObject === 'STEEL_FRAME' && objectEditMode === ROTATE_MODE);
     if (!allowStructureHitSelection) { return null; }
-    if (editObject !== 'STEEL_FRAME' || (objectEditMode !== 'MOVE_EXISTING' && objectEditMode !== ROTATE_MODE)) { return null; }
+    if (editObject !== 'STEEL_FRAME' || !['MOVE_EXISTING', ROTATE_MODE, 'COPY'].includes(objectEditMode)) { return null; }
     const rawObject = hit?.object || null;
     if (!rawObject) { return null; }
-    if (rawObject?.userData?.steelFramePoint) { return rawObject; }
+    if (rawObject?.userData?.steelFramePoint) {
+      return isCopyGroupMovePointSelectionMode()
+        ? (resolveCopyGroupSelectionTarget(rawObject) || rawObject)
+        : rawObject;
+    }
     const selectable = resolveSelectableHitObject(rawObject) || rawObject;
-    if (selectable?.userData?.steelFramePoint) { return selectable; }
-    const pointCandidates = collectStructurePointsFromHitTarget(selectable);
+    if (selectable?.userData?.steelFramePoint) {
+      return isCopyGroupMovePointSelectionMode()
+        ? (resolveCopyGroupSelectionTarget(selectable) || selectable)
+        : selectable;
+    }
+    const pointCandidates = collectStructurePointsFromHitTarget(selectable, {
+      includeRailPlacementGroup: false,
+    });
     if (pointCandidates.length < 1) { return null; }
     // 構造物クリック時は「最寄り1点」へ畳まず、構造物のまま返す。
     // クリック確定時に対応する制御点群を一括選択する。
@@ -6352,7 +6671,9 @@ let differenceSpaceTransformMode = 'none';
       const selectable = resolveSelectableHitObject(raw) || raw;
       if (!selectable?.parent) { continue; }
       if (selectable?.userData?.decorationType) { return selectable; }
-      const groupedPoints = collectStructurePointsFromHitTarget(selectable);
+      const groupedPoints = collectStructurePointsFromHitTarget(selectable, {
+        includeRailPlacementGroup: false,
+      });
       if (Array.isArray(groupedPoints) && groupedPoints.length > 0 && !selectable?.userData?.steelFramePoint) {
         return selectable;
       }
@@ -6396,7 +6717,10 @@ let differenceSpaceTransformMode = 'none';
         openLedBoardTextEditor(choice_object);
         return true;
       }
-      if (pointRotateModeActive) {
+      const shouldEnterDecorationRotate = pointRotateModeActive
+        || (editObject === 'STEEL_FRAME' && objectEditMode === ROTATE_MODE);
+      if (shouldEnterDecorationRotate) {
+        pointRotateModeActive = true;
         pointRotateTarget = choice_object;
         pointRotateCenter.copy(choice_object.position);
         pointRotateBasisQuat.copy(loadPointRotateBasisFromTarget(choice_object));
@@ -6447,9 +6771,10 @@ let differenceSpaceTransformMode = 'none';
 
   function resolveMovePointPreferredHitObject(intersects) {
     const allowStructureHitSelection = movePointPanelActive
+      || isCopyGroupMovePointSelectionMode()
       || (editObject === 'STEEL_FRAME' && objectEditMode === ROTATE_MODE);
     if (!allowStructureHitSelection) { return null; }
-    if (editObject !== 'STEEL_FRAME' || (objectEditMode !== 'MOVE_EXISTING' && objectEditMode !== ROTATE_MODE)) { return null; }
+    if (editObject !== 'STEEL_FRAME' || !['MOVE_EXISTING', ROTATE_MODE, 'COPY'].includes(objectEditMode)) { return null; }
     if (!Array.isArray(intersects) || intersects.length < 1) { return null; }
 
     const firstHit = intersects[0];
@@ -6461,7 +6786,10 @@ let differenceSpaceTransformMode = 'none';
       return Boolean(obj?.userData?.steelFramePoint) && isTubeControlPointMesh(obj);
     });
     if (!pointHit) { return null; }
-    return resolveSelectableHitObject(pointHit.object) || pointHit.object;
+    const target = resolveSelectableHitObject(pointHit.object) || pointHit.object;
+    return isCopyGroupMovePointSelectionMode()
+      ? (resolveCopyGroupSelectionTarget(target) || target)
+      : target;
   }
 
   function resolveRailStructureHandleFromHit(mesh) {
@@ -6482,6 +6810,99 @@ let differenceSpaceTransformMode = 'none';
 
   function isCopySelectableMesh(mesh) {
     return Boolean(resolveCopySelectableFromHit(mesh));
+  }
+
+  function resolveCopyGroupSelectionTarget(target) {
+    const resolved = resolveCopySelectableFromHit(target) || target;
+    if (!resolved) { return null; }
+    if (!resolved?.userData?.steelFramePoint) { return resolved; }
+    const segmentTargets = getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment')
+      .filter((mesh) => {
+        const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+          ? mesh.userData.steelFrameSegmentPointRefs
+          : [];
+        return refs.includes(resolved);
+      });
+    return segmentTargets[0] || resolved;
+  }
+
+  function getCopyGroupSelectionDescriptorsFromPoints() {
+    const selectedPoints = steelFrameMode?.getSelectedPointMeshes?.()
+      ?.filter((mesh) => mesh?.userData?.steelFramePoint && mesh?.parent) || [];
+    if (selectedPoints.length < 1) { return []; }
+    const pointSet = new Set(selectedPoints);
+    const segments = getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment');
+    const descriptors = [];
+    const seen = new Set();
+    segments.forEach((mesh) => {
+      const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        ? mesh.userData.steelFrameSegmentPointRefs
+        : [];
+      if (!refs.some((pointMesh) => pointSet.has(pointMesh))) { return; }
+      const structureGroupId = String(mesh?.userData?.structureGroupId || '').trim();
+      const railPlacementGroupId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+      const key = railPlacementGroupId
+        ? `rail:${railPlacementGroupId}`
+        : (structureGroupId ? `group:${structureGroupId}` : `segment:${ensureCopyObjectRefId(mesh) || mesh.id}`);
+      if (seen.has(key)) { return; }
+      const groupedPoints = collectCopyGroupPointsFromTarget(mesh)
+        .filter((pointMesh, index, arr) => pointMesh?.userData?.steelFramePoint && arr.indexOf(pointMesh) === index);
+      if (groupedPoints.length < 1) { return; }
+      const allSelected = groupedPoints.every((pointMesh) => pointSet.has(pointMesh));
+      if (!allSelected) { return; }
+      seen.add(key);
+      descriptors.push({
+        key,
+        representative: mesh,
+        structureGroupId,
+        railPlacementGroupId,
+      });
+    });
+    return descriptors;
+  }
+
+  function getCopyGroupMemberObjects(descriptor) {
+    if (!descriptor?.representative?.parent) { return []; }
+    const structureGroupId = String(descriptor?.structureGroupId || '').trim();
+    const railPlacementGroupId = String(descriptor?.railPlacementGroupId || '').trim();
+    if (!structureGroupId && !railPlacementGroupId) {
+      return [descriptor.representative];
+    }
+    return getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .filter((mesh) => {
+        const gid = String(mesh?.userData?.structureGroupId || '').trim();
+        const railId = String(mesh?.userData?.railPlacementGroupId || '').trim();
+        if (railPlacementGroupId && railId) {
+          return railPlacementGroupId === railId;
+        }
+        if (structureGroupId && gid) {
+          return structureGroupId === gid;
+        }
+        return false;
+      });
+  }
+
+  function syncCopyGroupSelectionFromPoints() {
+    const nextSelectedObjects = new Set();
+    getCopyGroupSelectionDescriptorsFromPoints().forEach((descriptor) => {
+      getCopyGroupMemberObjects(descriptor).forEach((mesh) => {
+        if (!mesh?.parent) { return; }
+        nextSelectedObjects.add(mesh);
+      });
+    });
+    Array.from(copySelectedObjects).forEach((mesh) => {
+      if (nextSelectedObjects.has(mesh)) { return; }
+      copySelectedObjects.delete(mesh);
+      setCopyObjectVisual(mesh, false);
+    });
+    nextSelectedObjects.forEach((mesh) => {
+      copySelectedObjects.add(mesh);
+      setCopyObjectVisual(mesh, true);
+    });
+    return Array.from(nextSelectedObjects);
   }
 
   function isStyleSelectableMesh(mesh) {
@@ -6505,6 +6926,18 @@ let differenceSpaceTransformMode = 'none';
   function toggleCopySelection(mesh) {
     const target = resolveCopySelectableFromHit(mesh);
     if (!target) { return false; }
+    if (copyTargetMode === 'group') {
+      const initialPoints = collectCopyGroupPointsFromTarget(target);
+    const handled = toggleStructurePointSelectionFromTargets(initialPoints, {
+      pivotTarget: target,
+      clearChoiceOnDeselect: true,
+      redrawOnDeselect: true,
+      refreshUI: () => updateCopyPanelUI({ clearInputs: true }),
+      prepareTargets: (points) => points,
+    });
+      if (!handled) { return false; }
+      return syncCopyGroupSelectionFromPoints().length > 0;
+    }
     if (target.userData?.steelFramePoint) {
       return steelFrameMode.toggleSelectedPoint(target);
     }
@@ -6584,7 +7017,7 @@ let differenceSpaceTransformMode = 'none';
     const first = selected[0] || null;
     const style = steelFrameMode?.getSegmentStyle?.(first) || null;
     const firstProfile = String(first?.userData?.steelFrameSegmentProfile || '').toLowerCase();
-    const rollCapableProfiles = new Set(['rect_bar', 'h_beam', 't_beam', 'l_beam']);
+    const rollCapableProfiles = new Set(['rect_bar', 'h_beam', 't_beam', 'l_beam', 'truss_column', 'truss_ladder', 'truss_catenary']);
     const isRollCapable = rollCapableProfiles.has(firstProfile);
     if (rotationInputSetY) {
       if (clearInputs) { rotationInputSetY.value = ''; }
@@ -6617,8 +7050,8 @@ let differenceSpaceTransformMode = 'none';
     if (rotationSelectionInfo) {
       rotationSelectionInfo.textContent = [
         `選択構造物: ${selected.length}`,
-        '対象: Round/Rect/Corrugated/H/T/L beam, Light tube',
-        'Roll: Rect/H/T/L beam の長手軸まわり角度°',
+        '対象: Round/Rect/Corrugated/H/T/L beam, Truss, Light tube',
+        'Roll: Rect/H/T/L beam / Truss の長手軸まわり角度°',
         'X: 幅（Round / Light tube は直径）',
         'Y: 高さ（Corrugated は角度°）',
         'Z: 厚み（Rect は角丸R / Corrugated は波密度 / Light tube は直径代替）',
@@ -6626,6 +7059,62 @@ let differenceSpaceTransformMode = 'none';
       ].join('\n');
     }
     syncRotationInputGhostHints();
+  }
+
+  function captureStyleEditState(meshes = []) {
+    const list = Array.isArray(meshes) ? meshes.filter((mesh) => mesh?.parent && mesh?.name === 'SteelFrameSegment') : [];
+    return list.map((mesh) => {
+      const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+        ? mesh.userData.steelFrameSegmentPointRefs.filter((pointMesh) => pointMesh?.userData?.steelFramePoint)
+        : [];
+      const style = steelFrameMode?.getSegmentStyle?.(mesh) || null;
+      return {
+        id: mesh?.id ?? null,
+        name: String(mesh?.name || ''),
+        groupId: String(mesh?.userData?.structureGroupId || '').trim() || null,
+        profile: String(mesh?.userData?.steelFrameSegmentProfile || '').trim() || null,
+        scale: mesh?.scale?.toArray?.() || null,
+        pointKeys: refs.map((pointMesh) => String(pointMesh?.userData?.steelFramePointPersistentId || pointMesh?.id || '')).filter(Boolean),
+        pointPositions: refs.map((pointMesh) => ({
+          key: String(pointMesh?.userData?.steelFramePointPersistentId || pointMesh?.id || ''),
+          position: pointMesh?.position?.toArray?.() || null,
+        })),
+        style: style ? { ...style } : null,
+      };
+    });
+  }
+
+  function diffStyleEditState(beforeRows = [], afterRows = []) {
+    const beforeList = Array.isArray(beforeRows) ? beforeRows : [];
+    const afterList = Array.isArray(afterRows) ? afterRows : [];
+    const count = Math.max(beforeList.length, afterList.length);
+    const rows = [];
+    for (let i = 0; i < count; i += 1) {
+      const beforeRow = beforeList[i] || null;
+      const afterRow = afterList[i] || null;
+      const changedFields = [];
+      if ((beforeRow?.groupId || null) !== (afterRow?.groupId || null)) {
+        changedFields.push('groupId');
+      }
+      if ((beforeRow?.profile || null) !== (afterRow?.profile || null)) {
+        changedFields.push('profile');
+      }
+      if (JSON.stringify(beforeRow?.scale || null) !== JSON.stringify(afterRow?.scale || null)) {
+        changedFields.push('mesh.scale');
+      }
+      if (JSON.stringify(beforeRow?.pointKeys || []) !== JSON.stringify(afterRow?.pointKeys || [])) {
+        changedFields.push('pointKeys');
+      }
+      if (JSON.stringify(beforeRow?.pointPositions || []) !== JSON.stringify(afterRow?.pointPositions || [])) {
+        changedFields.push('pointPositions');
+      }
+      rows.push({
+        beforeId: beforeRow?.id ?? null,
+        afterId: afterRow?.id ?? null,
+        changedFields,
+      });
+    }
+    return rows;
   }
 
   function applyStyleFromPanel() {
@@ -6667,6 +7156,7 @@ let differenceSpaceTransformMode = 'none';
       }
       return;
     }
+    const beforeState = captureStyleEditState(targets);
     const stylePatch = {};
     if (roll !== undefined) { stylePatch.beamRollDeg = roll; }
     if (x !== undefined) { stylePatch.beamWidthHorizontal = x; }
@@ -6678,6 +7168,24 @@ let differenceSpaceTransformMode = 'none';
         rotationSelectionInfo.textContent = '適用対象がありません（beam / Light tube を選択してください）。';
       }
       return;
+    }
+    const appliedMeshes = Array.isArray(result?.meshes) && result.meshes.length > 0
+      ? result.meshes.filter((mesh) => mesh?.parent)
+      : targets;
+    const afterState = captureStyleEditState(appliedMeshes);
+    const stateDiff = diffStyleEditState(beforeState, afterState);
+    console.warn('[style-debug] applied segment style', {
+      targetCount: targets.length,
+      rebuiltCount: Number(result?.rebuilt) || 0,
+      stylePatch,
+      before: beforeState,
+      after: afterState,
+      nonStyleChanges: stateDiff,
+    });
+    if (typeof showTopNotice === 'function') {
+      const changedNonStyle = stateDiff.some((row) => Array.isArray(row?.changedFields) && row.changedFields.length > 0);
+      const suffix = changedNonStyle ? ' + side effects' : '';
+      showTopNotice(`[style-debug] rebuilt=${Number(result?.rebuilt) || 0}${suffix}`, changedNonStyle ? 3200 : 1800);
     }
     if (Array.isArray(result?.meshes) && result.meshes.length > 0) {
       clearStyleSelection();
@@ -7277,6 +7785,150 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
     return out;
   }
 
+  function roundWorldSaveDiagnosticValue(value, digits = 6) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) { return 0; }
+    const factor = 10 ** digits;
+    return Math.round(num * factor) / factor;
+  }
+
+  function normalizeWorldSaveDiagnosticObject(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return {};
+    }
+    const out = {};
+    Object.keys(raw).sort().forEach((key) => {
+      const value = raw[key];
+      if (value == null) { return; }
+      if (typeof value === 'number') {
+        out[key] = roundWorldSaveDiagnosticValue(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        out[key] = value.map((item) => (
+          typeof item === 'number'
+            ? roundWorldSaveDiagnosticValue(item)
+            : item
+        ));
+        return;
+      }
+      if (typeof value === 'object') {
+        out[key] = normalizeWorldSaveDiagnosticObject(value);
+        return;
+      }
+      out[key] = value;
+    });
+    return out;
+  }
+
+  function buildWorldSaveDiagnosticMemberSignatures(groupId) {
+    const gid = String(groupId || '').trim();
+    if (!gid) { return []; }
+    const members = getConstructionCopyTargets()
+      .filter((mesh) => mesh?.parent)
+      .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === gid);
+    if (members.length < 1) { return []; }
+    const pose = computeStructureGroupPoseFromMembers(members);
+    const center = pose?.center?.isVector3 ? pose.center.clone() : new THREE.Vector3();
+    const invQuat = pose?.quaternion?.isQuaternion
+      ? pose.quaternion.clone().invert().normalize()
+      : new THREE.Quaternion();
+    const signatures = [];
+    members.forEach((mesh) => {
+      if (!mesh?.parent) { return; }
+      if (mesh?.name === 'SteelFrameSegment') {
+        const refs = Array.isArray(mesh?.userData?.steelFrameSegmentPointRefs)
+          ? mesh.userData.steelFrameSegmentPointRefs.filter((point) => point?.position?.isVector3)
+          : [];
+        const localPoints = refs.map((point) => {
+          const local = point.position.clone().sub(center).applyQuaternion(invQuat);
+          return [
+            roundWorldSaveDiagnosticValue(local.x),
+            roundWorldSaveDiagnosticValue(local.y),
+            roundWorldSaveDiagnosticValue(local.z),
+          ];
+        });
+        signatures.push(JSON.stringify({
+          kind: 'segment',
+          profile: String(mesh?.userData?.steelFrameSegmentProfile || '').trim(),
+          style: normalizeWorldSaveDiagnosticObject(mesh?.userData?.steelFrameSegmentStyle || {}),
+          points: localPoints,
+        }));
+        return;
+      }
+      if (mesh?.userData?.decorationType) {
+        const localPos = mesh?.position?.isVector3
+          ? mesh.position.clone().sub(center).applyQuaternion(invQuat)
+          : null;
+        const localQuat = mesh?.quaternion?.isQuaternion
+          ? invQuat.clone().multiply(mesh.quaternion.clone()).normalize()
+          : null;
+        signatures.push(JSON.stringify({
+          kind: 'decoration',
+          decorationType: String(mesh?.userData?.decorationType || '').trim(),
+          name: String(mesh?.name || '').trim(),
+          position: localPos ? [
+            roundWorldSaveDiagnosticValue(localPos.x),
+            roundWorldSaveDiagnosticValue(localPos.y),
+            roundWorldSaveDiagnosticValue(localPos.z),
+          ] : null,
+          quaternion: localQuat ? [
+            roundWorldSaveDiagnosticValue(localQuat.x),
+            roundWorldSaveDiagnosticValue(localQuat.y),
+            roundWorldSaveDiagnosticValue(localQuat.z),
+            roundWorldSaveDiagnosticValue(localQuat.w),
+          ] : null,
+          scale: mesh?.scale ? [
+            roundWorldSaveDiagnosticValue(mesh.scale.x),
+            roundWorldSaveDiagnosticValue(mesh.scale.y),
+            roundWorldSaveDiagnosticValue(mesh.scale.z),
+          ] : null,
+        }));
+      }
+    });
+    signatures.sort();
+    return signatures;
+  }
+
+  function diagnoseWorldSaveBeforeExport() {
+    const copiedGroups = collectCopiedStructureGroupsForSave();
+    const mismatches = [];
+    copiedGroups.forEach((entry) => {
+      const groupId = String(entry?.groupId || '').trim();
+      const sourceGroupId = String(entry?.sourceGroupId || '').trim();
+      if (!groupId || !sourceGroupId) { return; }
+      const copied = buildWorldSaveDiagnosticMemberSignatures(groupId);
+      const source = buildWorldSaveDiagnosticMemberSignatures(sourceGroupId);
+      const copiedJoined = copied.join('\n');
+      const sourceJoined = source.join('\n');
+      if (copiedJoined === sourceJoined) { return; }
+      const sourceSet = new Set(source);
+      const copiedSet = new Set(copied);
+      const onlyInCopied = copied.filter((row) => !sourceSet.has(row)).slice(0, 3);
+      const onlyInSource = source.filter((row) => !copiedSet.has(row)).slice(0, 3);
+      mismatches.push({
+        groupId,
+        sourceGroupId,
+        copiedSignatureCount: copied.length,
+        sourceSignatureCount: source.length,
+        onlyInCopied,
+        onlyInSource,
+      });
+    });
+    const summary = {
+      copiedGroupCount: copiedGroups.length,
+      mismatchCount: mismatches.length,
+      mismatches,
+    };
+    if (mismatches.length > 0) {
+      console.warn('[world-save-diagnostic] copied group/source mismatch before save', summary);
+      showTopNotice(`[world-save-diagnostic] 未同期グループ ${mismatches.length}件`, 5200);
+    } else {
+      console.info('[world-save-diagnostic] copied groups synced before save', summary);
+    }
+    return summary;
+  }
+
   function collectCopiedStructureGroupIdsForSave() {
     const ids = new Set();
     getConstructionCopyTargets()
@@ -7340,6 +7992,12 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
         .filter((mesh) => mesh?.parent)
         .filter((mesh) => String(mesh?.userData?.structureGroupId || '').trim() === sourceId);
       if (sourceMembers.length < 1) {
+        pushRuntimeRebuildDiagnostic('copySourceMissing', {
+          entryIndex,
+          targetGroupId: String(entry?.groupId || '').trim() || null,
+          sourceGroupIdRaw: sourceIdRaw || null,
+          sourceGroupIdResolved: sourceId || null,
+        });
         console.warn('[group_copy_restore] source members not found', {
           entryIndex,
           sourceGroupIdRaw: sourceIdRaw,
@@ -7575,6 +8233,11 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
       const visitKey = requestedGroupId || `__idx_${entryIndex}`;
       if (completedKeys.has(visitKey)) { return true; }
       if (visitingKeys.has(visitKey)) {
+        pushRuntimeRebuildDiagnostic('copyCyclicDependency', {
+          entryIndex,
+          groupId: requestedGroupId || null,
+          sourceGroupId: String(entry?.sourceGroupId || '').trim() || null,
+        });
         console.warn('[group_copy_restore] cyclic dependency detected', {
           entryIndex,
           groupId: requestedGroupId || null,
@@ -8141,7 +8804,9 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
     }
     if (rotationSelectionInfo) {
       const pointCount = steelFrameMode?.getSelectedPointMeshes?.()?.length || 0;
-      const objectCount = copySelectedObjects.size;
+      const objectCount = copyTargetMode === 'group'
+        ? syncCopyGroupSelectionFromPoints().length
+        : copySelectedObjects.size;
       const modeLabel = copyOffsetCoordinateMode === 'grid' ? 'Grid' : 'World';
       const targetLabel = copyTargetMode === 'group' ? 'Group' : 'Individual';
       rotationSelectionInfo.textContent = [
@@ -8243,7 +8908,30 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
       return;
     }
     const deletedItems = [];
+    const deletedGenerationRuns = [];
+    const handledGenerationRuntimeIds = new Set();
     targets.forEach((mesh) => {
+      const runtimeId = getPinGenerationRuntimeIdFromObjectName(mesh?.name || '');
+      if (runtimeId && !handledGenerationRuntimeIds.has(runtimeId)) {
+        const generationRun = (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : [])
+          .find((run) => String(run?._pinGenerationRuntimeId || '').trim() === runtimeId) || null;
+        if (generationRun) {
+          const savedRun = {
+            ...generationRun,
+            pins: normalizePinsPayload(generationRun?.pins),
+            params: (generationRun?.params && typeof generationRun.params === 'object')
+              ? { ...generationRun.params }
+              : {},
+            _pinGenerationRuntimeId: runtimeId,
+            replayDone: Boolean(generationRun?.replayDone),
+          };
+          if (removeStructureGenerationMeshesByRuntimeId(generationRun, { removeRun: true })) {
+            deletedGenerationRuns.push(savedRun);
+            handledGenerationRuntimeIds.add(runtimeId);
+            return;
+          }
+        }
+      }
       if (mesh?.userData?.decorationType) {
         if (detachDecorationObject(mesh)) {
           deletedItems.push({ kind: 'decoration', mesh });
@@ -8256,7 +8944,7 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
         }
       }
     });
-    if (deletedItems.length < 1) {
+    if (deletedItems.length < 1 && deletedGenerationRuns.length < 1) {
       if (rotationSelectionInfo) {
         rotationSelectionInfo.textContent = '削除対象の処理に失敗しました。';
       }
@@ -8266,6 +8954,7 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
     pushCreateHistory({
       type: 'delete_objects',
       items: deletedItems,
+      generationRuns: deletedGenerationRuns,
     });
     refreshCreateTargetsForSearch();
     drawingObject();
@@ -8343,7 +9032,9 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
     }
     const baseOffset = new THREE.Vector3(dx, dy, dz);
     const srcPoints = steelFrameMode?.getSelectedPointMeshes?.()?.filter((mesh) => mesh?.userData?.steelFramePoint) || [];
-    const selectedObjects = Array.from(copySelectedObjects)
+    const selectedObjects = (copyTargetMode === 'group'
+      ? syncCopyGroupSelectionFromPoints()
+      : Array.from(copySelectedObjects))
       .map((mesh) => resolveCopySourceObject(mesh))
       .filter((mesh) => mesh?.parent);
     const isGroupCopyMode = copyTargetMode === 'group';
@@ -8612,7 +9303,11 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
   }
 
   function setCopyTargetMode(mode = 'individual', { refresh = true } = {}) {
-    copyTargetMode = mode === 'group' ? 'group' : 'individual';
+    const nextMode = mode === 'group' ? 'group' : 'individual';
+    if (copyTargetMode !== nextMode) {
+      clearCopySelection();
+    }
+    copyTargetMode = nextMode;
     updateCopyTargetModeButtons();
     if (copyModeActive && objectEditMode === 'COPY' && refresh) {
       updateCopyPanelUI({ clearInputs: false });
@@ -9015,6 +9710,26 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
     }
 
     const differenceContext = (editObject === 'DIFFERENCE_SPACE' && differenceSpaceTransformMode === 'scale');
+    const singleDecorationScale = !differenceContext
+      && targets.length === 1
+      && Boolean(targets[0]?.userData?.decorationType);
+    if (singleDecorationScale) {
+      const mesh = targets[0];
+      const beforeScale = mesh?.scale?.clone ? mesh.scale.clone() : new THREE.Vector3(1, 1, 1);
+      mesh.scale.set(beforeScale.x * sx, beforeScale.y * sy, beforeScale.z * sz);
+      mesh.updateMatrixWorld(true);
+      pushCreateHistory({
+        type: 'scale_meshes',
+        items: [{
+          mesh,
+          before: beforeScale,
+          after: mesh.scale.clone(),
+        }],
+      });
+      drawingObject(targets);
+      updateScalePointPanelUI({ clearInputs: true });
+      return;
+    }
     const workItems = targets.map((mesh) => {
       const frame = getMovePointGridFrameForMesh(mesh);
       const posWorld = getScaleTargetWorldPosition(mesh);
@@ -9457,23 +10172,9 @@ function syncSavedRotationForActiveStructureGroup(panelAngles = null) {
       const xDeg = Number.isFinite(parseFloat(xRaw)) ? parseFloat(xRaw) : (Number(state?.x) || 0);
       const yDeg = Number.isFinite(parseFloat(yRaw)) ? parseFloat(yRaw) : (Number(state?.y) || 0);
       const zDeg = Number.isFinite(parseFloat(zRaw)) ? parseFloat(zRaw) : (Number(state?.z) || 0);
-      const nextQuat = new THREE.Quaternion();
-      if (Math.abs(xDeg) > 1e-6) {
-        const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuat).normalize();
-        const qx = new THREE.Quaternion().setFromAxisAngle(axisX, xDeg * degToRad);
-        nextQuat.copy(qx.multiply(nextQuat)).normalize();
-      }
-      if (Math.abs(yDeg) > 1e-6) {
-        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yDeg * degToRad);
-        nextQuat.copy(qy.multiply(nextQuat)).normalize();
-      }
-      if (Math.abs(zDeg) > 1e-6) {
-        const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).normalize();
-        const qz = new THREE.Quaternion().setFromAxisAngle(axisZ, zDeg * degToRad);
-        nextQuat.copy(qz.multiply(nextQuat)).normalize();
-      }
+      const nextQuat = buildDecorationQuatFromPanelAngles(target, { x: xDeg, y: yDeg, z: zDeg });
       target.quaternion.copy(nextQuat).normalize();
-      const normalizedPanelAngles = getRotationPanelAnglesFromQuaternion(target.quaternion);
+      const normalizedPanelAngles = getRotationPanelAnglesFromTargetQuat(target, target.quaternion);
       rotatePanelState.angles = normalizedPanelAngles;
       target.userData = {
         ...(target.userData || {}),
@@ -10876,7 +11577,7 @@ function TextureToggle(){
 
 const toggleBtn = document.getElementById("toggle-daynight");
 
-toggleBtn.addEventListener("click", () => {
+function toggleDayNightMode() {
   isNight = !isNight;
 
   if (isNight) {
@@ -10899,41 +11600,73 @@ toggleBtn.addEventListener("click", () => {
     TextureToggle();
     toggleBtn.textContent = "🌙 夜にする";
   }
-});
+}
 
-toggleBtn.addEventListener("touchstart", () => {
-  isNight = !isNight;
-
-  if (isNight) {
-    // 🌙 夜モード
-    scene.background = envMapNight;
-    scene.environment = envMapNight;
-
-    setDirLightVisible(false);
-    // ambient.visible = false;
-    TextureToggle();
-
-    toggleBtn.textContent = "☀️ 昼にする";
-
-  } else {
-    // ☀️ 昼モード
-    scene.background = envMap;
-    scene.environment = envMap;
-
-    setDirLightVisible(true);
-    // ambient.visible = true;
-    TextureToggle();
-
-    toggleBtn.textContent = "🌙 夜にする";
-  }
-});
+toggleBtn.addEventListener("click", toggleDayNightMode);
 
 const camera = new THREE.PerspectiveCamera(
   75, window.innerWidth / window.innerHeight, 0.1, performanceSettings.drawDistance
 );
+const STEEL_FRAME_CONTROL_POINT_SCREEN_SIZE_PX = 25;
+const DIFFERENCE_CONTROL_POINT_SCREEN_RADIUS_PX = 16;
+const DIFFERENCE_CONTROL_POINT_BASE_RADIUS = 0.05;
+const screenSizedControlPointWorldPos = new THREE.Vector3();
+const screenSizedControlPointCameraForward = new THREE.Vector3();
 
 // カメラ初期位置（必要に応じて調整してください）
 camera.position.set(0, 10, 30);
+
+function getMainViewportCssHeight() {
+  const rect = renderer?.domElement?.getBoundingClientRect?.();
+  return Math.max(1, Number(rect?.height) || window.innerHeight || 1);
+}
+
+function getWorldUnitsPerCssPixelAtPosition(worldPosition, targetCamera = camera) {
+  if (!worldPosition?.isVector3 || !targetCamera) { return 0; }
+  const viewportHeight = getMainViewportCssHeight();
+  if (viewportHeight <= 0) { return 0; }
+  if (targetCamera.isOrthographicCamera) {
+    const worldHeight = Math.abs((targetCamera.top - targetCamera.bottom) / Math.max(1e-6, targetCamera.zoom || 1));
+    return worldHeight / viewportHeight;
+  }
+  if (!targetCamera.isPerspectiveCamera) { return 0; }
+  targetCamera.updateMatrixWorld?.(true);
+  targetCamera.getWorldDirection(screenSizedControlPointCameraForward);
+  const toPoint = worldPosition.clone().sub(targetCamera.position);
+  const viewDepth = Math.max(1e-3, toPoint.dot(screenSizedControlPointCameraForward));
+  const worldHeight = 2 * viewDepth * Math.tan(THREE.MathUtils.degToRad(targetCamera.fov * 0.5));
+  return worldHeight / viewportHeight;
+}
+
+function getSteelFrameControlPointWorldScale(mesh, targetCamera = camera) {
+  if (!mesh?.getWorldPosition) { return 0; }
+  mesh.getWorldPosition(screenSizedControlPointWorldPos);
+  return Math.max(
+    1e-4,
+    getWorldUnitsPerCssPixelAtPosition(screenSizedControlPointWorldPos, targetCamera) * STEEL_FRAME_CONTROL_POINT_SCREEN_SIZE_PX,
+  );
+}
+
+function updateScreenSizedSteelFrameControlPoints(targetCamera = camera) {
+  const points = steelFrameMode?.getAllPointMeshes?.() || [];
+  points.forEach((mesh) => {
+    if (!mesh?.parent || !mesh?.userData?.steelFramePoint) { return; }
+    const nextScale = getSteelFrameControlPointWorldScale(mesh, targetCamera);
+    mesh.scale.setScalar(nextScale);
+  });
+}
+
+function updateScreenSizedDifferenceControlPoints(targetCamera = camera) {
+  differenceSpacePlanes.forEach((mesh) => {
+    if (!mesh?.parent) { return; }
+    updateDifferenceControlPointMarkerTransform(mesh, targetCamera);
+  });
+}
+
+function updateScreenSizedSceneControlPoints(targetCamera = camera) {
+  updateScreenSizedSteelFrameControlPoints(targetCamera);
+  updateScreenSizedDifferenceControlPoints(targetCamera);
+}
 
 function savePerformanceSettings() {
   try {
@@ -14159,6 +14892,30 @@ function shouldShowDifferenceReadonlyTunnelSpaces() {
   }
 }
 
+function hasTunnelCircleGenerationRuns() {
+  return (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : [])
+    .some((run) => String(run?.category || '').trim() === 'tunnel_circle');
+}
+
+function shouldSkipDifferenceSpaceInPersistentSave(mesh) {
+  if (!mesh?.userData?.differenceSpacePlane) { return true; }
+  if (isDifferenceReadonlyTunnelMesh(mesh)) { return true; }
+  if (mesh.userData?.differenceUnifiedResult && hasTunnelCircleGenerationRuns()) { return true; }
+  return false;
+}
+
+function getDifferenceReadonlyTunnelRaycast(enabled = false) {
+  return enabled ? THREE.Mesh.prototype.raycast : (() => {});
+}
+
+function syncDifferenceReadonlyTunnelTexturePickability() {
+  const enabled = differenceSpaceModeActive && differenceSpaceTransformMode === 'texture';
+  differenceSpacePlanes.forEach((mesh) => {
+    if (!isDifferenceReadonlyTunnelMesh(mesh)) { return; }
+    mesh.raycast = getDifferenceReadonlyTunnelRaycast(enabled);
+  });
+}
+
 function isDifferenceReadonlyTunnelMesh(mesh) {
   return Boolean(
     mesh?.userData?.differenceReadonlyDisplay
@@ -14224,6 +14981,34 @@ function clearDifferenceReadonlyTunnelPreviewChunks(mesh) {
 
 function syncDifferenceReadonlyTunnelSpaceVisibility() {
   refreshDifferenceReadonlyTunnelPreviewChunkVisibility();
+  syncDifferenceReadonlyTunnelTexturePickability();
+}
+
+function clearReadonlyTunnelDifferenceSpaces() {
+  const targets = differenceSpacePlanes
+    .filter((mesh) => mesh?.parent && isDifferenceReadonlyTunnelMesh(mesh));
+  targets.forEach((mesh) => {
+    clearDifferenceReadonlyTunnelPreviewChunks(mesh);
+    const index = differenceSpacePlanes.indexOf(mesh);
+    if (index >= 0) {
+      differenceSpacePlanes.splice(index, 1);
+    }
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    mesh.geometry?.dispose?.();
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((mat) => mat?.dispose?.());
+    } else {
+      mesh.material?.dispose?.();
+    }
+  });
+  if (targets.length > 0) {
+    refreshDifferencePreview();
+    refreshDifferenceSelectedEdgeHighlights();
+    updateDifferenceUnifyButtonState();
+  }
+  return targets.length;
 }
 
 function collectRailStructureGroups() {
@@ -15016,16 +15801,33 @@ async function loadStructureData(url) {
 
 function applyStructureDataPayload(data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.pins)) {
+    const issues = [];
+    if (!data || typeof data !== 'object') {
+      issues.push('payload is not an object');
+    }
+    if (!Array.isArray(data?.pins)) {
+      issues.push('pins is not an array');
+    }
+    if (data && typeof data === 'object' && data?.generationRuns != null && !Array.isArray(data.generationRuns)) {
+      issues.push('generationRuns is not an array');
+    }
+    logRuntimePayloadInvalid('[public_upload][pins] skipped invalid structure payload', data, issues);
     console.info('[public_upload][pins] skipped invalid structure payload', {
       hasData: Boolean(data),
       hasPins: Array.isArray(data?.pins),
     });
     return false;
   }
+  logRuntimePayloadDiagnostics('[public_upload][pins] payload accepted', data);
   if (runtimeMapLoadedUiStatePending) {
     runtimeMapStructurePostProcessRequired = true;
     runtimeMapStructurePostProcessReady = false;
   }
+  const existingRuns = Array.isArray(structureGenerationRuns) ? structureGenerationRuns.slice() : [];
+  existingRuns.forEach((run) => {
+    removeStructureGenerationMeshesByRuntimeId(run, { removeRun: false });
+  });
+  clearReadonlyTunnelDifferenceSpaces();
   clearStructurePinnedPins();
   const loadedRuns = Array.isArray(data.generationRuns)
     ? data.generationRuns.map((run) => ({
@@ -15117,6 +15919,12 @@ function replayStructureGenerationRunsFromStructureData() {
         groupSourceLabel: params?.groupSourceLabel,
       });
       if (kind === 'group' && !resolvedGroupId) {
+        pushRuntimeRebuildDiagnostic('groupResolveFailed', {
+          savedGroupId: params?.groupId || null,
+          groupSourceKey: params?.groupSourceKey || null,
+          groupSourceLabel: params?.groupSourceLabel || null,
+          runtimeId: run?._pinGenerationRuntimeId || null,
+        });
         unresolvedGroupReference = true;
         console.warn('[group_rail replay] group resolve failed', {
           savedGroupId: params?.groupId,
@@ -15152,6 +15960,7 @@ function replayStructureGenerationRunsFromStructureData() {
       console.warn('[group_rail replay] unresolved runs remain after max retry');
     }
     if (pendingRunCount < 1 || !hasRemainingRuns) {
+      applyActiveTunnelDifferenceSpacesToSinjyuku({ updateStatus: false });
       structureGenerationReplayPending = false;
       markRuntimeMapStructurePostProcessReady('pins-replay-complete');
       return true;
@@ -15532,6 +16341,12 @@ function serializeDifferenceSpaceMesh(mesh, { includeRuntimeState = false } = {}
     position: [mesh.position.x, mesh.position.y, mesh.position.z],
     quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
     scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+    differenceTexture: cloneDifferenceTextureConfig(mesh?.userData?.differenceTexture || null),
+    differenceProjectorType: String(mesh?.userData?.differenceProjectorType || '').trim() || 'box',
+    differenceTubeCurvePoints: Array.isArray(mesh?.userData?.differenceTubeCurvePoints)
+      ? mesh.userData.differenceTubeCurvePoints.map((point) => Array.isArray(point) ? point.slice(0, 3) : point)
+      : null,
+    differenceTubeRadius: Number(mesh?.userData?.differenceTubeRadius) || 0,
     geometry: {
       position: Array.from(positionAttr.array),
       index: indexAttr ? Array.from(indexAttr.array) : null,
@@ -15914,7 +16729,7 @@ function dedupeGuideGridCatalogPayload({
 
 function normalizeSteelFrameSegmentProfile(rawProfile) {
   const p = String(rawProfile || 'round').toLowerCase();
-  if (p === 'round' || p === 'rect_bar' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube' || p === 'panel_wall') {
+  if (p === 'round' || p === 'rect_bar' || p === 'truss_column' || p === 'truss_ladder' || p === 'truss_catenary' || p === 'corrugated_bar' || p === 'h_beam' || p === 't_beam' || p === 'l_beam' || p === 'tubular' || p === 'tube' || p === 'panel_wall') {
     return p;
   }
   if (p === 'corrugated' || p === 'corrugation' || p === 'wave' || p === 'wave_plate') {
@@ -15948,7 +16763,7 @@ function normalizeSerializedSegmentStyle(profile, rawStyle) {
       out.beamThickness = 5.0;
     }
     delete out.beamRollDeg;
-  } else if (profile !== 'rect_bar' && profile !== 'h_beam' && profile !== 't_beam' && profile !== 'l_beam') {
+  } else if (profile !== 'rect_bar' && profile !== 'h_beam' && profile !== 't_beam' && profile !== 'l_beam' && profile !== 'truss_column' && profile !== 'truss_ladder' && profile !== 'truss_catenary') {
     delete out.beamRollDeg;
   }
   return out;
@@ -16084,10 +16899,21 @@ function clearSteelFrameForImport() {
 }
 
 function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGrid = new Map()) {
-  if (!payloadSteelFrame || typeof payloadSteelFrame !== 'object') { return; }
+  if (!payloadSteelFrame || typeof payloadSteelFrame !== 'object') {
+    console.warn('[single_structure][restore] skipped: payloadSteelFrame is invalid', {
+      hasPayload: Boolean(payloadSteelFrame),
+      payloadType: typeof payloadSteelFrame,
+    });
+    return;
+  }
   const pointStates = Array.isArray(payloadSteelFrame.points) ? payloadSteelFrame.points : [];
   const segmentStates = Array.isArray(payloadSteelFrame.segments) ? payloadSteelFrame.segments : [];
   const copiedInstances = Array.isArray(payloadSteelFrame.copiedInstances) ? payloadSteelFrame.copiedInstances : [];
+  console.info('[single_structure][restore] begin', {
+    pointCount: pointStates.length,
+    segmentCount: segmentStates.length,
+    copiedInstanceCount: copiedInstances.length,
+  });
   const pointMap = new Map();
   const usedCopyRefIds = new Set();
   const copyRefAliasMap = new Map();
@@ -16107,7 +16933,13 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
   };
 
   pointStates.forEach((p) => {
-    if (!Array.isArray(p?.position) || p.position.length < 3) { return; }
+    if (!Array.isArray(p?.position) || p.position.length < 3) {
+      console.warn('[single_structure][restore] skipped point: invalid position', {
+        key: typeof p?.key === 'string' ? p.key : null,
+        position: p?.position ?? null,
+      });
+      return;
+    }
     const mesh = new THREE.Mesh(cube_geometry, cube_material.clone());
     mesh.position.set(Number(p.position[0]) || 0, Number(p.position[1]) || 0, Number(p.position[2]) || 0);
     if (Array.isArray(p?.scale) && p.scale.length >= 3) {
@@ -16138,13 +16970,28 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
 
   segmentStates.forEach((s) => {
     const keys = Array.isArray(s?.pointKeys) ? s.pointKeys : [];
-    if (keys.length < 2) { return; }
+    if (keys.length < 2) {
+      console.warn('[single_structure][restore] skipped segment: not enough pointKeys', {
+        pointKeys: keys,
+        profile: s?.profile || null,
+        structureGroupId: s?.structureGroupId || null,
+      });
+      return;
+    }
     const pointRefs = keys
       .map((k) => pointMap.get(k) || null)
       .filter((mesh) => mesh?.userData?.steelFramePoint);
     const p0 = pointRefs[0] || null;
     const p1 = pointRefs[1] || null;
-    if (!p0 || !p1) { return; }
+    if (!p0 || !p1) {
+      console.warn('[single_structure][restore] skipped segment: referenced points missing', {
+        pointKeys: keys,
+        resolvedPointCount: pointRefs.length,
+        profile: s?.profile || null,
+        structureGroupId: s?.structureGroupId || null,
+      });
+      return;
+    }
     const normalizedProfile = normalizeSteelFrameSegmentProfile(s?.profile || 'round');
     // 互換救済:
     // 旧保存で panel_wall が round に落ちていたデータは pointKeys が4点で残っているため、
@@ -16170,7 +17017,14 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
         copyObjectRefId: assignedCopyRefId || null,
       },
     });
-    if (!seg) { return; }
+    if (!seg) {
+      console.warn('[single_structure][restore] skipped segment: createSegmentBetweenPoints returned null', {
+        pointKeys: keys,
+        profile,
+        structureGroupId: s?.structureGroupId || null,
+      });
+      return;
+    }
     if (Array.isArray(s?.scale) && s.scale.length >= 3) {
       seg.scale.set(Number(s.scale[0]) || 1, Number(s.scale[1]) || 1, Number(s.scale[2]) || 1);
     }
@@ -16202,10 +17056,21 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
     const list = Array.isArray(instances) ? instances : [];
     list.forEach((inst) => {
       const sourceRefIdRaw = String(inst?.sourceRefId || '').trim();
-      if (!sourceRefIdRaw) { return; }
+      if (!sourceRefIdRaw) {
+        console.warn('[single_structure][restore] skipped copiedInstance: sourceRefId missing', {
+          instance: inst,
+        });
+        return;
+      }
       const sourceRefId = copyRefAliasMap.get(sourceRefIdRaw) || sourceRefIdRaw;
       const sourceMesh = copyObjectRegistry.get(sourceRefId);
-      if (!sourceMesh?.parent || sourceMesh?.name !== 'SteelFrameSegment') { return; }
+      if (!sourceMesh?.parent || sourceMesh?.name !== 'SteelFrameSegment') {
+        console.warn('[single_structure][restore] skipped copiedInstance: source segment not found', {
+          sourceRefIdRaw,
+          sourceRefIdResolved: sourceRefId,
+        });
+        return;
+      }
       const instanceCopyRefIdRaw = String(inst?.copyObjectRefId || '').trim();
       const instanceCopyRefId = reserveUniqueCopyRefId(instanceCopyRefIdRaw);
 
@@ -16259,7 +17124,14 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
         const copiedRefs = sourceRefs.map((srcPoint) => ensureCopiedPointFromSource(srcPoint)).filter(Boolean);
         const p0 = copiedRefs[0] || null;
         const p1 = copiedRefs[1] || null;
-        if (!p0 || !p1) { return; }
+        if (!p0 || !p1) {
+          console.warn('[single_structure][restore] skipped copiedInstance segment: copied points missing', {
+            sourceRefIdRaw,
+            sourceRefIdResolved: sourceRefId,
+            copiedRefCount: copiedRefs.length,
+          });
+          return;
+        }
         const seg = steelFrameMode?.createSegmentBetweenPoints?.(p0, p1, {
           profile: sourceProfile,
           style: sourceStyle,
@@ -16272,9 +17144,16 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
             steelFrameCopyGroupId: copyGroupId || null,
             structureGroupId: sourceGroupId,
       structureGroupScale: sourceGroupScale,
-    },
-  });
-        if (!seg) { return; }
+          },
+        });
+        if (!seg) {
+          console.warn('[single_structure][restore] skipped copiedInstance segment: createSegmentBetweenPoints returned null', {
+            sourceRefIdRaw,
+            sourceRefIdResolved: sourceRefId,
+            profile: sourceProfile,
+          });
+          return;
+        }
         if ((sourceProfile === 'tube' && copiedRefs.length >= 2) || (sourceProfile === 'panel_wall' && copiedRefs.length >= 4)) {
           seg.userData = {
             ...(seg.userData || {}),
@@ -16289,7 +17168,13 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
       }
 
       const cloned = cloneObjectVisualTreeWithoutUserData(sourceMesh) || sourceMesh.clone?.(true);
-      if (!cloned) { return; }
+      if (!cloned) {
+        console.warn('[single_structure][restore] skipped copiedInstance fallback clone: clone failed', {
+          sourceRefIdRaw,
+          sourceRefIdResolved: sourceRefId,
+        });
+        return;
+      }
       cloned.position.copy(targetPos);
       cloned.quaternion.copy(targetQuat);
       cloned.scale.copy(targetScale);
@@ -16314,6 +17199,12 @@ function restoreSteelFrameState(payloadSteelFrame, keyToGrid = new Map(), idToGr
   if (copiedInstances.length > 0) {
     restoreCopiedInstances(copiedInstances);
   }
+  console.info('[single_structure][restore] done', {
+    restoredPointCount: pointMap.size,
+    requestedPointCount: pointStates.length,
+    requestedSegmentCount: segmentStates.length,
+    copiedInstanceCount: copiedInstances.length,
+  });
 }
 
 function normalizeDecorationType(rawType) {
@@ -16431,7 +17322,8 @@ function buildDifferenceSpacesPayload(options = {}) {
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
     .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
-    .filter((mesh) => !isDifferenceReadonlyTunnelMesh(mesh))
+    // 永続保存ではトンネル由来 geometry を持たず、snapshot だけ runtime tunnel を許可する。
+    .filter((mesh) => includeRuntimeState || !shouldSkipDifferenceSpaceInPersistentSave(mesh))
     .map((mesh) => serializeDifferenceSpaceMesh(mesh, { includeRuntimeState }))
     .filter(Boolean);
   const railOperations = serializeDifferenceRailOperations();
@@ -16469,7 +17361,7 @@ function buildCreateModePayload(options = {}) {
   const spaces = differenceSpacePlanes
     .filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane)
     .filter((mesh) => !Array.isArray(mesh?.userData?.differenceRailTrackNames) || mesh.userData.differenceRailTrackNames.length < 1)
-    .filter((mesh) => !isDifferenceReadonlyTunnelMesh(mesh))
+    .filter((mesh) => !shouldSkipDifferenceSpaceInPersistentSave(mesh))
     .map((mesh) => serializeDifferenceSpaceMesh(mesh))
     .filter(Boolean);
   const railOperations = serializeDifferenceRailOperations();
@@ -16884,6 +17776,8 @@ async function downloadWorldData() {
     alert('ZIP生成ライブラリの読み込みに失敗しました。通信状態をご確認ください。');
     return;
   }
+
+  diagnoseWorldSaveBeforeExport();
 
   const groupPayload = buildWorldPayload();
   const orbitPayload = buildTrackPayloadForWorldSave();
@@ -17563,8 +18457,39 @@ function ensureDifferenceRailDisplayMeshes() {
 }
 
 function buildGeometryFromSerializedSpace(rawSpace) {
-  const posArr = rawSpace?.geometry?.position;
-  const idxArr = rawSpace?.geometry?.index;
+  const fromPackedSerializedArray = (source, dtype = '') => {
+    const src = Array.isArray(source?.data) ? Uint8Array.from(source.data) : source?.data;
+    if (!src || typeof src !== 'object' || !('buffer' in src) || !('byteOffset' in src) || !('byteLength' in src)) {
+      return null;
+    }
+    const makeView = (bytesPerElement, Ctor) => {
+      const byteLen = Number(src.byteLength) || 0;
+      if (byteLen < bytesPerElement || byteLen % bytesPerElement !== 0) { return null; }
+      if ((Number(src.byteOffset) || 0) % bytesPerElement !== 0) {
+        const copy = new Uint8Array(byteLen);
+        copy.set(new Uint8Array(src.buffer, src.byteOffset, byteLen));
+        return new Ctor(copy.buffer);
+      }
+      return new Ctor(src.buffer, src.byteOffset, byteLen / bytesPerElement);
+    };
+    if (dtype === 'f32') { return makeView(4, Float32Array); }
+    if (dtype === 'u16') { return makeView(2, Uint16Array); }
+    if (dtype === 'u32') { return makeView(4, Uint32Array); }
+    return null;
+  };
+  const normalizeSerializedNumericArray = (value, expectedItemSize = 0) => {
+    if (Array.isArray(value)) { return value; }
+    if (value && typeof value === 'object' && value.data && value.dtype) {
+      const typed = fromPackedSerializedArray(value, String(value.dtype || '').trim().toLowerCase());
+      const arr = typed ? Array.from(typed) : null;
+      if (Array.isArray(arr) && (expectedItemSize < 1 || arr.length % expectedItemSize === 0)) {
+        return arr;
+      }
+    }
+    return null;
+  };
+  const posArr = normalizeSerializedNumericArray(rawSpace?.geometry?.position, 3);
+  const idxArr = normalizeSerializedNumericArray(rawSpace?.geometry?.index, 1);
   if (!Array.isArray(posArr) || posArr.length < 9 || posArr.length % 3 !== 0) { return null; }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
@@ -17642,7 +18567,28 @@ function relinkImportedDifferenceSharedPoints(eps = differenceSharedPointLinkEps
 
 function applyCreateModePayload(payload) {
   if (!payload || typeof payload !== 'object') {
+    logRuntimePayloadInvalid('[public_upload][ct] invalid create_mode payload', payload, [
+      'payload is not an object',
+    ]);
     throw new Error('map_data の形式が不正です。');
+  }
+  const payloadSummary = summarizeRuntimePayloadShape(payload);
+  const hasGuideData = payloadSummary.guideGridCatalog > 0 || payloadSummary.guideAddGrids > 0 || payloadSummary.hasBaseGuideGrid;
+  const hasCreateModeContent =
+    hasGuideData
+    || payloadSummary.steelFramePoints > 0
+    || payloadSummary.steelFrameSegments > 0
+    || payloadSummary.decorations > 0
+    || payloadSummary.copiedStructureGroups > 0
+    || payloadSummary.differenceSpaces > 0
+    || payloadSummary.differenceRailOperations > 0
+    || payloadSummary.trainRunConfigs > 0;
+  if (!hasCreateModeContent) {
+    logRuntimePayloadInvalid('[public_upload][ct] payload has no restorable create_mode content', payload, [
+      'no guide/steelFrame/decorations/difference/train config content detected',
+    ]);
+  } else {
+    logRuntimePayloadDiagnostics('[public_upload][ct] create_mode payload accepted', payload);
   }
   clearCreateHistory();
   clearDifferenceHistory();
@@ -17872,6 +18818,7 @@ async function loadRuntimeMapFromPublicUpload() {
     return false;
   }
   restartLoadingOverlay('runtime map 読み込み中...');
+  resetRuntimeRebuildDiagnostics();
   runtimeMapRestorePhaseDone = false;
   runtimeMapLoadedUiStatePending = true;
   runtimeMapStructurePostProcessReady = false;
@@ -18030,10 +18977,20 @@ async function loadRuntimeMapFromPublicUpload() {
     }
     const bytes = new Uint8Array(runtimeFile.buffer);
     if (/\.zip$/i.test(runtimeName)) {
-      const archiveRows = await readMapDataArchiveBytes(bytes, {
-        name: runtimeName,
-        size: Number(runtimeFile?.size) || bytes.byteLength,
-      });
+      let archiveRows = [];
+      try {
+        archiveRows = await readMapDataArchiveBytes(bytes, {
+          name: runtimeName,
+          size: Number(runtimeFile?.size) || bytes.byteLength,
+        });
+      } catch (err) {
+        reportRuntimeLoadError('[public_upload][zip] archive decode failed', err, {
+          name: runtimeName,
+          kind,
+          size: Number(runtimeFile?.size) || bytes.byteLength,
+        });
+        throw err;
+      }
       console.info('[public_upload][zip] archive entries', archiveRows.map((row) => ({
         name: row?.name,
         mode: String(row?.payload?.meta?.mode || '').trim(),
@@ -18051,6 +19008,15 @@ async function loadRuntimeMapFromPublicUpload() {
       const manualCopyRows = [];
       archiveRows.forEach((row) => {
         const payload = row?.payload;
+        if (!payload || typeof payload !== 'object') {
+          logRuntimePayloadInvalid('[public_upload][zip] invalid archive entry payload', payload, [
+            'entry payload is not an object',
+          ], {
+            runtimeName,
+            entryName: row?.name,
+          });
+          return;
+        }
         const mode = String(payload?.meta?.mode || '').trim();
         const type = String(payload?.meta?.type || '').trim();
         if (mode === 'copied_group_sources_only' && Array.isArray(payload?.sourceStructureGroups)) {
@@ -18125,7 +19091,48 @@ async function loadRuntimeMapFromPublicUpload() {
         manualCopyRows: manualCopyRows.length,
         pinRows: pinRows.length,
       });
-      ctRows.forEach((row) => {
+      const ctRowsToApply = (() => {
+        const rows = Array.isArray(ctRows) ? ctRows.slice() : [];
+        const lowerNameOf = (row) => String(row?.name || '').trim().toLowerCase();
+        const createIndex = rows.findIndex((row) => {
+          const lower = lowerNameOf(row);
+          return lower.endsWith('single_structure.msgpack')
+            || lower.endsWith('single_structure.mpk')
+            || lower.endsWith('single_structure.json')
+            || lower.endsWith('create_mode_state.msgpack')
+            || lower.endsWith('create_mode_state.mpk')
+            || lower.endsWith('create_mode_state.json');
+        });
+        const differenceIndex = rows.findIndex((row) => {
+          const lower = lowerNameOf(row);
+          return lower.endsWith('difference_space.msgpack')
+            || lower.endsWith('difference_space.mpk')
+            || lower.endsWith('difference_space.json');
+        });
+        if (createIndex < 0 || differenceIndex < 0) {
+          return rows;
+        }
+        const createRow = rows[createIndex];
+        const differenceRow = rows[differenceIndex];
+        const createPayload = (createRow?.payload && typeof createRow.payload === 'object') ? createRow.payload : {};
+        const differencePayload = (differenceRow?.payload && typeof differenceRow.payload === 'object') ? differenceRow.payload : {};
+        rows[createIndex] = {
+          ...createRow,
+          name: `${String(createRow?.name || 'single_structure')} + ${String(differenceRow?.name || 'difference_space')}`,
+          payload: {
+            ...createPayload,
+            differenceSpaces: Array.isArray(differencePayload?.differenceSpaces)
+              ? differencePayload.differenceSpaces
+              : (Array.isArray(createPayload?.differenceSpaces) ? createPayload.differenceSpaces : []),
+            differenceRailOperations: Array.isArray(differencePayload?.differenceRailOperations)
+              ? differencePayload.differenceRailOperations
+              : (Array.isArray(createPayload?.differenceRailOperations) ? createPayload.differenceRailOperations : []),
+          },
+        };
+        rows.splice(differenceIndex, 1);
+        return rows;
+      })();
+      ctRowsToApply.forEach((row) => {
         try {
           const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {};
           const steelFrame = payload?.steelFrame && typeof payload.steelFrame === 'object'
@@ -18161,6 +19168,31 @@ async function loadRuntimeMapFromPublicUpload() {
           });
         }
       });
+      const standaloneDifferenceRow = ctRows.find((row) => {
+        const lower = String(row?.name || '').trim().toLowerCase();
+        return lower.endsWith('difference_space.msgpack')
+          || lower.endsWith('difference_space.mpk')
+          || lower.endsWith('difference_space.json');
+      }) || null;
+      lastLoadedStandaloneDifferencePayload = standaloneDifferenceRow?.payload && typeof standaloneDifferenceRow.payload === 'object'
+        ? structuredClone(standaloneDifferenceRow.payload)
+        : null;
+      const expectedStandaloneSpaceCount = Array.isArray(standaloneDifferenceRow?.payload?.differenceSpaces)
+        ? standaloneDifferenceRow.payload.differenceSpaces.length
+        : 0;
+      const liveDifferenceSpaceCount = differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane).length;
+      if (standaloneDifferenceRow && expectedStandaloneSpaceCount > 0 && liveDifferenceSpaceCount < expectedStandaloneSpaceCount) {
+        try {
+          restoreDifferenceSpacesFromPayload(standaloneDifferenceRow.payload, { clearExisting: false, applyToCity: true });
+          console.info('[public_upload][ct] fallback restored standalone difference spaces', {
+            expectedStandaloneSpaceCount,
+            liveDifferenceSpaceCountBefore: liveDifferenceSpaceCount,
+            liveDifferenceSpaceCountAfter: differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane).length,
+          });
+        } catch (err) {
+          console.warn('[public_upload][ct] fallback restore of standalone difference spaces failed', err);
+        }
+      }
       if (sourceGroupPayloadRows.length > 0) {
         console.info('[public_upload][group_msgpack] restoring source groups start', {
           count: sourceGroupPayloadRows.length,
@@ -18205,13 +19237,35 @@ async function loadRuntimeMapFromPublicUpload() {
         console.info('[public_upload][pins] applying queued runtime structure payload', {
           name: row?.name,
         });
-        applyRuntimeStructurePayload(row.payload, row.name || runtimeName);
+        try {
+          applyRuntimeStructurePayload(row.payload, row.name || runtimeName);
+        } catch (err) {
+          reportRuntimeLoadError('[public_upload][pins] applying queued structure payload failed', err, {
+            runtimeName,
+            entryName: row?.name,
+          });
+          throw err;
+        }
       });
       continue;
     }
-    const payload = await readMapDataBytes(bytes, {
-      name: runtimeName,
-      size: Number(runtimeFile?.size) || bytes.byteLength,
+    let payload = null;
+    try {
+      payload = await readMapDataBytes(bytes, {
+        name: runtimeName,
+        size: Number(runtimeFile?.size) || bytes.byteLength,
+      });
+    } catch (err) {
+      reportRuntimeLoadError('[public_upload] payload decode failed', err, {
+        name: runtimeName,
+        kind,
+        size: Number(runtimeFile?.size) || bytes.byteLength,
+      });
+      throw err;
+    }
+    logRuntimePayloadDiagnostics('[public_upload] decoded payload', payload, {
+      runtimeName,
+      kind,
     });
     if (kind === 'st') {
       discoveredStructurePayload = true;
@@ -18257,16 +19311,40 @@ async function loadRuntimeMapFromPublicUpload() {
           updateStatus: false,
         });
       }
-      applyRuntimeStructurePayload(payload, runtimeName);
+      try {
+        applyRuntimeStructurePayload(payload, runtimeName);
+      } catch (err) {
+        reportRuntimeLoadError('[public_upload][st] applying structure payload failed', err, {
+          runtimeName,
+          kind,
+        });
+        throw err;
+      }
       continue;
     }
     if (kind !== 'ct') {
       continue;
     }
     if (payloadHasOnlyDifferenceSpaces(payload)) {
-      restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: true });
+      try {
+        restoreDifferenceSpacesFromPayload(payload, { clearExisting: true, applyToCity: true });
+      } catch (err) {
+        reportRuntimeLoadError('[public_upload][ct] restoring difference-only payload failed', err, {
+          runtimeName,
+          kind,
+        });
+        throw err;
+      }
     } else {
-      applyCreateModePayload(payload);
+      try {
+        applyCreateModePayload(payload);
+      } catch (err) {
+        reportRuntimeLoadError('[public_upload][ct] applying create_mode payload failed', err, {
+          runtimeName,
+          kind,
+        });
+        throw err;
+      }
     }
   }
 
@@ -18427,9 +19505,17 @@ function remapAllStructureGroupIdsForAppend(steelFrameState, decorationStates) {
 
 function appendCreateModePayload(payload, options = {}) {
   if (!payload || typeof payload !== 'object') {
+    logRuntimePayloadInvalid('[public_upload][structure_append] invalid payload', payload, [
+      'payload is not an object',
+    ], {
+      sourceTag: normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime'),
+    });
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
+  logRuntimePayloadDiagnostics('[public_upload][structure_append] payload accepted', payload, {
+    sourceTag,
+  });
   const normalizedGuidePayload = normalizeGuideGridCatalogPayload(payload);
   const guideGridStates = normalizedGuidePayload.guideGridStates;
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
@@ -18653,9 +19739,17 @@ function hydrateStandaloneStructureGroupPayload(payload) {
 
 function appendCreateModeGroupsPayload(payload, options = {}) {
   if (!payload || typeof payload !== 'object') {
+    logRuntimePayloadInvalid('[public_upload][structure_group] invalid payload', payload, [
+      'payload is not an object',
+    ], {
+      sourceTag: normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime'),
+    });
     throw new Error('map_data の形式が不正です。');
   }
   const sourceTag = normalizeStructureGroupSourceTag(options?.sourceTag || 'runtime');
+  logRuntimePayloadDiagnostics('[public_upload][structure_group] payload accepted', payload, {
+    sourceTag,
+  });
   const sourceGroupId = String(payload?.meta?.groupId || '').trim();
   const copiedStructureGroupsRaw = Array.isArray(payload?.copiedStructureGroups) ? payload.copiedStructureGroups : [];
   const payloadMode = String(payload?.meta?.mode || '').trim();
@@ -18943,6 +20037,11 @@ async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structur
         remappedGroupCount: Number(result?.remappedGroupCount) || 0,
       });
     } catch (err) {
+      pushRuntimeRebuildDiagnostic('groupRowLoadFailed', {
+        url: row.url,
+        sourceTag: row.sourceTag,
+        errMessage: err?.message || String(err),
+      });
       console.error(`${logLabel} load failed`, {
         url: row.url,
         sourceTag: row.sourceTag,
@@ -18986,6 +20085,11 @@ async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structur
           });
         }
       } catch (err) {
+        pushRuntimeRebuildDiagnostic('groupRowLoadFailed', {
+          url: row.url,
+          sourceTag: row.sourceTag,
+          errMessage: err?.message || String(err),
+        });
         console.error(`${logLabel} load failed`, {
           url: row.url,
           sourceTag: row.sourceTag,
@@ -19002,6 +20106,12 @@ async function applyStructureGroupSourceRows(sourceRows, { logLabel = '[structur
     pendingCopyRows.splice(0, pendingCopyRows.length, ...retryRows);
   }
   if (pendingCopyRows.length > 0) {
+    pendingCopyRows.forEach((row) => {
+      pushRuntimeRebuildDiagnostic('copyReferenceUnresolved', {
+        url: row.url,
+        sourceTag: row.sourceTag,
+      });
+    });
     console.warn(`${logLabel} copy references pending after retry`, pendingCopyRows.map((row) => ({
       sourceTag: row.sourceTag,
       url: row.url,
@@ -19163,6 +20273,11 @@ scheduleReplayStructureGenerationRuns({ resetRetry: false });
 constructionCategoryCards.forEach((card) => {
   card.addEventListener('click', () => {
     setConstructionCategory(card.dataset.constructionProfile);
+  });
+});
+constructionPatternCards.forEach((card) => {
+  card.addEventListener('click', () => {
+    setConstructionCategory(card.dataset.constructionPattern);
   });
 });
 railConstructionCards.forEach((card) => {
@@ -19641,10 +20756,9 @@ buttons.forEach(btn => {
 
 buttons.forEach(btn => {
   // 指がボタンに触れたとき（mouseenter 相当）
-  btn.addEventListener("touchstart", (e) => {
-    e.preventDefault(); // ページスクロールを防止
+  btn.addEventListener("touchstart", () => {
     pause = true; // 一時停止
-  }, { passive: false });
+  }, { passive: true });
 
   // 指がボタンから離れたとき（mouseleave 相当）
   btn.addEventListener("touchend", () => {
@@ -19655,6 +20769,16 @@ buttons.forEach(btn => {
   btn.addEventListener("touchcancel", () => {
     pause = false; // 再開
   });
+});
+
+const mobileMoveControlSelector = '#speed-up, #speed-down, #btn-up, #btn-down, #controller-area, #controller';
+document.querySelectorAll(mobileMoveControlSelector).forEach((control) => {
+  control.addEventListener('touchstart', (event) => {
+    event.preventDefault();
+  }, { passive: false });
+  control.addEventListener('touchmove', (event) => {
+    event.preventDefault();
+  }, { passive: false });
 });
 
 // 物体の削除
@@ -20563,6 +21687,23 @@ const differenceRailOperations = []
 const differenceRailDisplayMeshes = []
 let differenceRailDisplayMeshesVisible = false
 let differenceSelectedPlane = null
+const DIFFERENCE_TEXTURE_PRESETS = [
+  { id: 'none', label: 'なし', path: '', repeatX: 1, repeatY: 1 },
+  { id: 'station', label: 'station', path: 'textures/test_station.jpg', repeatX: 1, repeatY: 1 },
+  { id: 'ct', label: 'ct', path: 'textures/ct.jpg', repeatX: 1, repeatY: 1 },
+  { id: 'bund', label: 'bund', path: 'textures/shanghai_bund_4k.jpg', repeatX: 1, repeatY: 1 },
+  { id: 'night', label: 'night', path: 'textures/blaubeuren_night.jpg', repeatX: 1, repeatY: 1 },
+  { id: 'sky', label: 'sky', path: 'textures/sky.jpg', repeatX: 1, repeatY: 1 },
+];
+const differenceTextureLoader = new THREE.TextureLoader();
+const differenceTexturePromiseCache = new Map();
+let differenceDefaultTextureConfig = {
+  path: '',
+  repeatX: 1,
+  repeatY: 1,
+};
+let differenceSnapshotBeforeLatestUnify = null;
+ensureDifferenceTextureControls();
 let differenceFaceHighlight = null
 const differenceSelectedFaceHighlights = []
 const differenceSelectedBodyHighlights = []
@@ -20785,6 +21926,78 @@ function captureDifferenceSnapshot() {
   });
 }
 
+function captureDifferenceUnifySnapshot() {
+  const differencePayload = captureDifferenceSnapshot();
+  const tunnelGenerationRuns = (Array.isArray(structureGenerationRuns) ? structureGenerationRuns : [])
+    .filter((run) => String(run?.category || '').trim() === 'tunnel_circle')
+    .map((run) => ({
+      category: 'tunnel_circle',
+      pins: normalizePinsPayload(run?.pins),
+      params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
+      _pinGenerationRuntimeId: String(run?._pinGenerationRuntimeId || '').trim(),
+    }))
+    .filter((run) => run.pins.length > 0);
+  return {
+    differencePayload,
+    tunnelGenerationRuns,
+  };
+}
+
+function updateDifferenceResetBeforeUnifyButtonState() {
+  if (!differenceResetBeforeUnifyButton) { return; }
+  const isDifferenceContext = editObject === 'DIFFERENCE_SPACE' && differenceSpaceModeActive;
+  differenceResetBeforeUnifyButton.style.display = isDifferenceContext ? 'block' : 'none';
+  differenceResetBeforeUnifyButton.disabled = !isDifferenceContext || !differenceSnapshotBeforeLatestUnify;
+}
+
+function restoreDifferenceSnapshotBeforeLatestUnify() {
+  if (!differenceSnapshotBeforeLatestUnify) {
+    updateDifferenceStatus('一体化前スナップショットがありません。');
+    updateDifferenceResetBeforeUnifyButtonState();
+    return false;
+  }
+  const snapshot = structuredClone(differenceSnapshotBeforeLatestUnify);
+  const payload = normalizeDifferenceHistorySnapshot(snapshot?.differencePayload || snapshot);
+  const tunnelGenerationRuns = Array.isArray(snapshot?.tunnelGenerationRuns)
+    ? snapshot.tunnelGenerationRuns
+      .filter((run) => String(run?.category || '').trim() === 'tunnel_circle')
+      .map((run) => ({
+        category: 'tunnel_circle',
+        pins: normalizePinsPayload(run?.pins),
+        params: (run?.params && typeof run.params === 'object') ? { ...run.params } : {},
+        _pinGenerationRuntimeId: String(run?._pinGenerationRuntimeId || '').trim(),
+      }))
+      .filter((run) => run.pins.length > 0)
+    : [];
+  const payloadWithoutReadonlyTunnels = {
+    ...payload,
+    differenceSpaces: (Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces : [])
+      .filter((rawSpace) => !normalizeDifferenceSerializedRuntimeState(rawSpace?.runtimeDifferenceState)),
+  };
+  restoreDifferenceSpacesFromPayload(payloadWithoutReadonlyTunnels, { clearExisting: true, applyToCity: false });
+  tunnelGenerationRuns.forEach((run) => {
+    const params = (run?.params && typeof run.params === 'object') ? run.params : {};
+    runRailConstructionByCategory('tunnel_circle', {
+      pinsPayload: normalizePinsPayload(run?.pins),
+      runtimeId: String(run?._pinGenerationRuntimeId || '').trim(),
+      trackNames: params.trackNames,
+      innerRadius: params.innerRadius,
+      yOffset: params.yOffset,
+      sideClearance: params.sideClearance,
+      sampleStepMeters: params.sampleStepMeters,
+      radialSegments: params.radialSegments,
+    });
+  });
+  targetObjects = getActiveDifferenceSpaces();
+  setMeshListOpacity(targetObjects, 1);
+  refreshDifferencePreview();
+  refreshDifferenceSelectedEdgeHighlights();
+  updateDifferenceStatus('一体化前の初期状態に戻しました。');
+  updateDifferenceUnifyButtonState();
+  updateDifferenceResetBeforeUnifyButtonState();
+  return true;
+}
+
 function normalizeDifferenceHistorySnapshot(snapshot) {
   if (Array.isArray(snapshot)) {
     return {
@@ -20974,6 +22187,16 @@ function applyCreateHistory(action, mode) {
       drawingObject(action.items.map((item) => item.mesh));
       return;
     }
+    if (action.type === 'scale_meshes') {
+      action.items.forEach((item) => {
+        const next = mode === 'undo' ? item.before : item.after;
+        if (!item?.mesh?.scale || !next) { return; }
+        item.mesh.scale.copy(next);
+        item.mesh.updateMatrixWorld(true);
+      });
+      drawingObject(action.items.map((item) => item.mesh).filter(Boolean));
+      return;
+    }
     if (action.type === 'add_guide_grid') {
       const { grid, pick } = action;
       if (mode === 'undo') {
@@ -21037,6 +22260,7 @@ function applyCreateHistory(action, mode) {
     }
     if (action.type === 'delete_objects') {
       const items = Array.isArray(action.items) ? action.items : [];
+      const generationRuns = Array.isArray(action.generationRuns) ? action.generationRuns : [];
       if (mode === 'undo') {
         items.forEach((item) => {
           if (item?.kind === 'decoration') {
@@ -21047,7 +22271,16 @@ function applyCreateHistory(action, mode) {
             restoreSteelSegmentObject(item.mesh);
           }
         });
+        generationRuns.forEach((runLike) => {
+          const restoredRun = recordStructureGenerationRun(runLike);
+          if (restoredRun) {
+            rerunStructureGenerationRun(restoredRun);
+          }
+        });
       } else {
+        generationRuns.forEach((runLike) => {
+          removeStructureGenerationMeshesByRuntimeId(runLike, { removeRun: true });
+        });
         items.forEach((item) => {
           if (item?.kind === 'decoration') {
             detachDecorationObject(item.mesh);
@@ -21431,7 +22664,7 @@ function applyRecommendedGroundMaterialSettings(material) {
   if (!material) { return; }
   const opacity = typeof material.opacity === 'number' ? material.opacity : 1;
   material.depthTest = true;
-  material.depthWrite = true;
+  material.depthWrite = opacity >= 0.999;
   material.transparent = opacity < 0.999;
   material.needsUpdate = true;
 }
@@ -21510,7 +22743,7 @@ function setMaterialOpacity(material, opacity) {
   material.opacity = opacity;
   material.transparent = opacity < 1;
   if ('depthWrite' in material) {
-    material.depthWrite = material?.userData?.groundBaseDepthWrite !== false;
+    material.depthWrite = opacity >= 0.999 && material?.userData?.groundBaseDepthWrite !== false;
   }
   material.needsUpdate = true;
 }
@@ -22788,7 +24021,7 @@ function applyDifferenceViewMode() {
   if (differenceViewToggleButton) {
     differenceViewToggleButton.textContent = differenceViewMode === 'preview' ? 'view[preview]' : 'view[diff]';
   }
-  setDifferenceMeshFacesVisible(differenceViewMode !== 'preview');
+  setDifferenceMeshFacesVisible(true);
   if (differenceViewMode === 'preview') {
     // preview は「加工結果のみ」を表示する。
     clearDifferenceSelectedEdgeHighlights();
@@ -24659,11 +25892,131 @@ function getDifferenceControlPointRenderOrder() {
   return 2290;
 }
 
+function normalizeDifferenceTextureConfig(rawConfig = null) {
+  const preset = DIFFERENCE_TEXTURE_PRESETS.find((entry) => entry.path === String(rawConfig?.path || '').trim()) || null;
+  const repeatX = Number(rawConfig?.repeatX);
+  const repeatY = Number(rawConfig?.repeatY);
+  return {
+    path: String(rawConfig?.path || preset?.path || '').trim(),
+    repeatX: Number.isFinite(repeatX) && repeatX > 0 ? repeatX : Number(preset?.repeatX) || 1,
+    repeatY: Number.isFinite(repeatY) && repeatY > 0 ? repeatY : Number(preset?.repeatY) || 1,
+  };
+}
+
+function getDifferenceTexturePresetByPath(path = '') {
+  const normalizedPath = String(path || '').trim();
+  return DIFFERENCE_TEXTURE_PRESETS.find((entry) => String(entry.path || '').trim() === normalizedPath) || null;
+}
+
+function getDifferenceTextureConfigFromMesh(mesh) {
+  return normalizeDifferenceTextureConfig(mesh?.userData?.differenceTexture || null);
+}
+
+function getDifferenceTextureConfigFromControls() {
+  const preset = differenceTexturePresetSelect
+    ? DIFFERENCE_TEXTURE_PRESETS.find((entry) => entry.id === differenceTexturePresetSelect.value)
+    : null;
+  const path = String(differenceTexturePathInput?.value ?? preset?.path ?? '').trim();
+  const repeatX = Number(differenceTextureRepeatXInput?.value);
+  const repeatY = Number(differenceTextureRepeatYInput?.value);
+  return normalizeDifferenceTextureConfig({
+    path,
+    repeatX: Number.isFinite(repeatX) ? repeatX : preset?.repeatX,
+    repeatY: Number.isFinite(repeatY) ? repeatY : preset?.repeatY,
+  });
+}
+
+function cloneDifferenceTextureConfig(config = null) {
+  const normalized = normalizeDifferenceTextureConfig(config);
+  return {
+    path: normalized.path,
+    repeatX: normalized.repeatX,
+    repeatY: normalized.repeatY,
+  };
+}
+
+function loadDifferenceTexture(config = null) {
+  const normalized = normalizeDifferenceTextureConfig(config);
+  if (!normalized.path) {
+    return Promise.resolve(null);
+  }
+  const cacheKey = `${normalized.path}__${normalized.repeatX}__${normalized.repeatY}`;
+  if (!differenceTexturePromiseCache.has(cacheKey)) {
+    const promise = new Promise((resolve, reject) => {
+      differenceTextureLoader.load(
+        normalized.path,
+        (texture) => {
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+          texture.repeat.set(normalized.repeatX, normalized.repeatY);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          resolve(texture);
+        },
+        undefined,
+        reject,
+      );
+    });
+    differenceTexturePromiseCache.set(cacheKey, promise);
+  }
+  return differenceTexturePromiseCache.get(cacheKey);
+}
+
+function createDifferenceSpaceMaterial(config = null) {
+  const normalized = normalizeDifferenceTextureConfig(config);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    metalness: 0.08,
+    roughness: 0.58,
+    flatShading: false,
+  });
+  material.userData = {
+    ...(material.userData || {}),
+    differenceTextureConfig: cloneDifferenceTextureConfig(normalized),
+  };
+  if (!normalized.path) {
+    material.color.set(0x2ed0c9);
+  }
+  return material;
+}
+
+async function applyDifferenceTextureToMesh(mesh, config = null, { updateStatus = false } = {}) {
+  if (!mesh?.material) { return false; }
+  const normalized = normalizeDifferenceTextureConfig(config);
+  const texture = await loadDifferenceTexture(normalized);
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  materials.forEach((material) => {
+    if (!material) { return; }
+    material.map = texture;
+    material.color.set(texture ? 0xffffff : 0x2ed0c9);
+    material.userData = {
+      ...(material.userData || {}),
+      differenceTextureConfig: cloneDifferenceTextureConfig(normalized),
+    };
+    material.needsUpdate = true;
+  });
+  mesh.userData = {
+    ...(mesh.userData || {}),
+    differenceTexture: cloneDifferenceTextureConfig(normalized),
+  };
+  applyDifferenceSpaceMeshStyle(mesh, { visible: mesh.visible !== false });
+  if (updateStatus && differenceStatus) {
+    differenceStatus.textContent = normalized.path
+      ? `texture適用: ${normalized.path} (${normalized.repeatX} x ${normalized.repeatY})`
+      : 'texture解除: 単色表示に戻しました。';
+  }
+  return true;
+}
+
 function applyDifferenceSpaceMaterialStyle(material, { visible = true } = {}) {
   if (!material) { return; }
+  const projectionMaterial = material.userData?.differenceProjectionMaterial === true;
   material.transparent = true;
-  material.opacity = visible ? getDifferenceSpaceBoxOpacity() : 0.0;
-  material.side = THREE.DoubleSide;
+  material.opacity = visible ? (projectionMaterial ? 1.0 : getDifferenceSpaceBoxOpacity()) : 0.0;
+  material.side = projectionMaterial ? THREE.BackSide : THREE.DoubleSide;
   if ('depthTest' in material) { material.depthTest = true; }
   if ('depthWrite' in material) { material.depthWrite = visible; }
   if ('metalness' in material) { material.metalness = 0.08; }
@@ -24704,26 +26057,19 @@ function applyDifferenceControlPointMeshStyle(point, { visible = true } = {}) {
 function createDifferenceSpacePlane(position) {
   const plane = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({
-      color: 0x2ed0c9,
-      transparent: true,
-      opacity: 0.5,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      metalness: 0.08,
-      roughness: 0.58,
-      flatShading: false,
-    }),
+    createDifferenceSpaceMaterial(differenceDefaultTextureConfig),
   );
   plane.position.copy(position);
   plane.name = 'DifferenceSpacePlane';
   plane.userData = {
     ...(plane.userData || {}),
     differenceSpacePlane: true,
+    differenceTexture: cloneDifferenceTextureConfig(differenceDefaultTextureConfig),
   };
   applyDifferenceSpaceMeshStyle(plane, { visible: true });
   scene.add(plane);
   differenceSpacePlanes.push(plane);
+  void applyDifferenceTextureToMesh(plane, plane.userData?.differenceTexture);
   return plane;
 }
 
@@ -24734,7 +26080,7 @@ function addDifferenceControlPoints(mesh) {
     [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
     [-half, -half, half],  [half, -half, half],  [half, half, half],  [-half, half, half],
   ];
-  const pointGeo = new THREE.SphereGeometry(0.05, 8, 8);
+  const pointGeo = new THREE.SphereGeometry(DIFFERENCE_CONTROL_POINT_BASE_RADIUS, 8, 8);
   const pointMat = new THREE.MeshBasicMaterial({
     color: 0xff6b6b,
     transparent: true,
@@ -24758,15 +26104,21 @@ function addDifferenceControlPoints(mesh) {
   updateDifferenceControlPointMarkerTransform(mesh);
 }
 
-function updateDifferenceControlPointMarkerTransform(mesh) {
+function updateDifferenceControlPointMarkerTransform(mesh, targetCamera = camera) {
   if (!mesh) { return; }
   const sx = Math.max(1e-6, Math.abs(mesh.scale?.x || 1));
   const sy = Math.max(1e-6, Math.abs(mesh.scale?.y || 1));
   const sz = Math.max(1e-6, Math.abs(mesh.scale?.z || 1));
   mesh.children.forEach((child) => {
     if (!child?.userData?.differenceControlPoint) { return; }
+    child.getWorldPosition(screenSizedControlPointWorldPos);
+    const desiredRadius = Math.max(
+      1e-4,
+      getWorldUnitsPerCssPixelAtPosition(screenSizedControlPointWorldPos, targetCamera) * DIFFERENCE_CONTROL_POINT_SCREEN_RADIUS_PX,
+    );
+    const localRadiusScale = desiredRadius / DIFFERENCE_CONTROL_POINT_BASE_RADIUS;
     // 親の非等方スケールを打ち消して、制御点は常に球形表示を維持する。
-    child.scale.set(1 / sx, 1 / sy, 1 / sz);
+    child.scale.set(localRadiusScale / sx, localRadiusScale / sy, localRadiusScale / sz);
   });
 }
 
@@ -25008,7 +26360,7 @@ function rebuildDifferenceControlPointsFromGeometry(mesh) {
     grouped.get(key).indices.push(i);
   }
 
-  const pointGeo = new THREE.SphereGeometry(0.05, 8, 8);
+  const pointGeo = new THREE.SphereGeometry(DIFFERENCE_CONTROL_POINT_BASE_RADIUS, 8, 8);
   grouped.forEach((entry, idx) => {
     const point = new THREE.Mesh(
       pointGeo.clone(),
@@ -25567,6 +26919,7 @@ function updateDifferenceUnifyButtonState() {
   }
   differenceUnifyButton.style.display = isDifferenceContext ? 'block' : 'none';
   differenceUnifyButton.disabled = !isDifferenceContext;
+  updateDifferenceResetBeforeUnifyButtonState();
   if (differenceViewToggleButton) {
     differenceViewToggleButton.style.display = isDifferenceContext ? 'block' : 'none';
     differenceViewToggleButton.disabled = !isDifferenceContext;
@@ -26059,119 +27412,71 @@ function runHighQualityDifferenceUnify() {
     updateDifferenceUnifyButtonState();
     return false;
   }
-
+  differenceSnapshotBeforeLatestUnify = structuredClone(captureDifferenceUnifySnapshot());
+  updateDifferenceResetBeforeUnifyButtonState();
   scene.updateMatrixWorld(true);
-  const groups = buildDifferenceIntersectGroups(spaces);
-  if (groups.length < 1) {
-    updateDifferenceStatus('高品質一体化: 交差する空間がありません。');
+  const activeMeshes = spaces.filter((mesh) => mesh?.parent && mesh?.geometry);
+  if (activeMeshes.length < 2) {
+    updateDifferenceStatus('高品質一体化: 空間が2つ以上必要です。');
     updateDifferenceUnifyButtonState();
     return false;
   }
 
-  beginDifferenceHistorySession();
-  let unifiedGroupCount = 0;
-  let removedSpaceCount = 0;
+  const contexts = activeMeshes
+    .map((mesh, index) => createDifferenceSpaceContext(mesh, String(mesh.userData?.differenceTextureId || `${mesh.id}_${index}`)))
+    .filter(Boolean);
 
-  groups.forEach((group) => {
-    if (!Array.isArray(group) || group.length < 2) { return; }
-    const root = group.find((mesh) => mesh?.parent && mesh?.geometry);
-    if (!root) { return; }
-
-    const worldGeometries = group
-      .filter((mesh) => mesh?.parent && mesh?.geometry)
-      .map((mesh) => {
-        mesh.updateMatrixWorld(true);
-        let cloned = mesh.geometry.clone();
-        // union 前は形状を崩さないように cleanup をかなり弱くする。
-        cloned = cleanupDifferenceUnifiedGeometry(cloned, {
-          weldScales: [2.5e-5],
-          areaThresholdScale: 3e-11,
-          simplifyPlanarPatches: false,
-        }) || cloned;
-        cloned.applyMatrix4(mesh.matrixWorld);
-        return cloned;
-      });
-    if (worldGeometries.length < 2) {
-      worldGeometries.forEach((g) => g.dispose?.());
-      return;
-    }
-
-    let mergedGeometry = null;
-    try {
-      mergedGeometry = worldGeometries[0];
-      for (let i = 1; i < worldGeometries.length; i += 1) {
-        const nextGeometry = worldGeometries[i];
-        const result = differenceCsgEvaluator.evaluate(
-          new Brush(mergedGeometry),
-          new Brush(nextGeometry),
-          ADDITION,
-        );
-        if (!result?.geometry) {
-          throw new Error('union_result_empty');
-        }
-        mergedGeometry.dispose?.();
-        nextGeometry.dispose?.();
-        mergedGeometry = result.geometry;
-      }
-    } catch (err) {
-      // 品質優先: 失敗時の雑な mergeGeometries フォールバックは使わない
-      // （重なり面が残って見た目が崩れやすいため）
-      console.warn('Difference union failed; quality mode skips fallback merge', err);
-      worldGeometries.forEach((g) => g.dispose?.());
-      return;
-    }
-
-    const worldToRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
-    mergedGeometry.applyMatrix4(worldToRoot);
-    const cleaned = cleanupDifferenceUnifiedGeometry(mergedGeometry, {
-      weldScales: [2.5e-5, 4.5e-5],
-      areaThresholdScale: 3e-11,
-      simplifyPlanarPatches: true,
-      simplifyOptions: {
-        angleDegTol: 1.35,
-        distTolScale: 5e-4,
-        minTrianglesPerPatch: 6,
-      },
-    });
-    if (!cleaned) {
+  let mergedGeometry = activeMeshes[0].geometry.clone().applyMatrix4(activeMeshes[0].matrixWorld);
+  try {
+    for (let i = 1; i < activeMeshes.length; i += 1) {
+      const nextGeometry = activeMeshes[i].geometry.clone().applyMatrix4(activeMeshes[i].matrixWorld);
+      const result = differenceCsgEvaluator.evaluate(
+        new Brush(mergedGeometry),
+        new Brush(nextGeometry),
+        ADDITION,
+      );
       mergedGeometry.dispose?.();
-      return;
-    }
-
-    const previousGeometry = root.geometry;
-    root.geometry = cleaned;
-    if (previousGeometry && previousGeometry !== cleaned) {
-      previousGeometry.dispose?.();
-    }
-    if (isDifferenceReadonlyTunnelMesh(root)) {
-      clearDifferenceReadonlyTunnelPreviewChunks(root);
-      root.userData = {
-        ...(root.userData || {}),
-        differenceTunnelPreviewEdgePolylines: [],
-        differenceTunnelPreviewChunkSpecs: [],
-      };
-    }
-    root.userData = {
-      ...(root.userData || {}),
-      differenceCornerVertexMap: null,
-      differenceSpacePlane: true,
-    };
-    rebuildDifferenceControlPointsFromGeometry(root);
-    syncDifferenceGeometryFromControlPoints(root);
-    mergeCoincidentDifferenceControlPoints(root);
-    pruneDifferenceControlPointsByMeaningfulEdges(root);
-
-    group.forEach((mesh) => {
-      if (!mesh || mesh === root) { return; }
-      if (removeDifferenceSpaceMeshForUnify(mesh)) {
-        removedSpaceCount += 1;
+      nextGeometry.dispose?.();
+      if (!result?.geometry) {
+        updateDifferenceStatus('高品質一体化: 一体化に失敗しました。');
+        return false;
       }
-    });
-    unifiedGroupCount += 1;
+      mergedGeometry = result.geometry;
+    }
+  } catch (err) {
+    console.warn('Difference union failed', err);
+    mergedGeometry.dispose?.();
+    updateDifferenceStatus('高品質一体化: 一体化に失敗しました。');
+    return false;
+  }
+
+  mergedGeometry.computeVertexNormals();
+  mergedGeometry.computeBoundingBox?.();
+  mergedGeometry.computeBoundingSphere?.();
+
+  const previousSpaces = activeMeshes.slice();
+  previousSpaces.forEach((mesh) => {
+    removeDifferenceSpaceMeshForUnify(mesh);
   });
 
-  relinkImportedDifferenceSharedPoints();
-  mergeOverlappedBoundaryControlPoints(differenceBoundaryMergeDistance, { force: true });
+  const unifiedMesh = new THREE.Mesh(mergedGeometry, createDifferenceSpaceMaterial(null));
+  unifiedMesh.name = 'DifferenceUnifiedSpace';
+  unifiedMesh.position.set(0, 0, 0);
+  unifiedMesh.quaternion.identity();
+  unifiedMesh.scale.set(1, 1, 1);
+  unifiedMesh.userData = {
+    ...(unifiedMesh.userData || {}),
+    differenceSpacePlane: true,
+    differenceUnifiedResult: true,
+    differenceReadonlyDisplay: true,
+    differenceTexture: cloneDifferenceTextureConfig(null),
+  };
+  applyDifferenceSpaceMeshStyle(unifiedMesh, { visible: true });
+  scene.add(unifiedMesh);
+  differenceSpacePlanes.push(unifiedMesh);
+
+  const assignmentStats = applyDifferenceMultiTextureFromContexts(unifiedMesh, contexts);
+
   rebuildDifferenceEdgeOverlapConstraints();
   clearDifferenceFaceSelection();
   clearDifferenceEdgeSelection();
@@ -26181,14 +27486,13 @@ function runHighQualityDifferenceUnify() {
   setMeshListOpacity(targetObjects, 1);
   refreshDifferencePreview();
   refreshDifferenceSelectedEdgeHighlights();
-  commitDifferenceHistoryIfNeeded();
-
-  if (removedSpaceCount < 1) {
-    updateDifferenceStatus('高品質一体化: 形状更新はありませんでした。');
-    updateDifferenceUnifyButtonState();
-    return false;
-  }
-  updateDifferenceStatus(`高品質一体化 完了: ${unifiedGroupCount}グループ / ${removedSpaceCount}空間を統合`);
+  updateDifferenceStatus(
+    '一体化完了。\n'
+    + '統合後メッシュに対して、box は box projection、tube は curve-based cylindrical projection で分類しています。\n'
+    + `strict match: ${assignmentStats.matchedTriangleCount} / fallback: ${assignmentStats.fallbackTriangleCount} / total: ${assignmentStats.totalTriangleCount}\n`
+    + 'fallback は元面に厳密一致しない三角形を、最も近い source face へ寄せたものです。\n'
+    + '「一体化前に戻る」で復元できます。',
+  );
   updateDifferenceUnifyButtonState();
   return true;
 }
@@ -26410,21 +27714,15 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
   if (!geometry) { return null; }
   const mat = (referenceMesh?.material && referenceMesh.material.clone)
     ? referenceMesh.material.clone()
-    : new THREE.MeshStandardMaterial({
-      color: 0x2ed0c9,
-      transparent: true,
-      opacity: 0.5,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      metalness: 0.08,
-      roughness: 0.58,
-      flatShading: false,
-    });
+    : createDifferenceSpaceMaterial(referenceMesh?.userData?.differenceTexture || differenceDefaultTextureConfig);
   const mesh = new THREE.Mesh(geometry, mat);
   mesh.name = 'DifferenceSpacePlane';
   mesh.userData = {
     ...(mesh.userData || {}),
     differenceSpacePlane: true,
+    differenceTexture: cloneDifferenceTextureConfig(
+      referenceMesh?.userData?.differenceTexture || differenceDefaultTextureConfig,
+    ),
   };
   if (referenceMesh) {
     mesh.position.copy(referenceMesh.position);
@@ -26434,6 +27732,7 @@ function createDifferenceSpaceMeshFromGeometry(geometry, referenceMesh = null) {
   applyDifferenceSpaceMeshStyle(mesh, { visible: true });
   scene.add(mesh);
   differenceSpacePlanes.push(mesh);
+  void applyDifferenceTextureToMesh(mesh, mesh.userData?.differenceTexture);
   return mesh;
 }
 
@@ -26571,14 +27870,130 @@ function extrudeDifferenceFaceToNewSpace(hit, distance = 1) {
   return { mesh: newMesh, error: null, facePointCount: localFacePoints.length };
 }
 
+function syncDifferenceTextureControlsFromConfig(config = null) {
+  const normalized = normalizeDifferenceTextureConfig(config);
+  const preset = getDifferenceTexturePresetByPath(normalized.path);
+  if (differenceTexturePresetSelect) {
+    differenceTexturePresetSelect.value = preset?.id || 'none';
+  }
+  if (differenceTexturePathInput) {
+    differenceTexturePathInput.value = normalized.path;
+  }
+  if (differenceTextureRepeatXInput) {
+    differenceTextureRepeatXInput.value = String(normalized.repeatX);
+  }
+  if (differenceTextureRepeatYInput) {
+    differenceTextureRepeatYInput.value = String(normalized.repeatY);
+  }
+}
+
+function refreshDifferenceTextureSelectionInfo(mesh = null) {
+  if (!differenceTextureSelectionInfo) { return; }
+  if (!mesh?.parent) {
+    differenceTextureSelectionInfo.textContent = '選択空間なし';
+    return;
+  }
+  const config = getDifferenceTextureConfigFromMesh(mesh);
+  differenceTextureSelectionInfo.textContent = config.path
+    ? `選択中: mesh ${mesh.id} / ${config.path} / repeat ${config.repeatX} x ${config.repeatY}`
+    : `選択中: mesh ${mesh.id} / texture なし`;
+}
+
+function updateDifferenceTextureControlsVisibility() {
+  if (!differenceTextureApplyButton) { return; }
+  const wrap = differenceTextureApplyButton.closest('#difference-texture-controls');
+  if (!wrap) { return; }
+  const visible = differenceSpaceModeActive && differenceSpaceTransformMode === 'texture';
+  wrap.style.display = visible ? 'block' : 'none';
+}
+
+function updateDifferenceModePanels() {
+  if (differencePanel) {
+    const showDifferencePanel = differenceSpaceModeActive
+      && (differenceSpaceTransformMode === 'tube' || differenceSpaceTransformMode === 'line');
+    differencePanel.style.display = showDifferencePanel ? 'block' : 'none';
+  }
+  syncDifferenceReadonlyTunnelTexturePickability();
+  updateDifferenceTextureControlsVisibility();
+}
+
+function ensureDifferenceTextureControls() {
+  if (differenceTextureApplyButton || !differenceUnifyButton?.parentElement) { return; }
+  const wrap = document.createElement('div');
+  wrap.id = 'difference-texture-controls';
+  wrap.style.display = 'none';
+  wrap.style.marginTop = '8px';
+  wrap.style.padding = '8px';
+  wrap.style.borderRadius = '8px';
+  wrap.style.background = 'rgba(14,20,30,0.08)';
+  wrap.style.border = '1px solid rgba(120,140,170,0.28)';
+
+  wrap.innerHTML = `
+    <div style="font-size:11px;font-weight:700;margin-bottom:6px;color:#223448;">Difference Texture</div>
+    <select id="difference-texture-preset" style="width:100%;padding:6px 8px;margin-bottom:6px;">
+      ${DIFFERENCE_TEXTURE_PRESETS.map((entry) => `<option value="${entry.id}">${entry.label}</option>`).join('')}
+    </select>
+    <input id="difference-texture-path" type="text" placeholder="textures/test_station.jpg" style="width:100%;padding:6px 8px;margin-bottom:6px;box-sizing:border-box;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+      <input id="difference-texture-repeat-x" type="number" step="0.1" min="0.1" placeholder="repeatX" style="width:100%;padding:6px 8px;box-sizing:border-box;">
+      <input id="difference-texture-repeat-y" type="number" step="0.1" min="0.1" placeholder="repeatY" style="width:100%;padding:6px 8px;box-sizing:border-box;">
+    </div>
+    <button id="difference-texture-apply" type="button" style="width:100%;padding:6px 8px;">選択空間へ適用</button>
+    <div id="difference-texture-selection-info" style="margin-top:6px;font-size:10px;line-height:1.4;color:#40566f;">選択空間なし</div>
+  `;
+  differenceUnifyButton.insertAdjacentElement('beforebegin', wrap);
+  differenceTexturePresetSelect = wrap.querySelector('#difference-texture-preset');
+  differenceTexturePathInput = wrap.querySelector('#difference-texture-path');
+  differenceTextureRepeatXInput = wrap.querySelector('#difference-texture-repeat-x');
+  differenceTextureRepeatYInput = wrap.querySelector('#difference-texture-repeat-y');
+  differenceTextureApplyButton = wrap.querySelector('#difference-texture-apply');
+  differenceTextureSelectionInfo = wrap.querySelector('#difference-texture-selection-info');
+  syncDifferenceTextureControlsFromConfig(differenceDefaultTextureConfig);
+  refreshDifferenceTextureSelectionInfo(null);
+  updateDifferenceTextureControlsVisibility();
+
+  const syncDefaultTextureFromControls = () => {
+    differenceDefaultTextureConfig = cloneDifferenceTextureConfig(getDifferenceTextureConfigFromControls());
+  };
+  differenceTexturePresetSelect?.addEventListener('change', () => {
+    const preset = DIFFERENCE_TEXTURE_PRESETS.find((entry) => entry.id === differenceTexturePresetSelect.value) || DIFFERENCE_TEXTURE_PRESETS[0];
+    syncDifferenceTextureControlsFromConfig(preset);
+    syncDefaultTextureFromControls();
+  });
+  differenceTexturePathInput?.addEventListener('change', syncDefaultTextureFromControls);
+  differenceTextureRepeatXInput?.addEventListener('change', syncDefaultTextureFromControls);
+  differenceTextureRepeatYInput?.addEventListener('change', syncDefaultTextureFromControls);
+  differenceTextureApplyButton?.addEventListener('click', async () => {
+    const targetMesh = differenceSelectedPlane?.parent ? differenceSelectedPlane : null;
+    if (!targetMesh) {
+      updateDifferenceStatus('texture適用: 空間を1つ選択してください。');
+      return;
+    }
+    const nextConfig = getDifferenceTextureConfigFromControls();
+    differenceDefaultTextureConfig = cloneDifferenceTextureConfig(nextConfig);
+    try {
+      await applyDifferenceTextureToMesh(targetMesh, nextConfig, { updateStatus: true });
+      syncDifferenceTextureControlsFromConfig(nextConfig);
+      refreshDifferenceTextureSelectionInfo(targetMesh);
+    } catch (err) {
+      console.warn('Difference texture apply failed', err);
+      updateDifferenceStatus(`texture読込失敗: ${nextConfig.path || 'none'}`);
+    }
+  });
+  updateDifferenceModePanels();
+}
+
 function selectDifferencePlane(mesh) {
+  ensureDifferenceTextureControls();
   if (differenceSelectedPlane && differenceSelectedPlane !== mesh) {
     setDifferencePlaneVisual(differenceSelectedPlane, false);
   }
   differenceSelectedPlane = mesh || null;
   if (differenceSelectedPlane) {
     setDifferencePlaneVisual(differenceSelectedPlane, true);
+    syncDifferenceTextureControlsFromConfig(getDifferenceTextureConfigFromMesh(differenceSelectedPlane));
   }
+  refreshDifferenceTextureSelectionInfo(differenceSelectedPlane);
 }
 
 function getDifferenceSelectedPoints() {
@@ -26693,6 +28108,11 @@ function buildDifferenceCutterMesh(points, { shapeType = 'tube', pathType = 'smo
 
 function buildDifferenceCutterMeshFromSpaces() {
   const spaces = differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.geometry);
+  return buildDifferenceCutterMeshFromMeshList(spaces);
+}
+
+function buildDifferenceCutterMeshFromMeshList(meshes) {
+  const spaces = Array.isArray(meshes) ? meshes.filter((mesh) => mesh?.parent && mesh?.geometry) : [];
   if (spaces.length < 1) { return null; }
 
   const geoms = [];
@@ -26722,6 +28142,25 @@ function buildDifferenceCutterMeshFromSpaces() {
   cutter.name = 'DifferencePreviewCutter';
   cutter.renderOrder = 1200;
   return cutter;
+}
+
+function applyActiveTunnelDifferenceSpacesToSinjyuku({ updateStatus = true } = {}) {
+  const tunnelSpaces = differenceSpacePlanes.filter((mesh) => mesh?.parent && isDifferenceReadonlyTunnelMesh(mesh));
+  if (tunnelSpaces.length < 1) { return 0; }
+  if (!getDifferenceTargetMapRoot()) { return -1; }
+  const cutter = buildDifferenceCutterMeshFromMeshList(tunnelSpaces);
+  if (!cutter) { return 0; }
+  const changedCount = applyDifferenceToSinjyuku(cutter);
+  cutter.geometry?.dispose?.();
+  if (Array.isArray(cutter.material)) {
+    cutter.material.forEach((mat) => mat?.dispose?.());
+  } else {
+    cutter.material?.dispose?.();
+  }
+  if (changedCount > 0 && updateStatus) {
+    updateDifferenceStatus(`tunnel読込反映: ${changedCount} メッシュ更新 / 空間 ${tunnelSpaces.length} 件`);
+  }
+  return changedCount;
 }
 
 function buildDifferenceCutterMeshFromSerializedSpace(rawSpace) {
@@ -27043,6 +28482,34 @@ function payloadHasOnlyDifferenceSpaces(payload) {
   );
 }
 
+function isCanonicalSerializedDifferenceBoxSpace(rawSpace) {
+  if (!rawSpace || typeof rawSpace !== 'object') { return false; }
+  if (String(rawSpace?.differenceProjectorType || '').trim().toLowerCase() !== 'box') { return false; }
+  if (Array.isArray(rawSpace?.differenceTubeCurvePoints) && rawSpace.differenceTubeCurvePoints.length > 0) { return false; }
+  if (Number(rawSpace?.differenceTubeRadius) > 0) { return false; }
+  const geometry = buildGeometryFromSerializedSpace(rawSpace);
+  if (!geometry?.attributes?.position) { return false; }
+  const pos = geometry.attributes.position;
+  const unique = new Set();
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = Number(pos.getX(i).toFixed(4));
+    const y = Number(pos.getY(i).toFixed(4));
+    const z = Number(pos.getZ(i).toFixed(4));
+    unique.add(`${x},${y},${z}`);
+  }
+  const isCanonical = unique.size === 8
+    && unique.has('-0.5,-0.5,-0.5')
+    && unique.has('-0.5,-0.5,0.5')
+    && unique.has('-0.5,0.5,-0.5')
+    && unique.has('-0.5,0.5,0.5')
+    && unique.has('0.5,-0.5,-0.5')
+    && unique.has('0.5,-0.5,0.5')
+    && unique.has('0.5,0.5,-0.5')
+    && unique.has('0.5,0.5,0.5');
+  geometry.dispose?.();
+  return isCanonical;
+}
+
 function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, applyToCity = true } = {}) {
   const spaces = Array.isArray(payload?.differenceSpaces) ? payload.differenceSpaces : [];
   const railOperations = Array.isArray(payload?.differenceRailOperations)
@@ -27086,7 +28553,9 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
         differenceRailInnerPadding: Number(rawSpace?.innerPadding) || 0.6,
         differenceRailMinBandWidth: Number(rawSpace?.minBandWidth) || 1.2,
         differenceRailSampleStepMeters: Number(rawSpace?.sampleStepMeters) || 2.0,
+        differenceTexture: cloneDifferenceTextureConfig(rawSpace?.differenceTexture || null),
       };
+      void applyDifferenceTextureToMesh(mesh, mesh.userData?.differenceTexture);
       mesh.updateMatrixWorld(true);
       rebuildDifferenceControlPointsFromGeometry(mesh);
       syncDifferenceGeometryFromControlPoints(mesh);
@@ -27101,24 +28570,52 @@ function restoreDifferenceSpacesFromPayload(payload, { clearExisting = true, app
       applyTransformToSerializedDifferenceGeometry(geometry, rawSpace);
       createDifferenceSpaceMeshFromWorldGeometry(geometry, {
         readonly: true,
-        userData: runtimeState,
+        userData: {
+          ...runtimeState,
+          differenceTexture: cloneDifferenceTextureConfig(rawSpace?.differenceTexture || null),
+          differenceProjectorType: String(rawSpace?.differenceProjectorType || runtimeState?.differenceProjectorType || '').trim() || 'tube',
+          differenceTubeCurvePoints: Array.isArray(rawSpace?.differenceTubeCurvePoints) ? rawSpace.differenceTubeCurvePoints.slice() : null,
+          differenceTubeRadius: Number(rawSpace?.differenceTubeRadius) || Number(runtimeState?.differenceTunnelRadius) || 0,
+        },
       });
       return;
     }
     const geometry = buildGeometryFromSerializedSpace(rawSpace);
     if (!geometry) { return; }
-    const mesh = createDifferenceSpaceMeshFromGeometry(geometry, null);
     const pos = Array.isArray(rawSpace.position) ? rawSpace.position : [0, 0, 0];
     const quat = Array.isArray(rawSpace.quaternion) ? rawSpace.quaternion : [0, 0, 0, 1];
     const scl = Array.isArray(rawSpace.scale) ? rawSpace.scale : [1, 1, 1];
+    const useCanonicalBoxRestore = isCanonicalSerializedDifferenceBoxSpace(rawSpace);
+    const mesh = useCanonicalBoxRestore
+      ? createDifferenceSpacePlane(new THREE.Vector3(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0))
+      : createDifferenceSpaceMeshFromGeometry(geometry, null);
+    if (!mesh) {
+      geometry.dispose?.();
+      return;
+    }
+    if (useCanonicalBoxRestore) {
+      addDifferenceControlPoints(mesh);
+    }
     mesh.position.set(Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0);
     mesh.quaternion.set(Number(quat[0]) || 0, Number(quat[1]) || 0, Number(quat[2]) || 0, Number(quat[3]) || 1);
     mesh.scale.set(Number(scl[0]) || 1, Number(scl[1]) || 1, Number(scl[2]) || 1);
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      differenceTexture: cloneDifferenceTextureConfig(rawSpace?.differenceTexture || null),
+      differenceProjectorType: String(rawSpace?.differenceProjectorType || '').trim() || 'box',
+      differenceTubeCurvePoints: Array.isArray(rawSpace?.differenceTubeCurvePoints) ? rawSpace.differenceTubeCurvePoints.slice() : null,
+      differenceTubeRadius: Number(rawSpace?.differenceTubeRadius) || 0,
+    };
+    void applyDifferenceTextureToMesh(mesh, mesh.userData?.differenceTexture);
     mesh.updateMatrixWorld(true);
-    rebuildDifferenceControlPointsFromGeometry(mesh);
-    syncDifferenceGeometryFromControlPoints(mesh);
-    mergeCoincidentDifferenceControlPoints(mesh);
-    pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+    if (!useCanonicalBoxRestore) {
+      rebuildDifferenceControlPointsFromGeometry(mesh);
+      syncDifferenceGeometryFromControlPoints(mesh);
+      mergeCoincidentDifferenceControlPoints(mesh);
+      pruneDifferenceControlPointsByMeaningfulEdges(mesh);
+    } else {
+      updateDifferenceControlPointMarkerTransform(mesh);
+    }
   });
   relinkImportedDifferenceSharedPoints();
   mergeOverlappedBoundaryControlPoints(differenceBoundaryMergeDistance, { force: true });
@@ -27312,6 +28809,278 @@ function buildDifferenceTunnelPreviewChunkGeometryFromSpec(spec) {
   return geometry;
 }
 
+function buildDifferenceTubeProjectionData(curve, sampleCount = 160) {
+  if (!curve || typeof curve.getSpacedPoints !== 'function') { return null; }
+  const samples = Math.max(16, Math.floor(sampleCount));
+  const points = curve.getSpacedPoints(samples).map((point) => point.clone());
+  if (points.length < 2) { return null; }
+  const frames = curve.computeFrenetFrames(samples, false);
+  const lengths = [0];
+  for (let i = 1; i < points.length; i += 1) {
+    lengths[i] = lengths[i - 1] + points[i - 1].distanceTo(points[i]);
+  }
+  return {
+    points,
+    normals: Array.isArray(frames?.normals) ? frames.normals.map((normal) => normal.clone()) : [],
+    binormals: Array.isArray(frames?.binormals) ? frames.binormals.map((binormal) => binormal.clone()) : [],
+    lengths,
+    totalLength: Math.max(lengths[lengths.length - 1] || 0, 1e-6),
+  };
+}
+
+function projectPointToDifferenceTubeLocal(localPoint, projectionData, radius = 1) {
+  const points = Array.isArray(projectionData?.points) ? projectionData.points : [];
+  if (points.length < 2) { return null; }
+  let best = null;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const start = points[i];
+    const end = points[i + 1];
+    const segment = end.clone().sub(start);
+    const segLenSq = segment.lengthSq();
+    if (segLenSq <= 1e-10) { continue; }
+    const t = THREE.MathUtils.clamp(localPoint.clone().sub(start).dot(segment) / segLenSq, 0, 1);
+    const closest = start.clone().add(segment.multiplyScalar(t));
+    const distanceSq = closest.distanceToSquared(localPoint);
+    if (!best || distanceSq < best.distanceSq) {
+      best = { index: i, t, closest, distanceSq };
+    }
+  }
+  if (!best) { return null; }
+  const tangent = points[best.index + 1].clone().sub(points[best.index]).normalize();
+  const normalA = projectionData.normals?.[best.index]?.clone?.() || new THREE.Vector3(1, 0, 0);
+  const normalB = projectionData.normals?.[best.index + 1]?.clone?.() || normalA.clone();
+  const binormalA = projectionData.binormals?.[best.index]?.clone?.() || new THREE.Vector3(0, 1, 0);
+  const binormalB = projectionData.binormals?.[best.index + 1]?.clone?.() || binormalA.clone();
+  const normal = normalA.lerp(normalB, best.t).normalize();
+  const binormal = binormalA.lerp(binormalB, best.t).normalize();
+  const radial = localPoint.clone().sub(best.closest);
+  const radialPlanar = radial.clone().sub(tangent.clone().multiplyScalar(radial.dot(tangent)));
+  const radialLength = radialPlanar.length();
+  const resolvedRadial = radialLength > 1e-6 ? radialPlanar.clone().multiplyScalar(1 / radialLength) : normal.clone();
+  const arcLength = (projectionData.lengths?.[best.index] || 0)
+    + points[best.index].distanceTo(points[best.index + 1]) * best.t;
+  let angle = Math.atan2(resolvedRadial.dot(binormal), resolvedRadial.dot(normal));
+  if (angle < 0) { angle += Math.PI * 2; }
+  return {
+    arcRatio: arcLength / Math.max(projectionData.totalLength || 1, 1e-6),
+    angleRatio: angle / (Math.PI * 2),
+    surfaceDistance: Math.abs(radialLength - Math.max(radius, 1e-6)),
+    radialLocal: resolvedRadial,
+  };
+}
+
+function cloneDifferenceProjectionMaterial(material) {
+  const cloned = material?.clone ? material.clone() : createDifferenceSpaceMaterial();
+  cloned.transparent = true;
+  cloned.opacity = 1;
+  cloned.side = THREE.BackSide;
+  cloned.color.set(0xffffff);
+  cloned.userData = {
+    ...(cloned.userData || {}),
+    differenceProjectionMaterial: true,
+  };
+  return cloned;
+}
+
+function createDifferenceSpaceContext(mesh, textureId) {
+  if (!mesh?.geometry) { return null; }
+  mesh.updateMatrixWorld(true);
+  const projectorType = String(mesh.userData?.differenceProjectorType || '').trim();
+  const tubePoints = Array.isArray(mesh.userData?.differenceTubeCurvePoints)
+    ? mesh.userData.differenceTubeCurvePoints
+    : [];
+  if (projectorType === 'tube' && tubePoints.length >= 2) {
+    const curve = new THREE.CatmullRomCurve3(
+      tubePoints.map((point) => new THREE.Vector3(Number(point[0]) || 0, Number(point[1]) || 0, Number(point[2]) || 0)),
+    );
+    return {
+      textureId,
+      projectorType: 'tube',
+      worldToLocal: new THREE.Matrix4().copy(mesh.matrixWorld).invert(),
+      material: cloneDifferenceProjectionMaterial(Array.isArray(mesh.material) ? mesh.material[0] : mesh.material),
+      projectionData: buildDifferenceTubeProjectionData(curve),
+      radius: Number(mesh.userData?.differenceTubeRadius) || 0.5,
+    };
+  }
+  mesh.geometry.computeBoundingBox?.();
+  const bbox = mesh.geometry.boundingBox?.clone?.() || new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+  return {
+    textureId,
+    projectorType: 'box',
+    worldToLocal: new THREE.Matrix4().copy(mesh.matrixWorld).invert(),
+    faceDescriptors: [
+      { key: 'px', faceId: `${textureId}:px`, normal: new THREE.Vector3(1, 0, 0), plane: bbox.max.x, uAxis: new THREE.Vector3(0, 0, -1), vAxis: new THREE.Vector3(0, 1, 0), uMin: bbox.min.z, uMax: bbox.max.z, vMin: bbox.min.y, vMax: bbox.max.y },
+      { key: 'nx', faceId: `${textureId}:nx`, normal: new THREE.Vector3(-1, 0, 0), plane: bbox.min.x, uAxis: new THREE.Vector3(0, 0, 1), vAxis: new THREE.Vector3(0, 1, 0), uMin: bbox.min.z, uMax: bbox.max.z, vMin: bbox.min.y, vMax: bbox.max.y },
+      { key: 'py', faceId: `${textureId}:py`, normal: new THREE.Vector3(0, 1, 0), plane: bbox.max.y, uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 0, 1), uMin: bbox.min.x, uMax: bbox.max.x, vMin: bbox.min.z, vMax: bbox.max.z },
+      { key: 'ny', faceId: `${textureId}:ny`, normal: new THREE.Vector3(0, -1, 0), plane: bbox.min.y, uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 0, -1), uMin: bbox.min.x, uMax: bbox.max.x, vMin: bbox.min.z, vMax: bbox.max.z },
+      { key: 'pz', faceId: `${textureId}:pz`, normal: new THREE.Vector3(0, 0, 1), plane: bbox.max.z, uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 1, 0), uMin: bbox.min.x, uMax: bbox.max.x, vMin: bbox.min.y, vMax: bbox.max.y },
+      { key: 'nz', faceId: `${textureId}:nz`, normal: new THREE.Vector3(0, 0, -1), plane: bbox.min.z, uAxis: new THREE.Vector3(-1, 0, 0), vAxis: new THREE.Vector3(0, 1, 0), uMin: bbox.min.x, uMax: bbox.max.x, vMin: bbox.min.y, vMax: bbox.max.y },
+    ],
+    material: cloneDifferenceProjectionMaterial(Array.isArray(mesh.material) ? mesh.material[0] : mesh.material),
+  };
+}
+
+function buildDifferenceSourceFaces(contexts) {
+  const sourceFaces = [];
+  (Array.isArray(contexts) ? contexts : []).forEach((context) => {
+    if (context?.projectorType === 'tube') {
+      sourceFaces.push({
+        projectorType: 'tube',
+        textureId: context.textureId,
+        worldToLocal: context.worldToLocal.clone(),
+        material: context.material,
+        projectionData: context.projectionData,
+        radius: context.radius,
+      });
+      return;
+    }
+    const worldMatrix = new THREE.Matrix4().copy(context.worldToLocal).invert();
+    const rotationMatrix = new THREE.Matrix4().extractRotation(worldMatrix);
+    (Array.isArray(context.faceDescriptors) ? context.faceDescriptors : []).forEach((face) => {
+      const planeOriginLocal = Math.abs(face.normal.x) > 0.5
+        ? new THREE.Vector3(face.plane, 0, 0)
+        : (Math.abs(face.normal.y) > 0.5 ? new THREE.Vector3(0, face.plane, 0) : new THREE.Vector3(0, 0, face.plane));
+      sourceFaces.push({
+        ...face,
+        textureId: context.textureId,
+        worldToLocal: context.worldToLocal.clone(),
+        material: context.material,
+        normalWorld: face.normal.clone().transformDirection(rotationMatrix).normalize(),
+        planeOriginWorld: planeOriginLocal.clone().applyMatrix4(worldMatrix),
+      });
+    });
+  });
+  return sourceFaces;
+}
+
+function projectDifferenceUv(localPoint, face) {
+  if (face?.projectorType === 'tube') {
+    const projected = projectPointToDifferenceTubeLocal(localPoint, face.projectionData, face.radius);
+    if (!projected) { return [0, 0]; }
+    return [projected.arcRatio, projected.angleRatio];
+  }
+  const safeDiv = (value, min, max) => (value - min) / Math.max(max - min, 1e-6);
+  const uBasis = new THREE.Vector3(Math.abs(face.uAxis.x), Math.abs(face.uAxis.y), Math.abs(face.uAxis.z));
+  const vBasis = new THREE.Vector3(Math.abs(face.vAxis.x), Math.abs(face.vAxis.y), Math.abs(face.vAxis.z));
+  const readAxisValue = (basis) => (basis.x > 0.5 ? localPoint.x : (basis.y > 0.5 ? localPoint.y : localPoint.z));
+  const rawU = readAxisValue(uBasis);
+  const rawV = readAxisValue(vBasis);
+  const uValue = face.uAxis.x < 0 || face.uAxis.y < 0 || face.uAxis.z < 0 ? face.uMax - (rawU - face.uMin) : rawU;
+  const vValue = face.vAxis.x < 0 || face.vAxis.y < 0 || face.vAxis.z < 0 ? face.vMax - (rawV - face.vMin) : rawV;
+  return [safeDiv(uValue, face.uMin, face.uMax), safeDiv(vValue, face.vMin, face.vMax)];
+}
+
+function classifyDifferenceTriangleToSourceFace(sourceFaces, centroidWorld, normalWorld) {
+  let strictBest = null;
+  let strictBestScore = Infinity;
+  let fallbackBest = null;
+  let fallbackBestScore = Infinity;
+  sourceFaces.forEach((face) => {
+    const localPoint = centroidWorld.clone().applyMatrix4(face.worldToLocal);
+    if (face?.projectorType === 'tube') {
+      const projected = projectPointToDifferenceTubeLocal(localPoint, face.projectionData, face.radius);
+      if (!projected) { return; }
+      const radialWorld = projected.radialLocal.clone().transformDirection(new THREE.Matrix4().copy(face.worldToLocal).invert());
+      const planeDistance = projected.surfaceDistance;
+      const normalAgreement = Math.abs(normalWorld.dot(radialWorld.normalize()));
+      const score = (planeDistance * 8) + (1 - normalAgreement);
+      if (score < fallbackBestScore) {
+        fallbackBest = face;
+        fallbackBestScore = score;
+      }
+      if (planeDistance > 0.35 || normalAgreement < 0.15) { return; }
+      if (score < strictBestScore) {
+        strictBest = face;
+        strictBestScore = score;
+      }
+      return;
+    }
+    const planeValue = Math.abs(face.normal.x) > 0.5 ? localPoint.x : (Math.abs(face.normal.y) > 0.5 ? localPoint.y : localPoint.z);
+    const planeDistance = Math.abs(planeValue - face.plane);
+    const uv = projectDifferenceUv(localPoint, face);
+    const inBounds = uv[0] >= -0.04 && uv[0] <= 1.04 && uv[1] >= -0.04 && uv[1] <= 1.04;
+    const normalAgreement = Math.abs(normalWorld.dot(face.normalWorld));
+    const score = (planeDistance * 10) + (1 - normalAgreement);
+    if (score < fallbackBestScore) {
+      fallbackBest = face;
+      fallbackBestScore = score;
+    }
+    if (!inBounds || planeDistance > 0.12 || normalAgreement < 0.7) { return; }
+    if (score < strictBestScore) {
+      strictBest = face;
+      strictBestScore = score;
+    }
+  });
+  return strictBest ? { face: strictBest, matched: true } : { face: fallbackBest || sourceFaces[0] || null, matched: false };
+}
+
+function applyDifferenceMultiTextureFromContexts(mesh, contexts) {
+  if (!mesh?.geometry) {
+    return { matchedTriangleCount: 0, fallbackTriangleCount: 0, totalTriangleCount: 0 };
+  }
+  const nonIndexed = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+  const position = nonIndexed.getAttribute('position');
+  const uv = new Float32Array(position.count * 2);
+  const sourceFaces = buildDifferenceSourceFaces(contexts);
+  const materialIndexByKey = new Map();
+  const materials = [];
+  contexts.forEach((context) => {
+    if (!context || materialIndexByKey.has(context.textureId)) { return; }
+    materialIndexByKey.set(context.textureId, materials.length);
+    materials.push(context.material);
+  });
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  let matchedTriangleCount = 0;
+  let fallbackTriangleCount = 0;
+  nonIndexed.clearGroups();
+  for (let i = 0; i + 2 < position.count; i += 3) {
+    a.set(position.getX(i), position.getY(i), position.getZ(i));
+    b.set(position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1));
+    c.set(position.getX(i + 2), position.getY(i + 2), position.getZ(i + 2));
+    const centroid = a.clone().add(b).add(c).multiplyScalar(1 / 3);
+    const normal = ab.subVectors(b, a).cross(ac.subVectors(c, a)).normalize();
+    const classification = classifyDifferenceTriangleToSourceFace(sourceFaces, centroid, normal);
+    const face = classification.face || sourceFaces[0];
+    if (!face) { continue; }
+    if (classification.matched) {
+      matchedTriangleCount += 1;
+    } else {
+      fallbackTriangleCount += 1;
+    }
+    nonIndexed.addGroup(i, 3, materialIndexByKey.get(face.textureId) ?? 0);
+    [a, b, c].forEach((worldPoint, offset) => {
+      const localPoint = worldPoint.clone().applyMatrix4(face.worldToLocal);
+      const projected = projectDifferenceUv(localPoint, face);
+      uv[((i + offset) * 2) + 0] = projected[0];
+      uv[((i + offset) * 2) + 1] = projected[1];
+    });
+  }
+  nonIndexed.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  nonIndexed.computeVertexNormals();
+  nonIndexed.computeBoundingBox?.();
+  nonIndexed.computeBoundingSphere?.();
+  const oldGeometry = mesh.geometry;
+  const oldMaterial = mesh.material;
+  mesh.geometry = nonIndexed;
+  mesh.material = materials;
+  oldGeometry.dispose?.();
+  if (Array.isArray(oldMaterial)) {
+    oldMaterial.forEach((material) => material?.dispose?.());
+  } else {
+    oldMaterial?.dispose?.();
+  }
+  applyDifferenceSpaceMeshStyle(mesh, { visible: mesh.visible !== false });
+  return {
+    matchedTriangleCount,
+    fallbackTriangleCount,
+    totalTriangleCount: Math.floor(position.count / 3),
+  };
+}
+
 function getDifferenceRailCutterDetailProfile(detailMode = 'standard') {
   const mode = String(detailMode || 'standard').trim().toLowerCase();
   if (mode === 'final' || mode === 'high' || mode === 'unify') {
@@ -27358,13 +29127,18 @@ function createDifferenceSpaceMeshFromWorldGeometry(geometry, {
     ...(mesh.userData || {}),
     ...(userData && typeof userData === 'object' ? userData : {}),
   };
+  if (mesh.userData?.differenceTexture) {
+    void applyDifferenceTextureToMesh(mesh, mesh.userData.differenceTexture);
+  }
   if (readonly) {
     const readonlyTunnel = String(userData?.differenceGeneratedBy || '') === 'rail_tunnel_circle';
     mesh.userData = {
       ...(mesh.userData || {}),
       differenceReadonlyDisplay: true,
     };
-    mesh.raycast = () => {};
+    mesh.raycast = getDifferenceReadonlyTunnelRaycast(
+      readonlyTunnel && differenceSpaceModeActive && differenceSpaceTransformMode === 'texture'
+    );
     if (!readonlyTunnel) {
       rebuildDifferenceControlPointsFromGeometry(mesh);
       mergeCoincidentDifferenceControlPoints(mesh);
@@ -27402,6 +29176,11 @@ function addDifferenceTunnelTubeSpaceFromTrackCurves(trackCurves, {
     readonly: true,
     userData: {
       differenceGeneratedBy: 'rail_tunnel_circle',
+      differenceProjectorType: String(cutter.userData?.differenceProjectorType || '').trim() || 'tube',
+      differenceTubeCurvePoints: Array.isArray(cutter.userData?.differenceTubeCurvePoints)
+        ? cutter.userData.differenceTubeCurvePoints.slice()
+        : null,
+      differenceTubeRadius: Number(cutter.userData?.differenceTubeRadius) || Math.max(0.2, Number(innerRadius) || 1.6),
       differenceTunnelTrackNames: Array.isArray(cutter.userData?.differenceTunnelTrackNames)
         ? cutter.userData.differenceTunnelTrackNames.slice()
         : [],
@@ -27755,9 +29534,8 @@ function buildDifferenceCutterMeshFromRailTracks({
     if (trackCount !== 1 && trackCount !== 2) { return null; }
     const radiusBase = Math.max(0.2, Number(tubeRadius) || 1.6);
     const sideClearance = Math.max(0, Number(tunnelSideClearance) || 0);
-    const resolvedRadius = trackCount === 2
-      ? Math.max(radiusBase, ((Number(envelope.maxSpan) || 0) * 0.5) + sideClearance)
-      : radiusBase;
+    const twoTrackRadiusScale = 0.02;
+    const resolvedRadius = 1.4
     const yOffsetValue = Number.isFinite(Number(tunnelYOffset)) ? Number(tunnelYOffset) : -1.0;
     const centerCurve = envelope.centerCurve;
     const centerLength = Number(centerCurve.getLength?.()) || 0;
@@ -27810,6 +29588,9 @@ function buildDifferenceCutterMeshFromRailTracks({
     cutter.userData = {
       ...(cutter.userData || {}),
       differenceCutterSource: 'rail_track_tunnel_tube',
+      differenceProjectorType: 'tube',
+      differenceTubeCurvePoints: shiftedPoints.map((point) => [point.x, point.y, point.z]),
+      differenceTubeRadius: resolvedRadius,
       railTrackCount: trackCount,
       differenceTunnelTrackNames: envelope.orderedTracks
         .map((entry) => String(entry?.trackName || '').trim())
@@ -27847,15 +29628,15 @@ function buildDifferenceCutterMeshFromRailTracks({
     ? Number(bandHeight)
     : Number(currentUiHeight);
   const height = Math.max(0.2, Number.isFinite(resolvedHeight) ? resolvedHeight : 2.8);
-  console.log('[Difference][line] build cutter params', {
-    bandHeightInput: bandHeight,
-    uiReadHeight: currentUiHeight,
-    resolvedHeight: height,
-    sidePadding,
-    innerPadding,
-    minBandWidth,
-    sampleStepMeters,
-  });
+  // console.log('[Difference][line] build cutter params', {
+  //   bandHeightInput: bandHeight,
+  //   uiReadHeight: currentUiHeight,
+  //   resolvedHeight: height,
+  //   sidePadding,
+  //   innerPadding,
+  //   minBandWidth,
+  //   sampleStepMeters,
+  // });
   const worldUp = new THREE.Vector3(0, 1, 0);
 
   const getTrackFrameAt = (curve, t, fallbackDir = new THREE.Vector3(0, 0, 1)) => {
@@ -31510,8 +33291,17 @@ async function handleMouseDown() {
 
   if (copyModeActive && editObject === 'STEEL_FRAME' && objectEditMode === 'COPY') {
     await onerun_search_point();
+    syncCopyModeLiveObjectReferences();
     if (choice_object && isCopySelectableMesh(choice_object)) {
-      toggleCopySelection(choice_object);
+      if (isCopyGroupMovePointSelectionMode()) {
+        handleSteelFrameSelectionToggleFromChoiceObject({
+          allowAxisReference: false,
+          allowLedBoardEditor: false,
+        });
+        syncCopyGroupSelectionFromPoints();
+      } else {
+        toggleCopySelection(choice_object);
+      }
       updateCopyPanelUI({ clearInputs: false });
     }
     return;
@@ -31587,6 +33377,25 @@ async function handleMouseDown() {
     return;
   }
 
+  if (editObject === 'DIFFERENCE_SPACE'
+    && objectEditMode === 'Standby'
+    && differenceSpaceTransformMode === 'texture') {
+    const hits = getIntersectObjects();
+    const controlPointHit = hits.find((h) => h?.object?.userData?.differenceControlPoint) || null;
+    const faceHit = hits.find((h) => h?.object?.userData?.differenceSpacePlane) || null;
+    const mesh = controlPointHit?.object?.userData?.parentDifferenceSpacePlane
+      || controlPointHit?.object?.parent
+      || faceHit?.object
+      || null;
+    if (mesh?.userData?.differenceSpacePlane) {
+      selectDifferencePlane(mesh);
+      clearDifferenceFaceHighlight();
+      const label = String(mesh.userData?.differenceLabel || mesh.name || `space ${mesh.id}`);
+      updateDifferenceStatus(`texture対象を選択: ${label}`);
+    }
+    return;
+  }
+
   if (objectEditMode === ROTATE_MODE) {
     if (editObject === 'RAIL') {
       const gizmoHit = pickRotateGizmoHit();
@@ -31626,7 +33435,18 @@ async function handleMouseDown() {
         rotateTargetObjectName: String(rotateTargetObject?.name || ''),
         pointRotateModeActive: Boolean(pointRotateModeActive),
       });
-      beginRotateDrag(gizmoHit.object);
+      if (pointRotateModeActive && pointRotateTarget?.userData?.decorationType) {
+        if (gizmoHit.object?.userData?.action === 'rotate_gizmo_y') {
+          beginPointRotateDrag(gizmoHit.object, {
+            gizmoOnly: true,
+            forceAxis: new THREE.Vector3(0, 1, 0),
+          });
+        } else {
+          beginPointRotateDrag(gizmoHit.object, { gizmoOnly: false });
+        }
+      } else {
+        beginRotateDrag(gizmoHit.object);
+      }
       return;
     }
     await onerun_search_point();
@@ -33312,6 +35132,10 @@ function isDecorationRotationContext(target = pointRotateTarget) {
     && Boolean(target?.userData?.decorationType);
 }
 
+function isRectSpotLightRotationTarget(target = pointRotateTarget) {
+  return target?.userData?.decorationType === 'rect_spot_light';
+}
+
 function isNormalRotateStructureGroup(groupId) {
   const gid = String(groupId || '').trim();
   if (!gid) { return false; }
@@ -33432,6 +35256,48 @@ function getDecorationRotationBaseQuat(target, { ensure = true } = {}) {
   }
   decorationRotationBaseQuatMap.set(target, base.clone());
   return base;
+}
+
+function buildRectSpotLightRelativeQuatFromPanelAngles(panelAngles = { x: 0, y: 0, z: 0 }) {
+  const degToRad = Math.PI / 180;
+  const pitchDeg = Number(panelAngles?.x) || 0;
+  const yawDeg = Number(panelAngles?.y) || 0;
+  const rollDeg = Number(panelAngles?.z) || 0;
+
+  const yawQuat = Math.abs(yawDeg) > 1e-6
+    ? new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawDeg * degToRad)
+    : new THREE.Quaternion();
+  const pitchAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(yawQuat).normalize();
+  const pitchQuat = Math.abs(pitchDeg) > 1e-6
+    ? new THREE.Quaternion().setFromAxisAngle(pitchAxis, pitchDeg * degToRad)
+    : new THREE.Quaternion();
+  const yawPitchQuat = pitchQuat.clone().multiply(yawQuat).normalize();
+  if (Math.abs(rollDeg) <= 1e-6) {
+    return yawPitchQuat;
+  }
+  const rollAxis = new THREE.Vector3(0, 0, 1).applyQuaternion(yawPitchQuat).normalize();
+  const rollQuat = new THREE.Quaternion().setFromAxisAngle(rollAxis, rollDeg * degToRad);
+  return rollQuat.multiply(yawPitchQuat).normalize();
+}
+
+function getRectSpotLightPanelAnglesFromQuaternion(target, quat) {
+  const baseQuat = getDecorationRotationBaseQuat(target, { ensure: true });
+  const rel = baseQuat.clone().invert().multiply(quat.clone()).normalize();
+  const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(rel).normalize();
+  const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(dir.y, Math.sqrt((dir.x * dir.x) + (dir.z * dir.z))));
+  const yawDeg = THREE.MathUtils.radToDeg(Math.atan2(dir.x, dir.z));
+  const yawPitchQuat = buildRectSpotLightRelativeQuatFromPanelAngles({ x: pitchDeg, y: yawDeg, z: 0 });
+  const rollOnlyQuat = rel.clone().multiply(yawPitchQuat.clone().invert()).normalize();
+  const axis = new THREE.Vector3(0, 0, 1).applyQuaternion(yawPitchQuat).normalize();
+  const axisComponent = new THREE.Vector3(rollOnlyQuat.x, rollOnlyQuat.y, rollOnlyQuat.z);
+  const rollRad = axisComponent.lengthSq() > 1e-12
+    ? 2 * Math.atan2(axisComponent.length(), rollOnlyQuat.w) * (axisComponent.dot(axis) < 0 ? -1 : 1)
+    : 0;
+  return {
+    x: pitchDeg,
+    y: yawDeg,
+    z: THREE.MathUtils.radToDeg(rollRad),
+  };
 }
 
 function debugDecorationRotationLog(tag, payload = {}) {
@@ -34687,6 +36553,9 @@ function getRotationPanelAnglesFromQuaternion(quat) {
 
 function getRotationPanelAnglesFromTargetQuat(target, quat) {
   if (isDecorationRotationContext(target)) {
+    if (isRectSpotLightRotationTarget(target)) {
+      return getRectSpotLightPanelAnglesFromQuaternion(target, quat);
+    }
     const base = getDecorationRotationBaseQuat(target, { ensure: true });
     const rel = base.clone().invert().multiply(quat.clone()).normalize();
     return getRotationPanelAnglesFromQuaternion(rel);
@@ -34803,6 +36672,9 @@ function resetMultiRotatePanelDeltaDisplay() {
 
 function buildDecorationQuatFromPanelAngles(target, panelAngles = { x: 0, y: 0, z: 0 }) {
   const baseQuat = getDecorationRotationBaseQuat(target, { ensure: true });
+  if (isRectSpotLightRotationTarget(target)) {
+    return baseQuat.clone().multiply(buildRectSpotLightRelativeQuatFromPanelAngles(panelAngles)).normalize();
+  }
   const degToRad = Math.PI / 180;
   const xDeg = Number(panelAngles?.x) || 0;
   const yDeg = Number(panelAngles?.y) || 0;
@@ -35963,6 +37835,10 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1);
     setGuideGridVisibilityForViewMode(false);
 
+  }} else if ( uiID === 'decoration' ){ if ( toggle === 'active' ){
+    steelFrameMode.setActive(true);
+  } else { 
+
   }} else if ( uiID === 'add_point' ){ if ( toggle === 'active' ){
   console.log( 'add_point _active' )
     updateCreateAddPointGuideHoverStartLog(null);
@@ -36281,6 +38157,7 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'copy' ){ if ( toggle === 'active' ){
   console.log( 'copy _active' )
     copyModeActive = true
+    clearCopySelection()
     groupModeActive = false
     clearGroupSelection()
     setGroupModePanelVisible(false)
@@ -36629,7 +38506,7 @@ export function UIevent (uiID, toggle){
     setMeshListOpacity(targetObjects, 1)
     steelFrameMode.setActive(true)
     setConstructionCategoryPanelVisible(true);
-    setConstructionCategory(selectedConstructionProfile);
+    setConstructionCategory(selectedConstructionProfile || 'round');
   } else {
   console.log( 'construction/2 _inactive' )
     resetConstructionStrokeState();
@@ -36733,6 +38610,16 @@ export function UIevent (uiID, toggle){
   }} else if ( uiID === 'space' ){ if ( toggle === 'active' ){
   console.log( 'space _active' )
     if (blockManualDioramaSpaceMode()) { return; }
+    if (differenceSpacePlanes.filter((mesh) => mesh?.parent && mesh?.userData?.differenceSpacePlane).length < 1
+      && lastLoadedStandaloneDifferencePayload
+      && Array.isArray(lastLoadedStandaloneDifferencePayload?.differenceSpaces)
+      && lastLoadedStandaloneDifferencePayload.differenceSpaces.length > 0) {
+      try {
+        restoreDifferenceSpacesFromPayload(lastLoadedStandaloneDifferencePayload, { clearExisting: false, applyToCity: false });
+      } catch (err) {
+        console.warn('[difference][space] failed to restore last loaded standalone spaces on activation', err);
+      }
+    }
     differenceSpaceModeActive = true
     differenceSpaceTransformMode = 'none'
     differenceShapeType = 'box'
@@ -36750,6 +38637,7 @@ export function UIevent (uiID, toggle){
     if (differencePanel) {
       differencePanel.style.display = 'none';
     }
+    updateDifferenceModePanels();
     refreshDifferencePreview();
   } else {
   console.log( 'space _inactive' )
@@ -36777,6 +38665,7 @@ export function UIevent (uiID, toggle){
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
     updateDifferenceStatus('spaceで平面を1枚以上配置してください。');
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'add/2' || uiID === 'add_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -36799,6 +38688,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferencePreviewTube();
     updateDifferenceStatus('空き領域クリックでボックス追加。既存面クリックで押し出し拡張します。');
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
@@ -36809,6 +38699,7 @@ export function UIevent (uiID, toggle){
     clearDifferenceFaceHighlight();
     differenceHoverFaceKey = null;
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'move/2' || uiID === 'move_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -36842,6 +38733,7 @@ export function UIevent (uiID, toggle){
     setRotationPanelVisible(true);
     updatePointRotateVisuals();
     updateDifferenceStatus('move: 面を選択してドラッグで形状を変更します。');
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
@@ -36858,6 +38750,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'rotation/3' || uiID === 'rotation_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -36891,6 +38784,7 @@ export function UIevent (uiID, toggle){
     setRotationPanelVisible(true);
     updatePointRotateVisuals();
     updateDifferenceStatus('rotation: 面/点を選択し、ギズモで回転します。');
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
@@ -36907,6 +38801,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'scale/2' || uiID === 'scale_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -36935,6 +38830,7 @@ export function UIevent (uiID, toggle){
     updateScalePointPanelUI({ clearInputs: true });
     updateScaleGizmo();
     updateDifferenceStatus('scale: control pointを複数選択してギズモでスケールします。');
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   } else {
   console.log( uiID + ' _inactive' )
@@ -36955,6 +38851,7 @@ export function UIevent (uiID, toggle){
     if (editObject === 'DIFFERENCE_SPACE' && objectEditMode === 'CONSTRUCT') {
       objectEditMode = 'Standby';
     }
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'tube/2' || uiID === 'tube_space' ){ if ( toggle === 'active' ){
   console.log( uiID + ' _active' )
@@ -36974,9 +38871,7 @@ export function UIevent (uiID, toggle){
     if (differenceShapeSelect) {
       differenceShapeSelect.value = 'tube';
     }
-    if (differencePanel) {
-      differencePanel.style.display = 'block';
-    }
+    updateDifferenceModePanels();
     refreshDifferencePreview();
     updateDifferenceStatus('tubeモード: 配置済みボックス列からチューブを生成します。');
     refreshDifferenceSelectedEdgeHighlights();
@@ -36987,6 +38882,7 @@ export function UIevent (uiID, toggle){
     }
     clearDifferenceFaceHighlight();
     differenceSpacePlanes.forEach((mesh) => resetDifferenceControlPointsHighlight(mesh));
+    updateDifferenceModePanels();
     refreshDifferenceSelectedEdgeHighlights();
   }} else if ( uiID === 'line' ){ if ( toggle === 'active' ){
   console.log( 'line _active' )
@@ -37001,9 +38897,7 @@ export function UIevent (uiID, toggle){
     // lineモードでは「削除予定カッター」のみを見せる。
     setMeshListOpacity(targetObjects, 0)
     toggleRailTube(true);
-    if (differencePanel) {
-      differencePanel.style.display = 'block';
-    }
+    updateDifferenceModePanels();
     setDifferenceLineOptions();
     refreshDifferenceLineOnlyPreview();
     updateDifferenceLineSelectionStatus();
@@ -37014,6 +38908,37 @@ export function UIevent (uiID, toggle){
     if (!railModeActive) {
       setRailTubeRenderVisible(false);
     }
+    updateDifferenceModePanels();
+  }} else if ( uiID === 'texture' ){ if ( toggle === 'active' ){
+  console.log( 'texture _active' )
+    if (blockManualDioramaSpaceMode()) { return; }
+    differenceSpaceModeActive = true
+    differenceSpaceTransformMode = 'texture'
+    differenceLinePickModeActive = false
+    if (differenceBodySelectButton) { differenceBodySelectButton.style.display = 'none'; }
+    setDifferenceBodySelectionMode(false);
+    pointRotateModeActive = false
+    clearPointRotateState()
+    editObject = 'DIFFERENCE_SPACE'
+    objectEditMode = 'Standby'
+    search_object = false
+    targetObjects = differenceSpacePlanes.filter((m) => m?.parent)
+    setMeshListOpacity(targetObjects, 1)
+    setRotationPanelMode('texture_mode');
+    setRotationPanelVisible(true);
+    updateDifferenceModePanels();
+    updateDifferenceUnifyButtonState();
+    updateDifferenceStatus('textureモード: 空間を選択してテクスチャを適用します。');
+    refreshDifferenceSelectedEdgeHighlights();
+  } else {
+  console.log( 'texture _inactive' )
+    if (differenceSpaceTransformMode === 'texture') {
+      differenceSpaceTransformMode = 'none'
+    }
+    setRotationPanelMode('rotation');
+    setRotationPanelVisible(false);
+    updateDifferenceModePanels();
+    updateDifferenceUnifyButtonState();
   }} else if ( uiID === 'excavation' ){ if ( toggle === 'active' ){
   console.log( 'excavation _active' )
     if (blockManualDioramaSpaceMode()) { return; }
@@ -37193,6 +39118,7 @@ function updateCtrlPos() {
 }
 let camera_num = 1
 let ctrl_num = 0
+let mobileCameraSelectionHold = false;
 
 let ctrl_id = null
 
@@ -37230,7 +39156,7 @@ function isInteractionAllowed(clientX, clientY){
 }
 
 const PANEL_INPUT_ROOT_SELECTOR = '#rotation-panel, #difference-panel, #group-mode-panel, #construction-category-panel, #rail-construction-panel, #group-point-edit-mode-panel, #train-panel, #scene-panel, #performance-panel';
-const OVERLAY_UI_TARGET_SELECTOR = '#save-buttons, #show-instructions-btn, #demo-play-btn, #instructions-panel, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #train-panel, #performance-panel, #performance-toggle-btn, #scene-panel, #scene-toggle-btn, #create-mode-utility-buttons, #create-guide-y-button, #UiGroup, #frontViewButtons, #guide-window';
+const OVERLAY_UI_TARGET_SELECTOR = '#save-buttons, #show-instructions-btn, #demo-play-btn, #instructions-panel, #rotation-panel, #difference-panel, #construction-category-panel, #rail-construction-panel, #group-mode-panel, #group-point-edit-mode-panel, #train-panel, #performance-panel, #performance-toggle-btn, #scene-panel, #scene-toggle-btn, #create-mode-utility-buttons, #create-guide-y-button, #UiGroup, #frontViewButtons, #guide-window, #difference-body-select, #difference-move-xz, #difference-move-y, #difference-auto-merge-toggle, #logwindow';
 const PANEL_INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [contenteditable]:not([contenteditable="false"])';
 
 function isPanelValueInputTarget(target) {
@@ -37249,6 +39175,11 @@ function isPanelValueInputActive() {
 function isOverlayUiTarget(target) {
   if (!(target instanceof Element)) { return false; }
   return Boolean(target.closest(OVERLAY_UI_TARGET_SELECTOR));
+}
+
+function isScrollableOverlayUiTarget(target) {
+  if (!(target instanceof Element)) { return false; }
+  return Boolean(target.closest('#construction-category-panel, #rail-construction-panel, #structure-generation-list-panel, #guide-window, #instructions-panel, #rotation-selection-info'));
 }
 
 function clearPanelInputInteractionLocks() {
@@ -37311,8 +39242,15 @@ window.addEventListener('touchstart', (e) => {
   if (OperationMode === 0){return}
   e.preventDefault();      // ← スクロールを止める（キャンバス内の操作として扱う）
   if (objectEditMode === 'MOVE_EXISTING') { 
+    mobileCameraSelectionHold = true;
     dragging = null//'stand_by';
-    onerun_search_point();
+    Promise.resolve(onerun_search_point()).then((picked) => {
+      if (!picked || picked === false) {
+        mobileCameraSelectionHold = false;
+      }
+    }).catch(() => {
+      mobileCameraSelectionHold = false;
+    });
   }
 
   handleMouseDown();      // ← 同じ関数に渡している
@@ -37458,6 +39396,9 @@ document.addEventListener('mousemove', (e) => {
 });
 
 document.addEventListener('touchmove', (e) => {
+  if (isOverlayUiTarget(e.target) || isScrollableOverlayUiTarget(e.target)) {
+    return;
+  }
   if (isPanelValueInputTarget(e.target) || isPanelValueInputActive()) {
     pointerBlockedByUI = true;
     structurePointerBlockedByUI = true;
@@ -37595,7 +39536,7 @@ document.addEventListener('touchmove', (e) => {
   syncEfficacyForTransformDrag();
 
   // 視点
-  if (e.touches.length === 1 && efficacy) {
+  if (e.touches.length === 1 && efficacy && !mobileCameraSelectionHold) {
     if (ctrl_id === null){
       const dx = lastPosition1.x - e.touches[0].clientX;
       const dy = lastPosition1.y - e.touches[0].clientY;
@@ -37622,7 +39563,7 @@ document.addEventListener('touchmove', (e) => {
       ctrl_ui.style.top = ctrlY - Math.cos(ctrl_angle) * Math.min(40, range) + 'px';
 
     }
-  } else if (e.touches.length >= 2 && efficacy) {
+  } else if (e.touches.length >= 2 && efficacy && !mobileCameraSelectionHold) {
 
     if (ctrl_id===null){return}
     // if (e.changedTouches[1].identifier === ctrl_id){alert('ctrl1')}
@@ -37684,6 +39625,9 @@ document.addEventListener('touchend',(e)=>{
 
   // 編集モード
   handleMouseUp(true);
+  if (e.touches.length === 0) {
+    mobileCameraSelectionHold = false;
+  }
 }
 );
 
@@ -37702,8 +39646,14 @@ const keys = {};
 let canvasFocused = false;
 if (canvas) {
   // スクロール無効化用リスナ
-  const _wheelHandler = (e) => { e.preventDefault(); };
-  const _touchMoveHandler = (e) => { e.preventDefault(); };
+  const _wheelHandler = (e) => {
+    if (isScrollableOverlayUiTarget(e.target) || isOverlayUiTarget(e.target)) { return; }
+    e.preventDefault();
+  };
+  const _touchMoveHandler = (e) => {
+    if (isScrollableOverlayUiTarget(e.target) || isOverlayUiTarget(e.target)) { return; }
+    e.preventDefault();
+  };
   // keep previous states to restore later
   let _prevBodyOverflow = null;
   let _prevCanvasTouchAction = null;
@@ -38004,6 +39954,7 @@ function animate() {
   syncMovePointAxisReferences();
   syncTrainGroupVisibility();
   syncSinjyukuCityVisibility();
+  updateScreenSizedSceneControlPoints(camera);
 
   renderer.render(scene, camera);
   markRenderFrame();
